@@ -3,9 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const vitest_1 = require("vitest");
 const review_runtime_1 = require("./review-runtime");
 (0, vitest_1.describe)("ReviewRuntimeService", () => {
-    (0, vitest_1.afterEach)(() => {
-        vitest_1.vi.restoreAllMocks();
-    });
     (0, vitest_1.it)("serializes transcription jobs off the Electron main process", async () => {
         const order = [];
         let resolveFirst = () => {
@@ -15,7 +12,7 @@ const review_runtime_1 = require("./review-runtime");
             throw new Error("Second transcription resolver was not initialized.");
         };
         const transcription = {
-            analyzeTranscript: vitest_1.vi.fn(async (sessionId, transcriptSegments) => {
+            analyzeTranscript: async (sessionId, transcriptSegments) => {
                 order.push(`analyze:${sessionId}`);
                 return {
                     evidenceSpans: [
@@ -51,10 +48,10 @@ const review_runtime_1 = require("./review-runtime");
                         },
                     ],
                 };
-            }),
-            dispose: vitest_1.vi.fn().mockResolvedValue(undefined),
-            isModelAvailable: vitest_1.vi.fn().mockResolvedValue(true),
-            transcribeFile: vitest_1.vi.fn((audioPath, sessionId, source) => {
+            },
+            dispose: async () => undefined,
+            isModelAvailable: async () => true,
+            transcribeFile: (audioPath, sessionId, source) => {
                 order.push(`start:${sessionId}`);
                 return new Promise((resolve) => {
                     const finish = () => {
@@ -78,7 +75,7 @@ const review_runtime_1 = require("./review-runtime");
                     }
                     resolveSecond = finish;
                 });
-            }),
+            },
         };
         const runtime = new review_runtime_1.ReviewRuntimeService(transcription);
         const firstCompleted = waitForEvent(runtime, "transcription-completed", (payload) => payload.job.sessionId === "session-1");
@@ -128,11 +125,18 @@ const review_runtime_1 = require("./review-runtime");
         });
     });
     (0, vitest_1.it)("surfaces runtime failures through a single failure channel", async () => {
+        let transcribeCallCount = 0;
         const transcription = {
-            analyzeTranscript: vitest_1.vi.fn(),
-            dispose: vitest_1.vi.fn().mockResolvedValue(undefined),
-            isModelAvailable: vitest_1.vi.fn().mockResolvedValue(false),
-            transcribeFile: vitest_1.vi.fn(),
+            analyzeTranscript: async () => ({
+                evidenceSpans: [],
+                findings: [],
+            }),
+            dispose: async () => undefined,
+            isModelAvailable: async () => false,
+            transcribeFile: async () => {
+                transcribeCallCount += 1;
+                return [];
+            },
         };
         const runtime = new review_runtime_1.ReviewRuntimeService(transcription);
         const failed = waitForEvent(runtime, "transcription-failed");
@@ -147,16 +151,16 @@ const review_runtime_1 = require("./review-runtime");
             }),
             job: { sessionId: "session-1" },
         });
-        (0, vitest_1.expect)(transcription.transcribeFile).not.toHaveBeenCalled();
+        (0, vitest_1.expect)(transcribeCallCount).toBe(0);
     });
     (0, vitest_1.it)("surfaces transcript-analysis failures after transcript completion", async () => {
         const transcription = {
-            analyzeTranscript: vitest_1.vi
-                .fn()
-                .mockRejectedValue(new Error("Local transcript analysis failed.")),
-            dispose: vitest_1.vi.fn().mockResolvedValue(undefined),
-            isModelAvailable: vitest_1.vi.fn().mockResolvedValue(true),
-            transcribeFile: vitest_1.vi.fn().mockResolvedValue([
+            analyzeTranscript: async () => {
+                throw new Error("Local transcript analysis failed.");
+            },
+            dispose: async () => undefined,
+            isModelAvailable: async () => true,
+            transcribeFile: async () => [
                 {
                     id: "segment-1",
                     sessionId: "session-1",
@@ -166,7 +170,7 @@ const review_runtime_1 = require("./review-runtime");
                     endOffsetMs: 1200,
                     source: "audio_import",
                 },
-            ]),
+            ],
         };
         const runtime = new review_runtime_1.ReviewRuntimeService(transcription);
         const completed = waitForEvent(runtime, "transcription-completed");
