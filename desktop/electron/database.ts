@@ -1,9 +1,15 @@
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import type {
+  ApprovedExport,
   AuditLogEntry,
   CaptureMode,
+  EvidenceSpan,
   ExportStatus,
+  Finding,
+  FindingStatus,
+  ReviewDecision,
+  ReviewDecisionOutcome,
   ReviewSession,
   ReviewStatus,
   TranscriptSegment,
@@ -24,6 +30,7 @@ export class LocalDatabase {
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("foreign_keys = ON");
     this.initializeSchema();
   }
 
@@ -102,6 +109,7 @@ export class LocalDatabase {
     updates: {
       transcriptStatus?: TranscriptStatus;
       reviewStatus?: ReviewStatus;
+      exportStatus?: ExportStatus;
       encounterEndedAt?: string;
       audioPath?: string;
     }
@@ -116,6 +124,7 @@ export class LocalDatabase {
       transcriptStatus:
         updates.transcriptStatus ?? currentSummary.session.transcriptStatus,
       reviewStatus: updates.reviewStatus ?? currentSummary.session.reviewStatus,
+      exportStatus: updates.exportStatus ?? currentSummary.session.exportStatus,
       encounterEndedAt:
         updates.encounterEndedAt ?? currentSummary.session.encounterEndedAt,
       updatedAt: new Date().toISOString(),
@@ -203,6 +212,173 @@ export class LocalDatabase {
       );
   }
 
+  replaceFindings(sessionId: string, findings: Finding[]): void {
+    this.db.prepare("DELETE FROM approved_exports WHERE session_id = ?").run(sessionId);
+    this.db.prepare("DELETE FROM review_decisions WHERE session_id = ?").run(sessionId);
+    this.db.prepare("DELETE FROM findings WHERE session_id = ?").run(sessionId);
+
+    for (const finding of findings) {
+      this.addFinding(finding);
+    }
+
+    this.updateSession(sessionId, {
+      exportStatus: "not_requested",
+    });
+    this.syncSessionReviewStatus(sessionId);
+  }
+
+  saveReviewDecision(input: {
+    sessionId: string;
+    findingId: string;
+    outcome: ReviewDecisionOutcome;
+    rationale?: string;
+    editedTitle?: string;
+    editedSummary?: string;
+    approvedEvidenceSpans?: EvidenceSpan[];
+    reviewedBy?: string;
+  }): DesktopSessionBundle | null {
+    const findingRow = this.db
+      .prepare(
+        `SELECT *
+         FROM findings
+         WHERE id = ? AND session_id = ?`
+      )
+      .get(input.findingId, input.sessionId) as Record<string, unknown> | undefined;
+
+    if (!findingRow) {
+      return null;
+    }
+
+    const finding = this.mapFinding(findingRow);
+    const reviewedAt = new Date().toISOString();
+    const existingDecisionId =
+      normalizeString(findingRow.review_decision_id) ??
+      (
+        this.db
+          .prepare(
+            `SELECT id
+             FROM review_decisions
+             WHERE finding_id = ? AND session_id = ?`
+          )
+          .get(input.findingId, input.sessionId) as
+          | Record<string, unknown>
+          | undefined
+      )?.id;
+    const decisionId =
+      typeof existingDecisionId === "string" ? existingDecisionId : uuidv4();
+    const approvedEvidenceSpans =
+      input.approvedEvidenceSpans ?? finding.evidenceSpans;
+
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO review_decisions (
+          id,
+          session_id,
+          finding_id,
+          outcome,
+          reviewed_by,
+          reviewed_at,
+          rationale,
+          edited_title,
+          edited_summary,
+          approved_evidence_spans
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        decisionId,
+        input.sessionId,
+        input.findingId,
+        input.outcome,
+        input.reviewedBy ?? DESKTOP_ACTOR_ID,
+        reviewedAt,
+        input.rationale ?? null,
+        input.editedTitle ?? null,
+        input.editedSummary ?? null,
+        JSON.stringify(approvedEvidenceSpans)
+      );
+
+    this.db
+      .prepare(
+        `UPDATE findings
+         SET status = ?,
+             review_decision_id = ?,
+             updated_at = ?
+         WHERE id = ? AND session_id = ?`
+      )
+      .run(
+        reviewStatusFromOutcome(input.outcome),
+        decisionId,
+        reviewedAt,
+        input.findingId,
+        input.sessionId
+      );
+
+    this.syncSessionReviewStatus(input.sessionId);
+    this.addAuditLog({
+      sessionId: input.sessionId,
+      action: "finding_reviewed",
+      actorId: input.reviewedBy ?? DESKTOP_ACTOR_ID,
+      details: {
+        findingId: input.findingId,
+        outcome: input.outcome,
+      },
+      timestamp: reviewedAt,
+    });
+
+    return this.getSession(input.sessionId);
+  }
+
+  saveApprovedExport(approvedExport: ApprovedExport): DesktopSessionBundle | null {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO approved_exports (
+          id,
+          session_id,
+          status,
+          summary,
+          findings_payload,
+          approved_by,
+          approved_at,
+          destination,
+          sent_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        approvedExport.id,
+        approvedExport.sessionId,
+        approvedExport.status,
+        approvedExport.summary,
+        JSON.stringify(approvedExport.findings),
+        approvedExport.approvedBy,
+        approvedExport.approvedAt,
+        approvedExport.destination ?? null,
+        approvedExport.sentAt ?? null
+      );
+
+    const sessionSummary = this.updateSession(approvedExport.sessionId, {
+      exportStatus: approvedExport.status,
+    });
+
+    this.addAuditLog({
+      sessionId: approvedExport.sessionId,
+      action:
+        approvedExport.status === "sent" ? "export_sent" : "export_approved",
+      actorId: approvedExport.approvedBy,
+      details: {
+        exportId: approvedExport.id,
+        status: approvedExport.status,
+        destination: approvedExport.destination,
+      },
+      timestamp: approvedExport.approvedAt,
+    });
+
+    if (sessionSummary) {
+      return this.getSession(approvedExport.sessionId);
+    }
+
+    return null;
+  }
+
   getSession(sessionId: string): DesktopSessionBundle | null {
     const sessionRow = this.db
       .prepare("SELECT * FROM sessions WHERE id = ?")
@@ -226,14 +402,45 @@ export class LocalDatabase {
       )
       .all(sessionId) as Record<string, unknown>[];
 
+    const findingRows = this.db
+      .prepare(
+        `SELECT *
+         FROM findings
+         WHERE session_id = ?
+         ORDER BY created_at ASC, id ASC`
+      )
+      .all(sessionId) as Record<string, unknown>[];
+
+    const reviewDecisionRows = this.db
+      .prepare(
+        `SELECT *
+         FROM review_decisions
+         WHERE session_id = ?
+         ORDER BY reviewed_at ASC, id ASC`
+      )
+      .all(sessionId) as Record<string, unknown>[];
+
+    const approvedExportRows = this.db
+      .prepare(
+        `SELECT *
+         FROM approved_exports
+         WHERE session_id = ?
+         ORDER BY approved_at ASC, id ASC`
+      )
+      .all(sessionId) as Record<string, unknown>[];
+
     return {
       session: this.mapSession(sessionRow),
       transcriptSegments: transcriptRows.map((row) =>
         this.mapTranscriptSegment(row)
       ),
-      findings: [],
-      reviewDecisions: [],
-      approvedExports: [],
+      findings: findingRows.map((row) => this.mapFinding(row)),
+      reviewDecisions: reviewDecisionRows.map((row) =>
+        this.mapReviewDecision(row)
+      ),
+      approvedExports: approvedExportRows.map((row) =>
+        this.mapApprovedExport(row)
+      ),
       auditLogEntries: auditRows.map((row) => this.mapAuditLogEntry(row)),
       audioPath: normalizeString(sessionRow.audio_path),
     };
@@ -404,6 +611,50 @@ export class LocalDatabase {
         FOREIGN KEY (session_id) REFERENCES sessions(id)
       );
 
+      CREATE TABLE IF NOT EXISTS findings (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        evidence_spans TEXT NOT NULL DEFAULT '[]',
+        detected_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        review_decision_id TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS review_decisions (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        finding_id TEXT NOT NULL UNIQUE,
+        outcome TEXT NOT NULL,
+        reviewed_by TEXT NOT NULL,
+        reviewed_at TEXT NOT NULL,
+        rationale TEXT,
+        edited_title TEXT,
+        edited_summary TEXT,
+        approved_evidence_spans TEXT NOT NULL DEFAULT '[]',
+        FOREIGN KEY (session_id) REFERENCES sessions(id),
+        FOREIGN KEY (finding_id) REFERENCES findings(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS approved_exports (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        findings_payload TEXT NOT NULL DEFAULT '[]',
+        approved_by TEXT NOT NULL,
+        approved_at TEXT NOT NULL,
+        destination TEXT,
+        sent_at TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      );
+
       CREATE TABLE IF NOT EXISTS audit_log (
         id TEXT PRIMARY KEY,
         session_id TEXT,
@@ -414,6 +665,11 @@ export class LocalDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_segments_session ON transcript_segments(session_id);
+      CREATE INDEX IF NOT EXISTS idx_findings_session ON findings(session_id);
+      CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
+      CREATE INDEX IF NOT EXISTS idx_review_decisions_session ON review_decisions(session_id);
+      CREATE INDEX IF NOT EXISTS idx_review_decisions_finding ON review_decisions(finding_id);
+      CREATE INDEX IF NOT EXISTS idx_exports_session ON approved_exports(session_id);
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
     `);
@@ -444,6 +700,22 @@ export class LocalDatabase {
     this.ensureColumn("transcript_segments", "speaker_confidence", "REAL");
     this.ensureColumn("transcript_segments", "source", "TEXT");
 
+    this.ensureColumn("findings", "evidence_spans", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("findings", "detected_by", "TEXT");
+    this.ensureColumn("findings", "review_decision_id", "TEXT");
+
+    this.ensureColumn(
+      "review_decisions",
+      "approved_evidence_spans",
+      "TEXT NOT NULL DEFAULT '[]'"
+    );
+
+    this.ensureColumn(
+      "approved_exports",
+      "findings_payload",
+      "TEXT NOT NULL DEFAULT '[]'"
+    );
+
     this.ensureColumn("audit_log", "session_id", "TEXT");
     this.ensureColumn("audit_log", "actor_id", "TEXT");
   }
@@ -468,6 +740,137 @@ export class LocalDatabase {
         entry.actorId ?? null,
         JSON.stringify(entry.details)
       );
+  }
+
+  private addFinding(finding: Finding): void {
+    this.db
+      .prepare(
+        `INSERT INTO findings (
+          id,
+          session_id,
+          code,
+          title,
+          summary,
+          status,
+          confidence,
+          evidence_spans,
+          detected_by,
+          created_at,
+          updated_at,
+          review_decision_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        finding.id,
+        finding.sessionId,
+        finding.code,
+        finding.title,
+        finding.summary,
+        finding.status,
+        finding.confidence,
+        JSON.stringify(finding.evidenceSpans),
+        finding.detectedBy,
+        finding.createdAt,
+        finding.updatedAt,
+        finding.reviewDecisionId ?? null
+      );
+  }
+
+  private mapFinding(row: Record<string, unknown>): Finding {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      code: normalizeString(row.code) ?? "unknown-finding",
+      title: normalizeString(row.title) ?? "Untitled finding",
+      summary: normalizeString(row.summary) ?? "",
+      status: coerceFindingStatus(normalizeString(row.status), "draft"),
+      confidence: normalizeNumber(row.confidence) ?? 0,
+      evidenceSpans: parseJsonArray<EvidenceSpan>(row.evidence_spans),
+      detectedBy: coerceFindingSource(normalizeString(row.detected_by), "rules"),
+      createdAt: normalizeString(row.created_at) ?? new Date().toISOString(),
+      updatedAt:
+        normalizeString(row.updated_at) ??
+        normalizeString(row.created_at) ??
+        new Date().toISOString(),
+      reviewDecisionId: normalizeString(row.review_decision_id),
+    };
+  }
+
+  private mapReviewDecision(row: Record<string, unknown>): ReviewDecision {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      findingId: String(row.finding_id),
+      outcome: coerceReviewDecisionOutcome(
+        normalizeString(row.outcome),
+        "uncertain"
+      ),
+      reviewedBy: normalizeString(row.reviewed_by) ?? DESKTOP_ACTOR_ID,
+      reviewedAt: normalizeString(row.reviewed_at) ?? new Date().toISOString(),
+      rationale: normalizeString(row.rationale),
+      editedTitle: normalizeString(row.edited_title),
+      editedSummary: normalizeString(row.edited_summary),
+      approvedEvidenceSpans: parseJsonArray<EvidenceSpan>(
+        row.approved_evidence_spans
+      ),
+    };
+  }
+
+  private mapApprovedExport(row: Record<string, unknown>): ApprovedExport {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      status: coerceApprovedExportStatus(normalizeString(row.status), "draft"),
+      summary: normalizeString(row.summary) ?? "",
+      findings: parseJsonArray<ApprovedExport["findings"][number]>(
+        row.findings_payload
+      ),
+      approvedBy: normalizeString(row.approved_by) ?? DESKTOP_ACTOR_ID,
+      approvedAt: normalizeString(row.approved_at) ?? new Date().toISOString(),
+      destination: normalizeString(row.destination),
+      sentAt: normalizeString(row.sent_at),
+    };
+  }
+
+  private syncSessionReviewStatus(sessionId: string): void {
+    const sessionSummary = this.getSessionSummary(sessionId);
+    if (!sessionSummary) {
+      return;
+    }
+
+    const counts = this.db
+      .prepare(
+        `SELECT
+            COUNT(*) AS total_findings,
+            SUM(CASE WHEN status IN ('draft', 'pending_review') THEN 1 ELSE 0 END) AS pending_findings
+         FROM findings
+         WHERE session_id = ?`
+      )
+      .get(sessionId) as Record<string, unknown>;
+
+    const totalFindings = normalizeNumber(counts.total_findings) ?? 0;
+    const pendingFindings = normalizeNumber(counts.pending_findings) ?? 0;
+    const reviewedFindings = totalFindings - pendingFindings;
+
+    let nextReviewStatus = sessionSummary.session.reviewStatus;
+    if (totalFindings > 0) {
+      if (reviewedFindings === 0) {
+        nextReviewStatus = "ready";
+      } else if (pendingFindings > 0) {
+        nextReviewStatus = "in_review";
+      } else {
+        nextReviewStatus = "completed";
+      }
+    }
+
+    if (
+      totalFindings > 0 ||
+      nextReviewStatus !== sessionSummary.session.reviewStatus
+    ) {
+      this.updateSession(sessionId, {
+        reviewStatus: nextReviewStatus,
+      });
+    }
   }
 
   private mapSession(row: Record<string, unknown>): ReviewSession {
@@ -628,6 +1031,19 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
   }
 }
 
+function parseJsonArray<T>(value: unknown): T[] {
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function coerceCaptureMode(
   value: string | undefined,
   fallback: CaptureMode
@@ -673,6 +1089,69 @@ function coerceExportStatus(
     value === "sent"
     ? value
     : fallback;
+}
+
+function coerceApprovedExportStatus(
+  value: string | undefined,
+  fallback: ApprovedExport["status"]
+): ApprovedExport["status"] {
+  return value === "draft" || value === "approved" || value === "sent"
+    ? value
+    : fallback;
+}
+
+function coerceFindingStatus(
+  value: string | undefined,
+  fallback: FindingStatus
+): FindingStatus {
+  return value === "draft" ||
+    value === "pending_review" ||
+    value === "accepted" ||
+    value === "rejected" ||
+    value === "uncertain" ||
+    value === "revised"
+    ? value
+    : fallback;
+}
+
+function coerceFindingSource(
+  value: string | undefined,
+  fallback: Finding["detectedBy"]
+): Finding["detectedBy"] {
+  return value === "rules" ||
+    value === "local_llm" ||
+    value === "cloud_llm" ||
+    value === "human"
+    ? value
+    : fallback;
+}
+
+function coerceReviewDecisionOutcome(
+  value: string | undefined,
+  fallback: ReviewDecisionOutcome
+): ReviewDecisionOutcome {
+  return value === "accepted" ||
+    value === "rejected" ||
+    value === "uncertain" ||
+    value === "edited"
+    ? value
+    : fallback;
+}
+
+function reviewStatusFromOutcome(
+  outcome: ReviewDecisionOutcome
+): FindingStatus {
+  switch (outcome) {
+    case "accepted":
+      return "accepted";
+    case "rejected":
+      return "rejected";
+    case "edited":
+      return "revised";
+    case "uncertain":
+    default:
+      return "uncertain";
+  }
 }
 
 function coerceSpeakerLabel(

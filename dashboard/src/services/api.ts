@@ -1,3 +1,17 @@
+import type {
+  ApprovedEvidenceExcerpt,
+  ApprovedExport,
+  ApprovedExportFinding,
+  EvidenceSpan,
+  ExportStatus,
+  Finding,
+  FindingStatus,
+  ReviewDecisionOutcome,
+  ReviewSession,
+  ReviewStatus,
+  SessionConsent,
+} from "@doctor-auditor/shared";
+
 const API_BASE = "/api";
 const AUTH_STORAGE_KEY = "doctor-auditor.dashboard-auth";
 const DEMO_CREDENTIALS = {
@@ -19,9 +33,20 @@ type StoredAuthSession = AuthResponse & {
   email: string;
 };
 
+type DemoSeedResponse = {
+  seeded: boolean;
+  sessions: number;
+  findings: number;
+  approvedExports: number;
+};
+
 let authToken: string | null = null;
 let demoBootstrapPromise: Promise<string | null> | null = null;
+let demoSeedPromise: Promise<void> | null = null;
 let lastBootstrapFailureAt = 0;
+let currentOrganizationId: string | null = null;
+let currentEmail: string | null = null;
+let demoDatasetReady = false;
 
 function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -29,6 +54,9 @@ function canUseStorage(): boolean {
 
 function persistSession(session: StoredAuthSession | null) {
   authToken = session?.access_token ?? null;
+  currentOrganizationId = session?.organization_id ?? null;
+  currentEmail = session?.email ?? null;
+  demoDatasetReady = false;
 
   if (!canUseStorage()) {
     return;
@@ -55,6 +83,8 @@ function restoreStoredToken() {
   try {
     const parsed = JSON.parse(raw) as StoredAuthSession;
     authToken = parsed.access_token;
+    currentOrganizationId = parsed.organization_id;
+    currentEmail = parsed.email;
   } catch {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
   }
@@ -130,15 +160,56 @@ restoreStoredToken();
 
 export function setToken(token: string) {
   authToken = token;
+  demoDatasetReady = false;
+}
+
+function shouldSeedDemoDataset(): boolean {
+  return (
+    authToken !== null &&
+    currentOrganizationId === DEMO_CREDENTIALS.organization_id &&
+    currentEmail === DEMO_CREDENTIALS.email
+  );
+}
+
+async function ensureDemoDataset(): Promise<void> {
+  if (!shouldSeedDemoDataset() || demoDatasetReady) {
+    return;
+  }
+
+  if (demoSeedPromise) {
+    return demoSeedPromise;
+  }
+
+  demoSeedPromise = request<DemoSeedResponse>(
+    "/demo/seed",
+    {
+      method: "POST",
+    },
+    true,
+    false
+  )
+    .then(() => {
+      demoDatasetReady = true;
+    })
+    .finally(() => {
+      demoSeedPromise = null;
+    });
+
+  return demoSeedPromise;
 }
 
 async function request<T>(
   path: string,
   options: RequestInit = {},
-  allowRetry = true
+  allowRetry = true,
+  ensureSeed = true
 ): Promise<T> {
   if (!path.startsWith("/auth/") && !authToken) {
     await ensureDemoSession();
+  }
+
+  if (!path.startsWith("/auth/") && ensureSeed && path !== "/demo/seed") {
+    await ensureDemoDataset();
   }
 
   const headers: Record<string, string> = {
@@ -160,7 +231,7 @@ async function request<T>(
       persistSession(null);
       await ensureDemoSession();
       if (authToken) {
-        return request<T>(path, options, false);
+        return request<T>(path, options, false, ensureSeed);
       }
     }
 
@@ -186,104 +257,21 @@ function buildQuery(
   return query ? `?${query}` : "";
 }
 
-export type ReviewStatus =
-  | "not_started"
-  | "ready"
-  | "in_review"
-  | "completed";
-
-export type ExportStatus =
-  | "not_requested"
-  | "draft"
-  | "approved"
-  | "sent";
-
-export type FindingStatus =
-  | "draft"
-  | "pending_review"
-  | "accepted"
-  | "rejected"
-  | "uncertain"
-  | "revised";
-
-export interface SessionConsent {
-  recordedWithConsent: boolean;
-  exportAllowed: boolean;
-  capturedAt?: string;
-  capturedBy?: string;
-}
-
-export interface ReviewSession {
-  id: string;
-  clinicianId: string;
-  organizationId?: string;
-  encounterStartedAt: string;
-  encounterEndedAt?: string;
-  captureMode: "audio_import" | "live_capture" | "manual_entry";
-  transcriptStatus: "not_started" | "in_progress" | "completed" | "failed";
-  reviewStatus: ReviewStatus;
-  exportStatus: ExportStatus;
-  createdAt: string;
-  updatedAt: string;
-  consent: SessionConsent;
-}
-
-export interface EvidenceSpan {
-  id: string;
-  transcriptSegmentId: string;
-  excerpt: string;
-  startOffsetMs: number;
-  endOffsetMs: number;
-  startTextOffset?: number;
-  endTextOffset?: number;
-}
-
-export interface Finding {
-  id: string;
-  sessionId: string;
-  code: string;
-  title: string;
-  summary: string;
-  status: FindingStatus;
-  confidence: number;
-  evidenceSpans: EvidenceSpan[];
-  detectedBy: "rules" | "local_llm" | "cloud_llm" | "human";
-  createdAt: string;
-  updatedAt: string;
-  reviewDecisionId?: string;
-}
-
-export interface ApprovedEvidenceExcerpt {
-  sourceEvidenceSpanId: string;
-  sourceTranscriptSegmentId: string;
-  excerpt: string;
-  startOffsetMs: number;
-  endOffsetMs: number;
-}
-
-export interface ApprovedExportFinding {
-  findingId: string;
-  code: string;
-  title: string;
-  summary: string;
-  reviewDecisionId: string;
-  evidenceExcerpts: ApprovedEvidenceExcerpt[];
-}
-
-export interface ApprovedExport {
-  id: string;
-  sessionId: string;
-  status: "draft" | "approved" | "sent";
-  summary: string;
-  findings: ApprovedExportFinding[];
-  approvedBy: string;
-  approvedAt: string;
-  destination?: string;
-  sentAt?: string;
-}
+export type {
+  ApprovedEvidenceExcerpt,
+  ApprovedExport,
+  ApprovedExportFinding,
+  EvidenceSpan,
+  ExportStatus,
+  Finding,
+  FindingStatus,
+  ReviewSession,
+  ReviewStatus,
+  SessionConsent,
+};
 
 export interface ReviewDecisionCreateRequest {
-  outcome: "accepted" | "rejected" | "uncertain" | "edited";
+  outcome: ReviewDecisionOutcome;
   reviewedBy: string;
   rationale?: string;
   editedTitle?: string;

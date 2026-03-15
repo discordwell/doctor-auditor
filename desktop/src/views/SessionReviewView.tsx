@@ -31,10 +31,9 @@ export default function SessionReviewView({
   const [bundle, setBundle] = useState<DesktopSessionBundle | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
+  const [actionErrorMessage, setActionErrorMessage] = useState("");
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
-  const [localOutcomes, setLocalOutcomes] = useState<
-    Record<string, ReviewDecisionOutcome>
-  >({});
+  const [savingFindingId, setSavingFindingId] = useState<string | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
@@ -48,6 +47,7 @@ export default function SessionReviewView({
 
       setLoadState("loading");
       setErrorMessage("");
+      setActionErrorMessage("");
 
       try {
         const nextBundle = await window.doctorAuditor.session.get(sessionId);
@@ -91,20 +91,6 @@ export default function SessionReviewView({
     }
 
     const workspace = buildReviewWorkspace(bundle);
-    const nextOutcomes: Record<string, ReviewDecisionOutcome> = {};
-
-    workspace.findings.forEach((finding) => {
-      const persistedOutcome = getPersistedOutcome(
-        finding,
-        bundle.reviewDecisions
-      );
-
-      if (persistedOutcome) {
-        nextOutcomes[finding.id] = persistedOutcome;
-      }
-    });
-
-    setLocalOutcomes(nextOutcomes);
     setSelectedFindingId((current) => {
       if (current && workspace.findings.some((finding) => finding.id === current)) {
         return current;
@@ -114,6 +100,41 @@ export default function SessionReviewView({
     });
   }, [bundle]);
 
+  async function saveReviewDecision(
+    findingId: string,
+    outcome: ReviewDecisionOutcome
+  ): Promise<void> {
+    if (!window.doctorAuditor || !bundle) {
+      setActionErrorMessage("Desktop review persistence is unavailable.");
+      return;
+    }
+
+    setActionErrorMessage("");
+    setSavingFindingId(findingId);
+
+    try {
+      const nextBundle = await window.doctorAuditor.session.saveReviewDecision({
+        sessionId: bundle.session.id,
+        findingId,
+        outcome,
+      });
+
+      if (!nextBundle) {
+        throw new Error("The selected finding could not be saved.");
+      }
+
+      setBundle(nextBundle);
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to save the local review decision."
+      );
+    } finally {
+      setSavingFindingId(null);
+    }
+  }
+
   const workspace = bundle ? buildReviewWorkspace(bundle) : null;
   const findings = workspace?.findings ?? [];
   const transcriptSegments = workspace?.transcriptSegments ?? [];
@@ -121,14 +142,10 @@ export default function SessionReviewView({
     findings.find((finding) => finding.id === selectedFindingId) ?? findings[0];
   const selectedOutcome =
     selectedFinding && bundle
-      ? localOutcomes[selectedFinding.id] ??
-        getPersistedOutcome(selectedFinding, bundle.reviewDecisions)
+      ? getPersistedOutcome(selectedFinding, bundle.reviewDecisions)
       : undefined;
   const reviewedCount = findings.filter((finding) =>
-    Boolean(
-      localOutcomes[finding.id] ||
-        (bundle && getPersistedOutcome(finding, bundle.reviewDecisions))
-    )
+    Boolean(bundle && getPersistedOutcome(finding, bundle.reviewDecisions))
   ).length;
 
   if (loadState === "loading") {
@@ -254,6 +271,12 @@ export default function SessionReviewView({
         </div>
       )}
 
+      {actionErrorMessage && (
+        <div className="session-review__notice" role="alert">
+          {actionErrorMessage}
+        </div>
+      )}
+
       <div className="session-review__layout">
         <section className="session-review__panel">
           <div className="session-review__panel-header">
@@ -349,10 +372,12 @@ export default function SessionReviewView({
             <div className="session-review__findings-list">
               {findings.length > 0 ? (
                 findings.map((finding) => {
-                  const appliedOutcome =
-                    localOutcomes[finding.id] ??
-                    getPersistedOutcome(finding, bundle.reviewDecisions);
+                  const appliedOutcome = getPersistedOutcome(
+                    finding,
+                    bundle.reviewDecisions
+                  );
                   const tone = getDecisionTone(appliedOutcome);
+                  const isSavingDecision = savingFindingId === finding.id;
 
                   return (
                     <article
@@ -401,13 +426,11 @@ export default function SessionReviewView({
                             onClick={(event) => {
                               event.stopPropagation();
                               setSelectedFindingId(finding.id);
-                              setLocalOutcomes((current) => ({
-                                ...current,
-                                [finding.id]: outcome,
-                              }));
+                              void saveReviewDecision(finding.id, outcome);
                             }}
+                            disabled={isSavingDecision}
                           >
-                            {label}
+                            {isSavingDecision ? "Saving..." : label}
                           </button>
                         ))}
                       </div>
@@ -432,7 +455,7 @@ export default function SessionReviewView({
               </div>
               <p className="session-review__panel-note">
                 {selectedFinding
-                  ? "Review outcome is stored in local UI state for this pass."
+                  ? "Review outcome is persisted in the local desktop database."
                   : "Open a finding to inspect linked evidence."}
               </p>
             </div>

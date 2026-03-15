@@ -7,8 +7,10 @@ from fastapi.testclient import TestClient
 TEST_DATABASE_PATH = Path(__file__).with_suffix(".sqlite3").resolve()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
 
+from app.api.review_models import SessionBundleModel
 from app.main import app
-from app.models.database import Base, engine
+from app.models.database import Base, async_session, engine
+from app.services.review_repository import upsert_session_bundle
 
 
 def reset_database() -> None:
@@ -112,6 +114,25 @@ def session_bundle_payload() -> dict:
     }
 
 
+def review_session_payload() -> dict:
+    return session_bundle_payload()["session"]
+
+
+def seed_review_state() -> None:
+    async def _seed() -> None:
+        bundle_payload = session_bundle_payload()
+        bundle_payload["transcriptSegments"] = []
+
+        async with async_session() as db:
+            await upsert_session_bundle(
+                db=db,
+                organization_id="demo-health",
+                payload=SessionBundleModel.model_validate(bundle_payload),
+            )
+
+    asyncio.run(_seed())
+
+
 def approved_export_payload() -> dict:
     return {
         "id": "export-001",
@@ -168,13 +189,14 @@ def test_review_workflow_round_trip() -> None:
 
         create_session = client.post(
             "/api/sessions/",
-            json=session_bundle_payload(),
+            json=review_session_payload(),
             headers=headers,
         )
         assert create_session.status_code == 201, create_session.text
-        created_bundle = create_session.json()
-        assert created_bundle["session"]["id"] == "session-integration-001"
-        assert len(created_bundle["findings"]) == 1
+        created_session = create_session.json()
+        assert created_session["id"] == "session-integration-001"
+
+        seed_review_state()
 
         listed_sessions = client.get("/api/sessions/", headers=headers)
         assert listed_sessions.status_code == 200, listed_sessions.text
@@ -211,13 +233,59 @@ def test_review_workflow_round_trip() -> None:
         assert listed_exports.status_code == 200, listed_exports.text
         assert listed_exports.json()[0]["id"] == "export-001"
 
-        session_bundle = client.get(
+        session_record = client.get(
             "/api/sessions/session-integration-001",
             headers=headers,
         )
-        assert session_bundle.status_code == 200, session_bundle.text
-        assert session_bundle.json()["session"]["reviewStatus"] == "completed"
-        assert session_bundle.json()["session"]["exportStatus"] == "approved"
+        assert session_record.status_code == 200, session_record.text
+        assert session_record.json()["reviewStatus"] == "completed"
+        assert session_record.json()["exportStatus"] == "approved"
+        assert "transcriptSegments" not in session_record.json()
+        assert "findings" not in session_record.json()
+
+
+def test_sessions_endpoint_rejects_full_bundle_payload() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        response = client.post(
+            "/api/sessions/",
+            json=session_bundle_payload(),
+            headers=headers,
+        )
+
+        assert response.status_code == 422, response.text
+
+
+def test_session_detail_returns_metadata_only() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        create_session = client.post(
+            "/api/sessions/",
+            json=review_session_payload(),
+            headers=headers,
+        )
+        assert create_session.status_code == 201, create_session.text
+
+        seed_review_state()
+
+        response = client.get(
+            "/api/sessions/session-integration-001",
+            headers=headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == "session-integration-001"
+        assert "transcriptSegments" not in response.json()
+        assert "findings" not in response.json()
+        assert "reviewDecisions" not in response.json()
+        assert "approvedExports" not in response.json()
+        assert "auditLogEntries" not in response.json()
 
 
 def test_approved_export_rejects_raw_transcript_fields() -> None:
@@ -228,10 +296,12 @@ def test_approved_export_rejects_raw_transcript_fields() -> None:
 
         create_session = client.post(
             "/api/sessions/",
-            json=session_bundle_payload(),
+            json=review_session_payload(),
             headers=headers,
         )
         assert create_session.status_code == 201, create_session.text
+
+        seed_review_state()
 
         decision_id = create_review_decision(client, headers)
         export_payload = approved_export_payload()
@@ -261,10 +331,12 @@ def test_approved_export_rejects_audio_upload_fields() -> None:
 
         create_session = client.post(
             "/api/sessions/",
-            json=session_bundle_payload(),
+            json=review_session_payload(),
             headers=headers,
         )
         assert create_session.status_code == 201, create_session.text
+
+        seed_review_state()
 
         decision_id = create_review_decision(client, headers)
         export_payload = approved_export_payload()
@@ -292,10 +364,12 @@ def test_approved_export_requires_accepted_or_edited_review_decision() -> None:
 
         create_session = client.post(
             "/api/sessions/",
-            json=session_bundle_payload(),
+            json=review_session_payload(),
             headers=headers,
         )
         assert create_session.status_code == 201, create_session.text
+
+        seed_review_state()
 
         decision_id = create_review_decision(client, headers, outcome="uncertain")
         export_payload = approved_export_payload()

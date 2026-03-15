@@ -3,6 +3,7 @@ import type {
   DesktopSessionSummary,
   LiveCaptureError,
   LiveCaptureStatus,
+  PersistReviewDecisionRequest,
   SessionImportProgress,
   SessionIntakeRequest,
 } from "../src/types/electron";
@@ -42,6 +43,8 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
   session: {
     getAll: () => ipcRenderer.invoke("session:get-all"),
     get: (sessionId: string) => ipcRenderer.invoke("session:get", sessionId),
+    saveReviewDecision: (request: PersistReviewDecisionRequest) =>
+      ipcRenderer.invoke("session:save-review-decision", request),
     importAudio: (request: SessionIntakeRequest) =>
       ipcRenderer.invoke("session:import-audio", request),
     onImportProgress: (

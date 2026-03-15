@@ -38,6 +38,8 @@ AuditAction = Literal[
 
 
 class SessionConsentModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     recordedWithConsent: bool
     exportAllowed: bool
     capturedAt: str | None = None
@@ -45,6 +47,8 @@ class SessionConsentModel(BaseModel):
 
 
 class ReviewSessionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     clinicianId: str
     organizationId: str | None = None

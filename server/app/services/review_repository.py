@@ -99,6 +99,36 @@ def _review_session_model(record: ReviewSessionRecord) -> ReviewSessionModel:
     )
 
 
+def _apply_review_session_payload(
+    record: ReviewSessionRecord,
+    organization_id: str,
+    session_payload: ReviewSessionModel,
+) -> None:
+    record.clinician_id = session_payload.clinicianId
+    record.organization_id = organization_id
+    record.encounter_started_at = (
+        _parse_timestamp(session_payload.encounterStartedAt)
+        or datetime.now(timezone.utc)
+    )
+    record.encounter_ended_at = _parse_timestamp(session_payload.encounterEndedAt)
+    record.capture_mode = session_payload.captureMode
+    record.transcript_status = session_payload.transcriptStatus
+    record.review_status = session_payload.reviewStatus
+    record.export_status = session_payload.exportStatus
+    record.created_at = _parse_timestamp(session_payload.createdAt) or datetime.now(
+        timezone.utc
+    )
+    record.updated_at = _parse_timestamp(session_payload.updatedAt) or datetime.now(
+        timezone.utc
+    )
+    record.consent_recorded_with_consent = (
+        session_payload.consent.recordedWithConsent
+    )
+    record.consent_export_allowed = session_payload.consent.exportAllowed
+    record.consent_captured_at = _parse_timestamp(session_payload.consent.capturedAt)
+    record.consent_captured_by = session_payload.consent.capturedBy
+
+
 def _transcript_segment_model(
     record: TranscriptSegmentRecord,
 ) -> TranscriptSegmentModel:
@@ -292,6 +322,20 @@ async def _session_record(
     session_id: str,
 ) -> ReviewSessionRecord | None:
     result = await db.execute(
+        select(ReviewSessionRecord).where(
+            ReviewSessionRecord.id == session_id,
+            ReviewSessionRecord.organization_id == organization_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _session_record_with_related(
+    db: AsyncSession,
+    organization_id: str,
+    session_id: str,
+) -> ReviewSessionRecord | None:
+    result = await db.execute(
         select(ReviewSessionRecord)
         .options(*_SESSION_BUNDLE_LOADERS)
         .where(
@@ -326,12 +370,41 @@ async def list_sessions(
     return [_review_session_model(record) for record in result.scalars().all()]
 
 
+async def get_session(
+    db: AsyncSession,
+    organization_id: str,
+    session_id: str,
+) -> ReviewSessionModel | None:
+    record = await _session_record(db, organization_id, session_id)
+    if record is None:
+        return None
+    return _review_session_model(record)
+
+
+async def upsert_session(
+    db: AsyncSession,
+    organization_id: str,
+    payload: ReviewSessionModel,
+) -> ReviewSessionModel:
+    record = await _session_record(db, organization_id, payload.id)
+
+    if record is None:
+        record = ReviewSessionRecord(id=payload.id)
+        db.add(record)
+
+    _apply_review_session_payload(record, organization_id, payload)
+
+    await db.commit()
+    await db.refresh(record)
+    return _review_session_model(record)
+
+
 async def get_session_bundle(
     db: AsyncSession,
     organization_id: str,
     session_id: str,
 ) -> SessionBundleModel | None:
-    record = await _session_record(db, organization_id, session_id)
+    record = await _session_record_with_related(db, organization_id, session_id)
     if record is None:
         return None
     return _session_bundle_model(record)
@@ -343,35 +416,13 @@ async def upsert_session_bundle(
     payload: SessionBundleModel,
 ) -> SessionBundleModel:
     session_payload = payload.session
-    record = await _session_record(db, organization_id, session_payload.id)
+    record = await _session_record_with_related(db, organization_id, session_payload.id)
 
     if record is None:
         record = ReviewSessionRecord(id=session_payload.id)
         db.add(record)
 
-    record.clinician_id = session_payload.clinicianId
-    record.organization_id = organization_id
-    record.encounter_started_at = (
-        _parse_timestamp(session_payload.encounterStartedAt)
-        or datetime.now(timezone.utc)
-    )
-    record.encounter_ended_at = _parse_timestamp(session_payload.encounterEndedAt)
-    record.capture_mode = session_payload.captureMode
-    record.transcript_status = session_payload.transcriptStatus
-    record.review_status = session_payload.reviewStatus
-    record.export_status = session_payload.exportStatus
-    record.created_at = _parse_timestamp(session_payload.createdAt) or datetime.now(
-        timezone.utc
-    )
-    record.updated_at = _parse_timestamp(session_payload.updatedAt) or datetime.now(
-        timezone.utc
-    )
-    record.consent_recorded_with_consent = (
-        session_payload.consent.recordedWithConsent
-    )
-    record.consent_export_allowed = session_payload.consent.exportAllowed
-    record.consent_captured_at = _parse_timestamp(session_payload.consent.capturedAt)
-    record.consent_captured_by = session_payload.consent.capturedBy
+    _apply_review_session_payload(record, organization_id, session_payload)
 
     record.transcript_segments = [
         _transcript_segment_record(item) for item in payload.transcriptSegments
@@ -388,7 +439,9 @@ async def upsert_session_bundle(
     ]
 
     await db.commit()
-    refreshed = await _session_record(db, organization_id, session_payload.id)
+    refreshed = await _session_record_with_related(
+        db, organization_id, session_payload.id
+    )
     if refreshed is None:
         raise RuntimeError("session bundle could not be reloaded after persistence")
     return _session_bundle_model(refreshed)
@@ -653,7 +706,7 @@ async def ingest_approved_export(
     organization_id: str,
     payload: ApprovedExportIngestRequest,
 ) -> ApprovedExportModel:
-    session = await _session_record(db, organization_id, payload.sessionId)
+    session = await _session_record_with_related(db, organization_id, payload.sessionId)
     if session is None:
         raise ApprovedExportIngestError(
             status_code=404,

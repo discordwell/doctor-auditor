@@ -1,4 +1,9 @@
-import type { ReviewSession, SessionBundle } from "@doctor-auditor/shared";
+import type {
+  EvidenceSpan,
+  ReviewDecisionOutcome,
+  ReviewSession,
+  SessionBundle,
+} from "@doctor-auditor/shared";
 
 export interface SessionIntakeRequest {
   clinicianId: string;
@@ -14,6 +19,16 @@ export interface DesktopSessionSummary {
 
 export interface DesktopSessionBundle extends SessionBundle {
   audioPath?: string;
+}
+
+export interface PersistReviewDecisionRequest {
+  sessionId: string;
+  findingId: string;
+  outcome: ReviewDecisionOutcome;
+  rationale?: string;
+  editedTitle?: string;
+  editedSummary?: string;
+  approvedEvidenceSpans?: EvidenceSpan[];
 }
 
 export interface AudioDevice {
@@ -71,6 +86,9 @@ export interface DoctorAuditorAPI {
   session: {
     getAll: () => Promise<DesktopSessionSummary[]>;
     get: (sessionId: string) => Promise<DesktopSessionBundle | null>;
+    saveReviewDecision: (
+      request: PersistReviewDecisionRequest
+    ) => Promise<DesktopSessionBundle | null>;
     importAudio: (
       request: SessionIntakeRequest
     ) => Promise<

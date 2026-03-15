@@ -7,8 +7,11 @@ import { LocalDatabase } from "./database";
 import { TranscriptionService } from "./transcription";
 import type {
   DesktopSessionSummary,
+  PersistReviewDecisionRequest,
   SessionIntakeRequest,
 } from "./review-models";
+
+const DESKTOP_REVIEWER_ID = "desktop";
 
 let mainWindow: BrowserWindow | null = null;
 let audioCapture: AudioCapture | null = null;
@@ -43,16 +46,25 @@ function createWindow(): void {
     title: "Doctor Auditor",
   });
 
-  if (process.env.NODE_ENV === "development") {
-    mainWindow.loadURL("http://localhost:5173");
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
-  }
+  void loadWindowContent(mainWindow);
 
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+async function loadWindowContent(window: BrowserWindow): Promise<void> {
+  const bundledIndexPath = path.join(__dirname, "../dist/index.html");
+  const rendererUrl =
+    process.env.DOCTOR_AUDITOR_RENDERER_URL ?? "http://localhost:5173";
+
+  if (!app.isPackaged) {
+    await window.loadURL(rendererUrl);
+    window.webContents.openDevTools();
+    return;
+  }
+
+  await window.loadFile(bundledIndexPath);
 }
 
 async function initializeServices(): Promise<void> {
@@ -287,6 +299,23 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(
+    "session:save-review-decision",
+    async (_event, request: PersistReviewDecisionRequest) => {
+      if (!db) throw new Error("Database not initialized");
+
+      const sessionBundle = db.saveReviewDecision({
+        ...request,
+        reviewedBy: DESKTOP_REVIEWER_ID,
+      });
+      const sessionSummary = db.getSessionSummary(request.sessionId);
+      if (sessionSummary) {
+        emitSessionChanged(sessionSummary);
+      }
+      return sessionBundle;
+    }
+  );
+
+  ipcMain.handle(
     "session:import-audio",
     async (_event, request?: SessionIntakeRequest) => {
       if (!mainWindow) throw new Error("Main window not initialized");
@@ -380,20 +409,34 @@ function registerIpcHandlers(): void {
   );
 }
 
-app.whenReady().then(async () => {
-  await initializeServices();
-  registerIpcHandlers();
-  createWindow();
+app.whenReady()
+  .then(async () => {
+    await initializeServices();
+    registerIpcHandlers();
+    createWindow();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  })
+  .catch((error) => {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Electron failed to initialize.";
+    console.error("Desktop startup failed:", error);
+    dialog.showErrorBox("Doctor Auditor failed to start", message);
+    app.quit();
   });
-});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  void transcription?.dispose();
 });
