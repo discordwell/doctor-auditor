@@ -2022,7 +2022,12 @@ export class LocalDatabase {
     const reviewedFindings = totalFindings - pendingFindings;
 
     let nextReviewStatus = sessionSummary.session.reviewStatus;
-    if (totalFindings > 0) {
+    if (totalFindings === 0) {
+      nextReviewStatus =
+        sessionSummary.session.transcriptStatus === "completed"
+          ? "completed"
+          : "not_started";
+    } else {
       if (reviewedFindings === 0) {
         nextReviewStatus = "ready";
       } else if (pendingFindings > 0) {
@@ -2033,7 +2038,6 @@ export class LocalDatabase {
     }
 
     if (
-      totalFindings > 0 ||
       nextReviewStatus !== sessionSummary.session.reviewStatus
     ) {
       this.updateSession(sessionId, {

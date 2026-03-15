@@ -113,6 +113,46 @@ describe("LocalDatabase review artifacts", () => {
     db.close();
   });
 
+  it("marks local review complete when analysis finishes with zero findings", () => {
+    const db = createDatabase();
+    const session = db.createImportedSession({
+      clinicianId: "clinician-zero-findings",
+      recordedWithConsent: true,
+      exportAllowed: false,
+      remoteAssistAllowed: false,
+      policyVersion: "policy-v1",
+      audioPath: "/tmp/zero-findings.wav",
+      capturedAt: "2026-03-15T09:05:00Z",
+      sourceFileName: "zero-findings.wav",
+    });
+    const sessionId = session.session.id;
+
+    db.replaceTranscriptSegments(sessionId, [
+      {
+        id: "segment-zero-findings-001",
+        sessionId,
+        speakerLabel: "clinician",
+        text: "I hear your concern and we will make a plan. Call us if the symptoms get worse.",
+        startOffsetMs: 0,
+        endOffsetMs: 2600,
+        source: "audio_import",
+      },
+    ]);
+
+    db.updateSession(sessionId, {
+      transcriptStatus: "completed",
+      reviewStatus: "not_started",
+    });
+    db.replaceFindings(sessionId, []);
+
+    const completedWithoutFindings = db.getSession(sessionId);
+    expect(completedWithoutFindings?.session.transcriptStatus).toBe("completed");
+    expect(completedWithoutFindings?.session.reviewStatus).toBe("completed");
+    expect(completedWithoutFindings?.findings).toEqual([]);
+
+    db.close();
+  });
+
   it("clears stale review artifacts before fresh local analysis findings land", () => {
     const db = createDatabase();
     const capturedAt = "2026-03-15T09:15:00Z";

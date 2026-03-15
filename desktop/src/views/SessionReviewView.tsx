@@ -341,6 +341,14 @@ export default function SessionReviewView({
     );
   }
 
+  const noFindingsMessage = getNoFindingsMessage(bundle);
+  const findingsSummaryCaption = getFindingsSummaryCaption(bundle, workspace);
+  const transcriptPanelNote = selectedFinding
+    ? `${selectedFinding.evidenceSpans.length} evidence span(s) highlighted for the selected finding.`
+    : workspace.hasFindings
+      ? "Select a finding to highlight linked evidence spans."
+      : "No findings are available for evidence highlighting.";
+
   return (
     <section className="session-review">
       <div className="session-review__topbar">
@@ -414,11 +422,7 @@ export default function SessionReviewView({
         <article className="session-review__summary-card">
           <p className="session-review__summary-label">Findings in focus</p>
           <p className="session-review__summary-value">{findings.length}</p>
-          <p className="session-review__summary-caption">
-            {workspace.hasFindings
-              ? "Persisted findings returned with the local session bundle."
-              : "No persisted findings are attached to this session yet."}
-          </p>
+          <p className="session-review__summary-caption">{findingsSummaryCaption}</p>
         </article>
         <article className="session-review__summary-card">
           <p className="session-review__summary-label">Reviewer actions</p>
@@ -438,8 +442,7 @@ export default function SessionReviewView({
 
       {!workspace.hasFindings && (
         <div className="session-review__notice" role="status">
-          No persisted findings are attached to this session yet. Reviewer
-          actions stay unavailable until findings are saved.
+          {noFindingsMessage}
         </div>
       )}
 
@@ -462,11 +465,7 @@ export default function SessionReviewView({
               <p className="session-review__panel-kicker">Transcript</p>
               <h3>Evidence timeline</h3>
             </div>
-            <p className="session-review__panel-note">
-              {selectedFinding
-                ? `${selectedFinding.evidenceSpans.length} evidence span(s) highlighted for the selected finding.`
-                : "Select a finding to highlight linked evidence spans."}
-            </p>
+            <p className="session-review__panel-note">{transcriptPanelNote}</p>
           </div>
 
           <div className="session-review__transcript-list">
@@ -1048,4 +1047,39 @@ function formatAssistStatus(receipt: ModelAssistReceipt): string {
   }
 
   return formatAssistDisposition(disposition);
+}
+
+function getFindingsSummaryCaption(
+  bundle: DesktopSessionBundle,
+  workspace: ReturnType<typeof buildReviewWorkspace>
+): string {
+  if (workspace.hasFindings) {
+    return "Persisted findings returned with the local session bundle.";
+  }
+
+  if (
+    bundle.session.transcriptStatus === "completed" &&
+    bundle.session.reviewStatus === "completed"
+  ) {
+    return "Local analysis completed without generating persisted findings.";
+  }
+
+  return "No persisted findings are attached to this session yet.";
+}
+
+function getNoFindingsMessage(bundle: DesktopSessionBundle): string {
+  if (
+    bundle.session.transcriptStatus === "completed" &&
+    bundle.session.reviewStatus === "completed"
+  ) {
+    return (
+      "Local analysis completed without generating findings for this session. " +
+      "The live review state is up to date."
+    );
+  }
+
+  return (
+    "No persisted findings are attached to this session yet. Reviewer actions " +
+    "stay unavailable until findings are saved."
+  );
 }

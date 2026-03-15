@@ -635,7 +635,7 @@ function getSessionState(sessionSummary: DesktopSessionSummary): SessionState {
       label: "Review complete",
       tone: "ready",
       detail:
-        "Review decisions are complete for this encounter, so it is ready for final archive or export handling.",
+        "Local review is complete for this encounter, so it is ready for final archive or export handling.",
     };
   }
 

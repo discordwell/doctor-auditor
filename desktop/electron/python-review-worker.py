@@ -115,21 +115,43 @@ def analyze_transcript(request: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    joined_text = " ".join(
-        str(segment.get("text") or "").strip() for segment in transcript_segments
-    ).lower()
+    joined_text = join_segment_text(transcript_segments)
+    clinician_segments = select_segments(
+        transcript_segments,
+        ["clinician", "staff"],
+        fallback_segments=transcript_segments,
+    )
+    patient_segments = select_segments(
+        transcript_segments,
+        ["patient", "caregiver", "speaker_a", "speaker_b"],
+        fallback_segments=transcript_segments,
+    )
+    clinician_text = join_segment_text(clinician_segments)
+    patient_text = join_segment_text(patient_segments)
+
     closing_segments = transcript_segments[-3:]
-    closing_text = " ".join(
-        str(segment.get("text") or "").strip() for segment in closing_segments
-    ).lower()
+    closing_clinician_segments = select_segments(
+        closing_segments,
+        ["clinician", "staff"],
+        fallback_segments=closing_segments,
+    )
+    closing_text = join_segment_text(closing_clinician_segments)
 
     procedure_segment = find_matching_segment(
         transcript_segments,
         ["procedure", "surgery", "operation", "biopsy", "injection", "sedation"],
     )
     mentions_risk_language = contains_any(
-        joined_text,
-        ["risk", "side effect", "complication", "bleeding", "infection"],
+        clinician_text,
+        [
+            "risk",
+            "side effect",
+            "side effects",
+            "complication",
+            "complications",
+            "bleeding",
+            "infection",
+        ],
     )
     if procedure_segment is not None and not mentions_risk_language:
         add_finding(
@@ -170,12 +192,33 @@ def analyze_transcript(request: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     concern_segment = find_matching_segment(
-        transcript_segments,
-        ["worried", "concerned", "pain", "dizzy", "dizziness", "scared", "exhausted"],
+        patient_segments,
+        [
+            "worried",
+            "concerned",
+            "pain",
+            "dizzy",
+            "dizziness",
+            "scared",
+            "exhausted",
+            "overwhelming",
+            "burning up",
+            "fever",
+            "out of control",
+            "lose control",
+        ],
     )
     empathy_present = contains_any(
-        joined_text,
-        ["i hear", "i understand", "that sounds", "i'm sorry", "we'll make a plan"],
+        clinician_text,
+        [
+            "i hear",
+            "i understand",
+            "that sounds",
+            "i'm sorry",
+            "i am sorry",
+            "we'll make a plan",
+            "we will make a plan",
+        ],
     )
     if concern_segment is not None and not empathy_present:
         add_finding(
@@ -189,8 +232,57 @@ def analyze_transcript(request: Dict[str, Any]) -> Dict[str, Any]:
             confidence=0.59,
         )
 
+    urgent_segment = find_matching_segment(
+        patient_segments,
+        [
+            "emergency",
+            "lose my brain",
+            "go insane",
+            "going insane",
+            "cannot control",
+            "can't control",
+            "out of control",
+            "burning up",
+            "we are going to die",
+            "we're gonna die",
+            "gonna die",
+            "fever",
+        ],
+    )
+    urgent_disposition_present = contains_any(
+        clinician_text,
+        [
+            "call 911",
+            "go to the er",
+            "go to the emergency room",
+            "go to the emergency department",
+            "seek emergency care",
+            "urgent care",
+            "same day",
+            "same-day",
+            "immediately",
+            "right now",
+            "do not wait",
+            "on-call",
+            "go in today",
+            "be seen today",
+        ],
+    )
+    if urgent_segment is not None and not urgent_disposition_present:
+        add_finding(
+            code="urgent-symptom-escalation-needed",
+            title="Urgent symptom escalation plan needs review",
+            summary=(
+                "The transcript includes emergency or loss-of-control language "
+                "without a clear urgent disposition such as ER, on-call, or "
+                "same-day evaluation guidance."
+            ),
+            segment=urgent_segment,
+            confidence=0.84,
+        )
+
     medication_segment = find_matching_segment(
-        transcript_segments,
+        patient_segments,
         ["missed dose", "missed doses", "refill delayed", "refill delay", "ran out"],
     )
     if medication_segment is not None:
@@ -315,6 +407,40 @@ def _utc_timestamp() -> str:
 
 def contains_any(text: str, candidates: list[str]) -> bool:
     return any(candidate in text for candidate in candidates)
+
+
+def join_segment_text(transcript_segments: list[Dict[str, Any]]) -> str:
+    return " ".join(
+        str(segment.get("text") or "").strip() for segment in transcript_segments
+    ).lower()
+
+
+def normalize_speaker_label(segment: Dict[str, Any]) -> str:
+    return str(segment.get("speakerLabel") or "").strip().lower()
+
+
+def select_segments(
+    transcript_segments: list[Dict[str, Any]],
+    speaker_labels: list[str],
+    fallback_segments: list[Dict[str, Any]] | None = None,
+) -> list[Dict[str, Any]]:
+    selected = [
+        segment
+        for segment in transcript_segments
+        if normalize_speaker_label(segment) in speaker_labels
+    ]
+    if selected:
+        return selected
+
+    known_labels = {
+        label
+        for label in (normalize_speaker_label(segment) for segment in transcript_segments)
+        if label and label != "unknown"
+    }
+    if not known_labels:
+        return fallback_segments if fallback_segments is not None else transcript_segments
+
+    return []
 
 
 def find_matching_segment(

@@ -138,4 +138,96 @@ describe("PythonReviewMlClient", () => {
       ],
     });
   });
+
+  it("flags urgent symptom language without urgent disposition guidance", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-auditor-review-ml-"));
+    const modelPath = path.join(tempDir, "model.bin");
+    fs.writeFileSync(modelPath, "");
+
+    client = new PythonReviewMlClient({
+      modelPath,
+      pythonExecutable: "python3",
+      workerPath,
+    });
+
+    const analysis = await client.analyzeTranscript("session-dr-beat", [
+      {
+        id: "segment-1",
+        sessionId: "session-dr-beat",
+        speakerLabel: "patient",
+        text: "Emergency. I cannot control my feet, I am burning up, and we are going to die.",
+        startOffsetMs: 0,
+        endOffsetMs: 5000,
+        source: "manual_edit",
+      },
+      {
+        id: "segment-2",
+        sessionId: "session-dr-beat",
+        speakerLabel: "clinician",
+        text: "I hear this feels intense. We will make a plan and help you regain control.",
+        startOffsetMs: 5000,
+        endOffsetMs: 9000,
+        source: "manual_edit",
+      },
+      {
+        id: "segment-3",
+        sessionId: "session-dr-beat",
+        speakerLabel: "clinician",
+        text: "Follow up with me if the symptoms keep building, and call us right away if you feel out of control again.",
+        startOffsetMs: 9000,
+        endOffsetMs: 13000,
+        source: "manual_edit",
+      },
+    ]);
+
+    expect(analysis.findings.map((finding) => finding.code)).toContain(
+      "urgent-symptom-escalation-needed"
+    );
+  });
+
+  it("does not treat patient follow-up language as clinician instructions", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-auditor-review-ml-"));
+    const modelPath = path.join(tempDir, "model.bin");
+    fs.writeFileSync(modelPath, "");
+
+    client = new PythonReviewMlClient({
+      modelPath,
+      pythonExecutable: "python3",
+      workerPath,
+    });
+
+    const analysis = await client.analyzeTranscript("session-follow-up-gap", [
+      {
+        id: "segment-1",
+        sessionId: "session-follow-up-gap",
+        speakerLabel: "clinician",
+        text: "Tell me more about the dizziness.",
+        startOffsetMs: 0,
+        endOffsetMs: 2000,
+        source: "manual_edit",
+      },
+      {
+        id: "segment-2",
+        sessionId: "session-follow-up-gap",
+        speakerLabel: "patient",
+        text: "I know I should follow up if it gets worse.",
+        startOffsetMs: 2000,
+        endOffsetMs: 5000,
+        source: "manual_edit",
+      },
+      {
+        id: "segment-3",
+        sessionId: "session-follow-up-gap",
+        speakerLabel: "patient",
+        text: "I will call if I keep feeling dizzy.",
+        startOffsetMs: 5000,
+        endOffsetMs: 8000,
+        source: "manual_edit",
+      },
+    ]);
+
+    expect(analysis.findings.map((finding) => finding.code)).toContain(
+      "missing-follow-up-instructions"
+    );
+  });
 });
