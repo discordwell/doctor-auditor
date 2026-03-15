@@ -5,7 +5,6 @@ import {
   formatStatusLabel,
   getSessionStatusTone,
   loadSessions,
-  type ResourceSourceMode,
 } from "../services/reviewDashboard";
 
 type SessionFilter = "all" | "ready" | "in_review" | "completed";
@@ -16,23 +15,28 @@ export default function DoctorsView() {
   const [sessions, setSessions] = useState<ReviewSession[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<SessionFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<ResourceSourceMode>("live");
-  const [sourceMessage, setSourceMessage] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
+    setError("");
 
     loadSessions(selectedFilter)
-      .then((result) => {
-        if (!active) {
-          return;
+      .then((data) => {
+        if (active) {
+          setSessions(data);
         }
-
-        setSessions(result.data);
-        setSourceMode(result.sourceMode);
-        setSourceMessage(result.message);
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unable to load review sessions."
+          );
+        }
       })
       .finally(() => {
         if (active) {
@@ -75,20 +79,13 @@ export default function DoctorsView() {
         </div>
       </div>
 
-      <div className="view-status">
-        <span className={`source-pill ${sourceMode}`}>
-          {sourceMode === "live" ? "Live review data" : "Preview fallback"}
-        </span>
-        <span className="view-status-copy">{sourceMessage}</span>
-      </div>
-
-      {sessions.length === 0 ? (
+      {error ? (
+        <div className="empty-state">{error}</div>
+      ) : sessions.length === 0 ? (
         <div className="empty-state">
           No sessions matched the current review filter.
         </div>
-      ) : null}
-
-      {sessions.length > 0 ? (
+      ) : (
         <table className="data-table">
           <thead>
             <tr>
@@ -117,21 +114,27 @@ export default function DoctorsView() {
                 <td>{formatStatusLabel(session.captureMode)}</td>
                 <td>
                   <span
-                    className={`status-badge ${getSessionStatusTone(session.transcriptStatus)}`}
+                    className={`status-badge ${getSessionStatusTone(
+                      session.transcriptStatus
+                    )}`}
                   >
                     {formatStatusLabel(session.transcriptStatus)}
                   </span>
                 </td>
                 <td>
                   <span
-                    className={`status-badge ${getSessionStatusTone(session.reviewStatus)}`}
+                    className={`status-badge ${getSessionStatusTone(
+                      session.reviewStatus
+                    )}`}
                   >
                     {formatStatusLabel(session.reviewStatus)}
                   </span>
                 </td>
                 <td>
                   <span
-                    className={`status-badge ${getSessionStatusTone(session.exportStatus)}`}
+                    className={`status-badge ${getSessionStatusTone(
+                      session.exportStatus
+                    )}`}
                   >
                     {formatStatusLabel(session.exportStatus)}
                   </span>
@@ -140,7 +143,7 @@ export default function DoctorsView() {
             ))}
           </tbody>
         </table>
-      ) : null}
+      )}
     </div>
   );
 }

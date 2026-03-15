@@ -160,6 +160,8 @@ restoreStoredToken();
 
 export function setToken(token: string) {
   authToken = token;
+  currentOrganizationId = null;
+  currentEmail = null;
   demoDatasetReady = false;
 }
 

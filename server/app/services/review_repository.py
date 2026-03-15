@@ -14,7 +14,6 @@ from app.api.review_models import (
     ReviewDecisionCreateRequest,
     ReviewDecisionModel,
     ReviewSessionModel,
-    SessionBundleModel,
     SessionConsentModel,
     TranscriptSegmentModel,
 )
@@ -206,38 +205,6 @@ def _audit_log_model(record: AuditLogEntryRecord) -> AuditLogEntryModel:
     )
 
 
-def _session_bundle_model(record: ReviewSessionRecord) -> SessionBundleModel:
-    return SessionBundleModel(
-        session=_review_session_model(record),
-        transcriptSegments=[
-            _transcript_segment_model(item)
-            for item in sorted(
-                record.transcript_segments, key=lambda segment: segment.start_offset_ms
-            )
-        ],
-        findings=[
-            _finding_model(item)
-            for item in sorted(record.findings, key=lambda finding: finding.created_at)
-        ],
-        reviewDecisions=[
-            _review_decision_model(item)
-            for item in sorted(
-                record.review_decisions, key=lambda decision: decision.reviewed_at
-            )
-        ],
-        approvedExports=[
-            _approved_export_model(item)
-            for item in sorted(
-                record.approved_exports, key=lambda export: export.approved_at
-            )
-        ],
-        auditLogEntries=[
-            _audit_log_model(item)
-            for item in sorted(record.audit_log_entries, key=lambda entry: entry.timestamp)
-        ],
-    )
-
-
 def _transcript_segment_record(
     payload: TranscriptSegmentModel,
 ) -> TranscriptSegmentRecord:
@@ -397,54 +364,6 @@ async def upsert_session(
     await db.commit()
     await db.refresh(record)
     return _review_session_model(record)
-
-
-async def get_session_bundle(
-    db: AsyncSession,
-    organization_id: str,
-    session_id: str,
-) -> SessionBundleModel | None:
-    record = await _session_record_with_related(db, organization_id, session_id)
-    if record is None:
-        return None
-    return _session_bundle_model(record)
-
-
-async def upsert_session_bundle(
-    db: AsyncSession,
-    organization_id: str,
-    payload: SessionBundleModel,
-) -> SessionBundleModel:
-    session_payload = payload.session
-    record = await _session_record_with_related(db, organization_id, session_payload.id)
-
-    if record is None:
-        record = ReviewSessionRecord(id=session_payload.id)
-        db.add(record)
-
-    _apply_review_session_payload(record, organization_id, session_payload)
-
-    record.transcript_segments = [
-        _transcript_segment_record(item) for item in payload.transcriptSegments
-    ]
-    record.findings = [_finding_record(item) for item in payload.findings]
-    record.review_decisions = [
-        _review_decision_record(item) for item in payload.reviewDecisions
-    ]
-    record.approved_exports = [
-        _approved_export_record(item) for item in payload.approvedExports
-    ]
-    record.audit_log_entries = [
-        _audit_log_record(item) for item in payload.auditLogEntries
-    ]
-
-    await db.commit()
-    refreshed = await _session_record_with_related(
-        db, organization_id, session_payload.id
-    )
-    if refreshed is None:
-        raise RuntimeError("session bundle could not be reloaded after persistence")
-    return _session_bundle_model(refreshed)
 
 
 async def list_findings(

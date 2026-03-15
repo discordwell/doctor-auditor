@@ -10,7 +10,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
 from app.api.review_models import SessionBundleModel
 from app.main import app
 from app.models.database import Base, async_session, engine
-from app.services.review_repository import upsert_session_bundle
+from app.services.review_seed_repository import seed_session_bundle
 
 
 def reset_database() -> None:
@@ -124,7 +124,7 @@ def seed_review_state() -> None:
         bundle_payload["transcriptSegments"] = []
 
         async with async_session() as db:
-            await upsert_session_bundle(
+            await seed_session_bundle(
                 db=db,
                 organization_id="demo-health",
                 payload=SessionBundleModel.model_validate(bundle_payload),

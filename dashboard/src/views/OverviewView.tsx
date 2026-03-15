@@ -1,20 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  AreaChart,
   Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
 } from "recharts";
 
 import {
   buildOverviewModel,
+  EMPTY_REVIEW_SNAPSHOT,
   loadReviewSnapshot,
-  previewReviewSnapshot,
   type ReviewSnapshot,
-  type ReviewSnapshotSourceMode,
 } from "../services/reviewDashboard";
 
 const compactNumber = new Intl.NumberFormat("en-US", {
@@ -23,26 +22,30 @@ const compactNumber = new Intl.NumberFormat("en-US", {
 });
 
 export default function OverviewView() {
-  const [snapshot, setSnapshot] = useState<ReviewSnapshot>(previewReviewSnapshot);
+  const [snapshot, setSnapshot] = useState<ReviewSnapshot>(EMPTY_REVIEW_SNAPSHOT);
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] =
-    useState<ReviewSnapshotSourceMode>("preview");
-  const [sourceMessage, setSourceMessage] = useState(
-    "The review API is unavailable. Showing preview sessions, findings, and approved exports."
-  );
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
 
-    loadReviewSnapshot()
-      .then((result) => {
-        if (!active) {
-          return;
-        }
+    setLoading(true);
+    setError("");
 
-        setSnapshot(result.snapshot);
-        setSourceMode(result.sourceMode);
-        setSourceMessage(result.message);
+    loadReviewSnapshot()
+      .then((data) => {
+        if (active) {
+          setSnapshot(data);
+        }
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unable to load review overview."
+          );
+        }
       })
       .finally(() => {
         if (active) {
@@ -65,29 +68,34 @@ export default function OverviewView() {
     return <div className="empty-state">Loading review operations surface...</div>;
   }
 
-  const sourceLabel =
-    sourceMode === "live"
-      ? "Live review data"
-      : sourceMode === "mixed"
-        ? "Mixed live + preview"
-        : "Preview fallback";
+  if (error) {
+    return <div className="empty-state">{error}</div>;
+  }
+
+  if (overview.sessionsInScope === 0 && snapshot.findings.length === 0) {
+    return (
+      <div className="empty-state">
+        No review data is available for this organization yet.
+      </div>
+    );
+  }
 
   return (
     <div className="overview-shell">
       <section className="overview-hero">
         <div>
-          <span className="overview-eyebrow">Beacon overview</span>
+          <span className="overview-eyebrow">Review overview</span>
           <h2>Sessions, findings, and approved exports in one review surface</h2>
           <p className="overview-intro">
-            The overview is wired to the review endpoints and degrades
-            intentionally when part of the surface is unavailable.
+            The overview is derived from the current backend review records for
+            this organization, not from local fixture data.
           </p>
         </div>
         <div className="source-card">
-          <span className={`source-pill ${sourceMode}`}>
-            {sourceLabel}
-          </span>
-          <p>{sourceMessage}</p>
+          <p>
+            Metrics below are computed from stored sessions, findings, and
+            approved export records in the live review database.
+          </p>
           <dl className="source-details">
             <div>
               <dt>Sessions in scope</dt>
@@ -105,22 +113,34 @@ export default function OverviewView() {
         <div className="stat-card kpi-card">
           <div className="stat-label">Open findings</div>
           <div className="stat-value attention">{overview.openFindings}</div>
-          <p>{overview.agingItems} active sessions have been sitting in review for more than 48 hours.</p>
+          <p>
+            {overview.agingItems} active sessions have been sitting in review
+            for more than 48 hours.
+          </p>
         </div>
         <div className="stat-card kpi-card">
           <div className="stat-label">Approved exports</div>
           <div className="stat-value success">{overview.approvedExportCount}</div>
-          <p>Only approved or sent packets count here. Draft exports stay visible in the queue lane.</p>
+          <p>
+            Only approved or sent packets count here. Draft exports stay
+            visible in the queue lane.
+          </p>
         </div>
         <div className="stat-card kpi-card">
           <div className="stat-label">Reviewed findings</div>
           <div className="stat-value accent">{overview.reviewedFindings}</div>
-          <p>Accepted, rejected, and revised findings stay auditable instead of collapsing into a score.</p>
+          <p>
+            Accepted, rejected, and revised findings stay auditable instead of
+            collapsing into a score.
+          </p>
         </div>
         <div className="stat-card kpi-card">
           <div className="stat-label">Session coverage</div>
           <div className="stat-value">{overview.sessionsInScope}</div>
-          <p>Every card in this overview is anchored to a session, finding, or approved export record.</p>
+          <p>
+            Every card in this overview is anchored to a session, finding, or
+            approved export record.
+          </p>
         </div>
       </section>
 

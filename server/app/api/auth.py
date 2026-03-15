@@ -2,15 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from passlib.context import CryptContext
+
+from app.auth.jwt import create_access_token
+from app.auth.passwords import hash_password, verify_and_rehash_password
 from app.models.database import get_db
 from app.models.schemas import User, UserRole
-from app.auth.jwt import create_access_token
 
 router = APIRouter()
-# Prefer a built-in hash for new credentials, but continue accepting bcrypt hashes
-# if older records already exist.
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 class RegisterRequest(BaseModel):
@@ -40,7 +38,7 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
 
     user = User(
         email=request.email,
-        hashed_password=pwd_context.hash(request.password),
+        hashed_password=hash_password(request.password),
         role=request.role,
         organization_id=request.organization_id,
     )
@@ -68,11 +66,25 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == request.email))
     user = result.scalar_one_or_none()
 
-    if not user or not pwd_context.verify(request.password, user.hashed_password):
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+
+    password_is_valid, replacement_hash = verify_and_rehash_password(
+        request.password,
+        user.hashed_password,
+    )
+    if not password_is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    if replacement_hash is not None:
+        user.hashed_password = replacement_hash
+        await db.commit()
 
     token = create_access_token(
         {

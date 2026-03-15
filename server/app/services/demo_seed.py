@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.review_models import SessionBundleModel
 from app.models.schemas import ApprovedExportRecord, FindingRecord, ReviewSessionRecord
-from app.services.review_repository import upsert_session_bundle
+from app.services.review_seed_repository import seed_session_bundle
 
 
 DEMO_ORGANIZATION_ID = "demo-health"
@@ -556,7 +556,7 @@ async def ensure_demo_review_data(
         )
 
     for bundle in _demo_session_bundles():
-        await upsert_session_bundle(db, organization_id, bundle)
+        await seed_session_bundle(db, organization_id, bundle)
 
     session_count, finding_count, approved_export_count = await _count_demo_records(
         db, organization_id

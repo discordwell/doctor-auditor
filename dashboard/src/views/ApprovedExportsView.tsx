@@ -4,7 +4,6 @@ import {
   formatDateTime,
   getExportTone,
   loadApprovedExports,
-  type ResourceSourceMode,
 } from "../services/reviewDashboard";
 
 type ExportFilter = "all" | ApprovedExport["status"];
@@ -15,23 +14,28 @@ export default function ApprovedExportsView() {
   const [exportsList, setExportsList] = useState<ApprovedExport[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<ExportFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<ResourceSourceMode>("live");
-  const [sourceMessage, setSourceMessage] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
+    setError("");
 
     loadApprovedExports(selectedFilter)
-      .then((result) => {
-        if (!active) {
-          return;
+      .then((data) => {
+        if (active) {
+          setExportsList(data);
         }
-
-        setExportsList(result.data);
-        setSourceMode(result.sourceMode);
-        setSourceMessage(result.message);
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unable to load approved exports."
+          );
+        }
       })
       .finally(() => {
         if (active) {
@@ -74,20 +78,13 @@ export default function ApprovedExportsView() {
         </div>
       </div>
 
-      <div className="view-status">
-        <span className={`source-pill ${sourceMode}`}>
-          {sourceMode === "live" ? "Live review data" : "Preview fallback"}
-        </span>
-        <span className="view-status-copy">{sourceMessage}</span>
-      </div>
-
-      {exportsList.length === 0 ? (
+      {error ? (
+        <div className="empty-state">{error}</div>
+      ) : exportsList.length === 0 ? (
         <div className="empty-state">
           No approved exports matched the current delivery state.
         </div>
-      ) : null}
-
-      {exportsList.length > 0 ? (
+      ) : (
         <table className="data-table">
           <thead>
             <tr>
@@ -123,7 +120,7 @@ export default function ApprovedExportsView() {
             ))}
           </tbody>
         </table>
-      ) : null}
+      )}
     </div>
   );
 }

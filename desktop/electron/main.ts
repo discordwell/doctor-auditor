@@ -4,7 +4,11 @@ import * as path from "path";
 import type { TranscriptSegment } from "@doctor-auditor/shared";
 import { AudioCapture } from "./audio-capture";
 import { LocalDatabase } from "./database";
-import { TranscriptionService } from "./transcription";
+import {
+  ReviewRuntimeService,
+  type ReviewRuntimeTranscriptionCompleted,
+  type ReviewRuntimeTranscriptionFailed,
+} from "./review-runtime";
 import type {
   DesktopSessionSummary,
   PersistReviewDecisionRequest,
@@ -16,9 +20,8 @@ const DESKTOP_REVIEWER_ID = "desktop";
 let mainWindow: BrowserWindow | null = null;
 let audioCapture: AudioCapture | null = null;
 let db: LocalDatabase | null = null;
-let transcription: TranscriptionService | null = null;
+let reviewRuntime: ReviewRuntimeService | null = null;
 let activeRecordingSessionId: string | null = null;
-let transcriptionQueue: Promise<void> = Promise.resolve();
 
 type ImportStage =
   | "selected"
@@ -72,7 +75,47 @@ async function initializeServices(): Promise<void> {
 
   db = new LocalDatabase(path.join(userDataPath, "doctor-auditor.db"));
   audioCapture = new AudioCapture();
-  transcription = new TranscriptionService();
+  reviewRuntime = new ReviewRuntimeService();
+
+  // Keep Electron main limited to IPC and persistence. Future STT,
+  // diarization, or review-analysis steps belong behind ReviewRuntimeService
+  // and its worker-backed adapters, not as more model orchestration in main.ts.
+  reviewRuntime.on(
+    "transcription-completed",
+    ({ job, segments }: ReviewRuntimeTranscriptionCompleted) => {
+      if (!db) {
+        return;
+      }
+
+      db.replaceTranscriptSegments(job.sessionId, segments);
+
+      const completedSummary = db.updateSession(job.sessionId, {
+        transcriptStatus: segments.length > 0 ? "completed" : "failed",
+        reviewStatus: segments.length > 0 ? "ready" : "not_started",
+      });
+
+      if (completedSummary) {
+        emitSessionChanged(completedSummary);
+      }
+    }
+  );
+  reviewRuntime.on(
+    "transcription-failed",
+    ({ error, job }: ReviewRuntimeTranscriptionFailed) => {
+      console.error("Transcription pipeline failed:", error);
+      if (!db) {
+        return;
+      }
+
+      const failedSummary = db.updateSession(job.sessionId, {
+        transcriptStatus: "failed",
+      });
+
+      if (failedSummary) {
+        emitSessionChanged(failedSummary);
+      }
+    }
+  );
 
   audioCapture.on("level", (level: number) => {
     mainWindow?.webContents.send("audio:level", level);
@@ -132,6 +175,9 @@ function queueTranscription(
   if (!db) {
     return null;
   }
+  if (!reviewRuntime) {
+    throw new Error("Review runtime unavailable.");
+  }
 
   const queuedSummary = db.updateSession(sessionId, {
     transcriptStatus: "in_progress",
@@ -141,44 +187,11 @@ function queueTranscription(
     emitSessionChanged(queuedSummary);
   }
 
-  transcriptionQueue = transcriptionQueue
-    .catch(() => undefined)
-    .then(async () => {
-      if (!db || !transcription) {
-        throw new Error("Transcription service unavailable.");
-      }
-
-      const modelAvailable = await transcription.isModelAvailable();
-      if (!modelAvailable) {
-        throw new Error("Local transcription model not found.");
-      }
-
-      const segments = await transcription.transcribeFile(audioPath, sessionId, source);
-      db.replaceTranscriptSegments(sessionId, segments);
-
-      const completedSummary = db.updateSession(sessionId, {
-        transcriptStatus: segments.length > 0 ? "completed" : "failed",
-        reviewStatus: segments.length > 0 ? "ready" : "not_started",
-      });
-
-      if (completedSummary) {
-        emitSessionChanged(completedSummary);
-      }
-    })
-    .catch((error) => {
-      console.error("Transcription pipeline failed:", error);
-      if (!db) {
-        return;
-      }
-
-      const failedSummary = db.updateSession(sessionId, {
-        transcriptStatus: "failed",
-      });
-
-      if (failedSummary) {
-        emitSessionChanged(failedSummary);
-      }
-    });
+  reviewRuntime.enqueueTranscription({
+    audioPath,
+    sessionId,
+    source,
+  });
 
   return queuedSummary;
 }
@@ -438,5 +451,5 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  void transcription?.dispose();
+  void reviewRuntime?.dispose();
 });

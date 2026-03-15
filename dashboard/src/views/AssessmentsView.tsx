@@ -5,7 +5,6 @@ import {
   formatStatusLabel,
   getFindingTone,
   loadFindings,
-  type ResourceSourceMode,
 } from "../services/reviewDashboard";
 
 type FindingFilter = "all" | FindingStatus;
@@ -22,23 +21,28 @@ export default function AssessmentsView() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<FindingFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<ResourceSourceMode>("live");
-  const [sourceMessage, setSourceMessage] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
+    setError("");
 
     loadFindings(selectedFilter)
-      .then((result) => {
-        if (!active) {
-          return;
+      .then((data) => {
+        if (active) {
+          setFindings(data);
         }
-
-        setFindings(result.data);
-        setSourceMode(result.sourceMode);
-        setSourceMessage(result.message);
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unable to load findings."
+          );
+        }
       })
       .finally(() => {
         if (active) {
@@ -81,20 +85,13 @@ export default function AssessmentsView() {
         </div>
       </div>
 
-      <div className="view-status">
-        <span className={`source-pill ${sourceMode}`}>
-          {sourceMode === "live" ? "Live review data" : "Preview fallback"}
-        </span>
-        <span className="view-status-copy">{sourceMessage}</span>
-      </div>
-
-      {findings.length === 0 ? (
+      {error ? (
+        <div className="empty-state">{error}</div>
+      ) : findings.length === 0 ? (
         <div className="empty-state">
           No findings matched the current review state.
         </div>
-      ) : null}
-
-      {findings.length > 0 ? (
+      ) : (
         <table className="data-table">
           <thead>
             <tr>
@@ -130,7 +127,7 @@ export default function AssessmentsView() {
             ))}
           </tbody>
         </table>
-      ) : null}
+      )}
     </div>
   );
 }

@@ -30,23 +30,6 @@ export type ReviewSnapshot = {
   approvedExports: ApprovedExport[];
 };
 
-export type ResourceSourceMode = "live" | "preview";
-export type ReviewSnapshotSourceMode = ResourceSourceMode | "mixed";
-
-export type ResourceLoadResult<T> = {
-  data: T;
-  sourceMode: ResourceSourceMode;
-  message: string;
-  error?: string;
-};
-
-export type ReviewSnapshotLoadResult = {
-  snapshot: ReviewSnapshot;
-  sourceMode: ReviewSnapshotSourceMode;
-  message: string;
-  errors: Partial<Record<keyof ReviewSnapshot, string>>;
-};
-
 export type OverviewModel = {
   sessionsInScope: number;
   openFindings: number;
@@ -57,6 +40,12 @@ export type OverviewModel = {
   focusItems: FocusItem[];
   weeklyActivity: WeeklyActivityPoint[];
   exportRows: ApprovedExport[];
+};
+
+export const EMPTY_REVIEW_SNAPSHOT: ReviewSnapshot = {
+  sessions: [],
+  findings: [],
+  approvedExports: [],
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -71,287 +60,6 @@ const REVIEWED_STATUSES = new Set<Finding["status"]>([
   "rejected",
   "revised",
 ]);
-
-export const previewSessions: ReviewSession[] = [
-  {
-    id: "session-preview-001",
-    clinicianId: "clinician-ada",
-    organizationId: "demo-health",
-    encounterStartedAt: "2026-03-10T15:00:00Z",
-    encounterEndedAt: "2026-03-10T15:28:00Z",
-    captureMode: "audio_import",
-    transcriptStatus: "completed",
-    reviewStatus: "in_review",
-    exportStatus: "draft",
-    createdAt: "2026-03-10T15:35:00Z",
-    updatedAt: "2026-03-12T09:15:00Z",
-    consent: {
-      recordedWithConsent: true,
-      exportAllowed: true,
-    },
-  },
-  {
-    id: "session-preview-002",
-    clinicianId: "clinician-ada",
-    organizationId: "demo-health",
-    encounterStartedAt: "2026-03-08T17:00:00Z",
-    encounterEndedAt: "2026-03-08T17:22:00Z",
-    captureMode: "audio_import",
-    transcriptStatus: "completed",
-    reviewStatus: "completed",
-    exportStatus: "sent",
-    createdAt: "2026-03-08T17:30:00Z",
-    updatedAt: "2026-03-09T11:00:00Z",
-    consent: {
-      recordedWithConsent: true,
-      exportAllowed: true,
-    },
-  },
-  {
-    id: "session-preview-003",
-    clinicianId: "clinician-lin",
-    organizationId: "demo-health",
-    encounterStartedAt: "2026-03-13T19:10:00Z",
-    encounterEndedAt: "2026-03-13T19:41:00Z",
-    captureMode: "live_capture",
-    transcriptStatus: "completed",
-    reviewStatus: "ready",
-    exportStatus: "not_requested",
-    createdAt: "2026-03-13T19:45:00Z",
-    updatedAt: "2026-03-14T07:40:00Z",
-    consent: {
-      recordedWithConsent: true,
-      exportAllowed: false,
-    },
-  },
-  {
-    id: "session-preview-004",
-    clinicianId: "clinician-noor",
-    organizationId: "demo-health",
-    encounterStartedAt: "2026-03-14T13:00:00Z",
-    encounterEndedAt: "2026-03-14T13:19:00Z",
-    captureMode: "audio_import",
-    transcriptStatus: "completed",
-    reviewStatus: "completed",
-    exportStatus: "approved",
-    createdAt: "2026-03-14T13:26:00Z",
-    updatedAt: "2026-03-15T08:35:00Z",
-    consent: {
-      recordedWithConsent: true,
-      exportAllowed: true,
-    },
-  },
-];
-
-export const previewFindings: Finding[] = [
-  {
-    id: "finding-preview-001",
-    sessionId: "session-preview-001",
-    code: "follow-up-plan",
-    title: "Follow-up plan still needs reviewer confirmation",
-    summary:
-      "The patient left with a follow-up mention, but the timing language is still ambiguous in the export packet.",
-    status: "pending_review",
-    confidence: 0.82,
-    evidenceSpans: [
-      {
-        id: "evidence-preview-001",
-        transcriptSegmentId: "segment-preview-001",
-        excerpt: "I'd like to see you again next week if the refill comes through.",
-        startOffsetMs: 18000,
-        endOffsetMs: 23100,
-      },
-    ],
-    detectedBy: "rules",
-    createdAt: "2026-03-10T15:40:00Z",
-    updatedAt: "2026-03-12T09:15:00Z",
-  },
-  {
-    id: "finding-preview-002",
-    sessionId: "session-preview-001",
-    code: "medication-risk",
-    title: "Medication side-effect counseling needs evidence trim",
-    summary:
-      "Evidence spans overlap two adjacent segments and need reviewer cleanup before approval.",
-    status: "uncertain",
-    confidence: 0.71,
-    evidenceSpans: [
-      {
-        id: "evidence-preview-002",
-        transcriptSegmentId: "segment-preview-002",
-        excerpt: "It may make you dizzy for the first few days.",
-        startOffsetMs: 9200,
-        endOffsetMs: 12600,
-      },
-    ],
-    detectedBy: "local_llm",
-    createdAt: "2026-03-10T15:42:00Z",
-    updatedAt: "2026-03-12T09:20:00Z",
-  },
-  {
-    id: "finding-preview-003",
-    sessionId: "session-preview-002",
-    code: "empathy-gap",
-    title: "Patient concern was acknowledged and approved",
-    summary:
-      "Reviewer accepted this finding for the final export after confirming the evidence clip.",
-    status: "accepted",
-    confidence: 0.65,
-    evidenceSpans: [
-      {
-        id: "evidence-preview-003",
-        transcriptSegmentId: "segment-preview-003",
-        excerpt: "I hear that this has been exhausting for you.",
-        startOffsetMs: 6000,
-        endOffsetMs: 9100,
-      },
-    ],
-    detectedBy: "human",
-    createdAt: "2026-03-08T17:35:00Z",
-    updatedAt: "2026-03-09T11:00:00Z",
-    reviewDecisionId: "decision-preview-001",
-  },
-  {
-    id: "finding-preview-004",
-    sessionId: "session-preview-003",
-    code: "direct-question",
-    title: "Direct patient question has not been answered yet",
-    summary:
-      "The patient asked when swelling should trigger a callback, but the answer is missing from the current evidence set.",
-    status: "draft",
-    confidence: 0.8,
-    evidenceSpans: [
-      {
-        id: "evidence-preview-004",
-        transcriptSegmentId: "segment-preview-004",
-        excerpt: "When should I call back if the swelling keeps going?",
-        startOffsetMs: 14100,
-        endOffsetMs: 17600,
-      },
-    ],
-    detectedBy: "rules",
-    createdAt: "2026-03-13T19:48:00Z",
-    updatedAt: "2026-03-14T07:40:00Z",
-  },
-  {
-    id: "finding-preview-005",
-    sessionId: "session-preview-004",
-    code: "handoff-clarity",
-    title: "Handoff summary was edited during review",
-    summary:
-      "Reviewer tightened the summary language before export approval.",
-    status: "revised",
-    confidence: 0.77,
-    evidenceSpans: [
-      {
-        id: "evidence-preview-005",
-        transcriptSegmentId: "segment-preview-005",
-        excerpt:
-          "We'll transfer this plan to your primary team this afternoon.",
-        startOffsetMs: 8800,
-        endOffsetMs: 11900,
-      },
-    ],
-    detectedBy: "local_llm",
-    createdAt: "2026-03-14T13:29:00Z",
-    updatedAt: "2026-03-15T08:35:00Z",
-    reviewDecisionId: "decision-preview-002",
-  },
-];
-
-export const previewApprovedExports: ApprovedExport[] = [
-  {
-    id: "export-preview-001",
-    sessionId: "session-preview-002",
-    status: "sent",
-    summary:
-      "Final export covering the reviewed empathy acknowledgement and callback instructions.",
-    findings: [],
-    approvedBy: "quality-lead-1",
-    approvedAt: "2026-03-09T11:20:00Z",
-    destination: "compliance-archive",
-    sentAt: "2026-03-09T11:55:00Z",
-  },
-  {
-    id: "export-preview-002",
-    sessionId: "session-preview-004",
-    status: "approved",
-    summary:
-      "Approved export packet for the updated handoff summary and discharge instructions.",
-    findings: [],
-    approvedBy: "quality-lead-2",
-    approvedAt: "2026-03-15T08:40:00Z",
-    destination: "claims-review-queue",
-  },
-  {
-    id: "export-preview-003",
-    sessionId: "session-preview-001",
-    status: "draft",
-    summary:
-      "Draft export waiting for final confirmation on medication side-effect counseling.",
-    findings: [],
-    approvedBy: "quality-lead-3",
-    approvedAt: "2026-03-12T09:30:00Z",
-    destination: "internal-quality-review",
-  },
-];
-
-export const previewReviewSnapshot: ReviewSnapshot = {
-  sessions: previewSessions,
-  findings: previewFindings,
-  approvedExports: previewApprovedExports,
-};
-
-function formatLoadError(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return "Request failed";
-}
-
-function formatResourceList(values: string[]): string {
-  if (values.length === 0) {
-    return "";
-  }
-
-  if (values.length === 1) {
-    return values[0] ?? "";
-  }
-
-  if (values.length === 2) {
-    return `${values[0]} and ${values[1]}`;
-  }
-
-  const leading = values.slice(0, -1).join(", ");
-  const trailing = values[values.length - 1] ?? "";
-  return `${leading}, and ${trailing}`;
-}
-
-async function loadCollection<T>({
-  label,
-  loadLive,
-  loadPreview,
-}: {
-  label: string;
-  loadLive: () => Promise<T[]>;
-  loadPreview: () => T[];
-}): Promise<ResourceLoadResult<T[]>> {
-  try {
-    return {
-      data: await loadLive(),
-      sourceMode: "live",
-      message: `Connected to live ${label}.`,
-    };
-  } catch (error) {
-    return {
-      data: loadPreview(),
-      sourceMode: "preview",
-      message: `${label} endpoint unavailable. Showing preview ${label} instead.`,
-      error: formatLoadError(error),
-    };
-  }
-}
 
 export function formatDateTime(value: string): string {
   return new Date(value).toLocaleString("en-US", {
@@ -465,92 +173,44 @@ export function sortApprovedExports(
 
 export async function loadSessions(
   filter: "all" | ReviewSession["reviewStatus"] = "all"
-): Promise<ResourceLoadResult<ReviewSession[]>> {
-  return loadCollection({
-    label: "review sessions",
-    loadLive: async () =>
-      sortSessions(
-        await api.getSessions(
-          filter === "all" ? undefined : { reviewStatus: filter }
-        ),
-        filter
-      ),
-    loadPreview: () => sortSessions(previewSessions, filter),
-  });
+): Promise<ReviewSession[]> {
+  return sortSessions(
+    await api.getSessions(filter === "all" ? undefined : { reviewStatus: filter }),
+    filter
+  );
 }
 
 export async function loadFindings(
   filter: "all" | Finding["status"] = "all"
-): Promise<ResourceLoadResult<Finding[]>> {
-  return loadCollection({
-    label: "findings",
-    loadLive: async () =>
-      sortFindings(
-        await api.getFindings(filter === "all" ? undefined : { status: filter }),
-        filter
-      ),
-    loadPreview: () => sortFindings(previewFindings, filter),
-  });
+): Promise<Finding[]> {
+  return sortFindings(
+    await api.getFindings(filter === "all" ? undefined : { status: filter }),
+    filter
+  );
 }
 
 export async function loadApprovedExports(
   filter: "all" | ApprovedExport["status"] = "all"
-): Promise<ResourceLoadResult<ApprovedExport[]>> {
-  return loadCollection({
-    label: "approved exports",
-    loadLive: async () =>
-      sortApprovedExports(
-        await api.getApprovedExports(
-          filter === "all" ? undefined : { exportStatus: filter }
-        ),
-        filter
-      ),
-    loadPreview: () => sortApprovedExports(previewApprovedExports, filter),
-  });
+): Promise<ApprovedExport[]> {
+  return sortApprovedExports(
+    await api.getApprovedExports(
+      filter === "all" ? undefined : { exportStatus: filter }
+    ),
+    filter
+  );
 }
 
-export async function loadReviewSnapshot(): Promise<ReviewSnapshotLoadResult> {
+export async function loadReviewSnapshot(): Promise<ReviewSnapshot> {
   const [sessions, findings, approvedExports] = await Promise.all([
-    loadSessions(),
-    loadFindings(),
-    loadApprovedExports(),
+    api.getSessions(),
+    api.getFindings(),
+    api.getApprovedExports(),
   ]);
 
-  const failedResources = [
-    sessions.sourceMode === "preview" ? "sessions" : null,
-    findings.sourceMode === "preview" ? "findings" : null,
-    approvedExports.sourceMode === "preview" ? "approved exports" : null,
-  ].filter((value): value is string => value !== null);
-
-  const sourceMode: ReviewSnapshotSourceMode =
-    failedResources.length === 0
-      ? "live"
-      : failedResources.length === 3
-        ? "preview"
-        : "mixed";
-
-  const message =
-    sourceMode === "live"
-      ? "Connected to live review data across sessions, findings, and approved exports."
-      : sourceMode === "preview"
-        ? "The review API is unavailable. Showing preview sessions, findings, and approved exports."
-        : `Live review data loaded, but ${formatResourceList(
-            failedResources
-          )} fell back to preview data.`;
-
   return {
-    snapshot: {
-      sessions: sessions.data,
-      findings: findings.data,
-      approvedExports: approvedExports.data,
-    },
-    sourceMode,
-    message,
-    errors: {
-      ...(sessions.error ? { sessions: sessions.error } : {}),
-      ...(findings.error ? { findings: findings.error } : {}),
-      ...(approvedExports.error ? { approvedExports: approvedExports.error } : {}),
-    },
+    sessions: sortSessions(sessions),
+    findings: sortFindings(findings),
+    approvedExports: sortApprovedExports(approvedExports),
   };
 }
 
