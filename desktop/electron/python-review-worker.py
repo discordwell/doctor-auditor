@@ -70,6 +70,7 @@ def transcribe_file(request: Dict[str, Any]) -> Any:
 
 def analyze_transcript(request: Dict[str, Any]) -> Dict[str, Any]:
     session_id = request["sessionId"]
+    session_token = normalize_identifier(session_id)
     transcript_segments = request.get("transcriptSegments") or []
     findings: list[Dict[str, Any]] = []
     evidence_spans: list[Dict[str, Any]] = []
@@ -89,8 +90,8 @@ def analyze_transcript(request: Dict[str, Any]) -> Dict[str, Any]:
         if not excerpt:
             return
 
-        evidence_id = f"evidence-{len(evidence_spans) + 1}"
-        finding_id = f"finding-{len(findings) + 1}"
+        evidence_id = f"evidence-{session_token}-{len(evidence_spans) + 1}"
+        finding_id = f"finding-{session_token}-{len(findings) + 1}"
         evidence = {
             "id": evidence_id,
             "transcriptSegmentId": str(segment.get("id") or "missing-segment"),
@@ -417,6 +418,15 @@ def join_segment_text(transcript_segments: list[Dict[str, Any]]) -> str:
 
 def normalize_speaker_label(segment: Dict[str, Any]) -> str:
     return str(segment.get("speakerLabel") or "").strip().lower()
+
+
+def normalize_identifier(value: Any) -> str:
+    normalized = "".join(
+        character.lower()
+        for character in str(value)
+        if character.isalnum()
+    )
+    return normalized or "session"
 
 
 def select_segments(

@@ -19,6 +19,7 @@ import "./SessionReviewView.css";
 
 type LoadState = "loading" | "ready" | "error";
 type DecisionTone = "accepted" | "rejected" | "uncertain" | "pending";
+const SESSION_ASSIST_TARGET = "__session__";
 
 interface SessionReviewViewProps {
   sessionId: string;
@@ -36,7 +37,7 @@ export default function SessionReviewView({
   const [actionInfoMessage, setActionInfoMessage] = useState("");
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [savingFindingId, setSavingFindingId] = useState<string | null>(null);
-  const [requestingAssistFindingId, setRequestingAssistFindingId] = useState<
+  const [requestingAssistTarget, setRequestingAssistTarget] = useState<
     string | null
   >(null);
   const [isCreatingExport, setIsCreatingExport] = useState(false);
@@ -176,15 +177,17 @@ export default function SessionReviewView({
     }
   }
 
-  async function requestSeriousnessAssist(findingId: string): Promise<void> {
+  async function requestSeriousnessAssist(findingId?: string): Promise<void> {
     if (!window.doctorAuditor || !bundle) {
       setActionErrorMessage("Desktop review persistence is unavailable.");
       return;
     }
 
+    const requestTarget = findingId ?? SESSION_ASSIST_TARGET;
+
     setActionErrorMessage("");
     setActionInfoMessage("");
-    setRequestingAssistFindingId(findingId);
+    setRequestingAssistTarget(requestTarget);
 
     try {
       const result =
@@ -218,7 +221,9 @@ export default function SessionReviewView({
           : "Unable to request remote assist."
       );
     } finally {
-      setRequestingAssistFindingId(null);
+      setRequestingAssistTarget((currentTarget) =>
+        currentTarget === requestTarget ? null : currentTarget
+      );
     }
   }
 
@@ -298,15 +303,35 @@ export default function SessionReviewView({
     selectedFinding && bundle
       ? getPersistedOutcome(selectedFinding, bundle.reviewDecisions)
       : undefined;
-  const selectedAssistReceipts = selectedFinding
-    ? modelAssistReceipts
-        .filter((receipt) => receipt.findingId === selectedFinding.id)
-        .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
-    : [];
+  const selectedAssistReceipts = modelAssistReceipts
+    .filter((receipt) =>
+      selectedFinding
+        ? receipt.findingId === selectedFinding.id
+        : receipt.findingId === undefined
+    )
+    .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt));
   const latestAssistReceipt = selectedAssistReceipts[0];
   const reviewedCount = findings.filter((finding) =>
     Boolean(bundle && getPersistedOutcome(finding, bundle.reviewDecisions))
   ).length;
+  const findingsQueueSummary = bundle
+    ? buildFindingQueueSummary(bundle, findings)
+    : [];
+  const isSavingSelectedDecision =
+    selectedFinding !== undefined && savingFindingId === selectedFinding.id;
+  const isRequestingSelectedAssist = selectedFinding
+    ? requestingAssistTarget === selectedFinding.id
+    : requestingAssistTarget === SESSION_ASSIST_TARGET;
+  const isRequestingAnyAssist = requestingAssistTarget !== null;
+
+  function jumpToTranscriptSegment(segmentId: string): void {
+    const element = document.getElementById(getTranscriptSegmentElementId(segmentId));
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   if (loadState === "loading") {
     return (
@@ -358,6 +383,18 @@ export default function SessionReviewView({
           onClick={onBack}
         >
           Back to history
+        </button>
+        <button
+          type="button"
+          className="session-review__button session-review__button--secondary"
+          onClick={() => void requestSeriousnessAssist(selectedFinding?.id)}
+          disabled={isRequestingAnyAssist}
+        >
+          {isRequestingAnyAssist
+            ? "Requesting..."
+            : selectedFinding
+              ? "Request Remote assist"
+              : "Request Remote assist for session"}
         </button>
         <button
           type="button"
@@ -459,7 +496,7 @@ export default function SessionReviewView({
       )}
 
       <div className="session-review__layout">
-        <section className="session-review__panel">
+        <section className="session-review__panel session-review__panel--transcript">
           <div className="session-review__panel-header">
             <div>
               <p className="session-review__panel-kicker">Transcript</p>
@@ -480,6 +517,7 @@ export default function SessionReviewView({
                 return (
                   <article
                     key={segment.id}
+                    id={getTranscriptSegmentElementId(segment.id)}
                     className={`session-review__segment ${
                       linkedEvidence.length > 0 ? "is-highlighted" : ""
                     }`}
@@ -533,134 +571,117 @@ export default function SessionReviewView({
           </div>
         </section>
 
-        <aside className="session-review__sidebar">
-          <section className="session-review__panel">
-            <div className="session-review__panel-header">
-              <div>
-                <p className="session-review__panel-kicker">Findings</p>
-                <h3>Reviewer queue</h3>
+        <section className="session-review__panel session-review__panel--queue">
+          <div className="session-review__panel-header">
+            <div>
+              <p className="session-review__panel-kicker">Findings</p>
+              <h3>Reviewer queue</h3>
+            </div>
+            <p className="session-review__panel-note">
+              Pick a finding from the queue, then review its evidence and actions
+              in the detail panel.
+            </p>
+          </div>
+
+          <div className="session-review__queue-summary">
+            {findingsQueueSummary.map((summaryCard) => (
+              <article
+                key={summaryCard.label}
+                className={`session-review__queue-card session-review__queue-card--${summaryCard.tone}`}
+              >
+                <p className="session-review__queue-card-label">
+                  {summaryCard.label}
+                </p>
+                <p className="session-review__queue-card-value">
+                  {summaryCard.value}
+                </p>
+                <p className="session-review__queue-card-caption">
+                  {summaryCard.caption}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <div className="session-review__findings-list">
+            {findings.length > 0 ? (
+              findings.map((finding) => {
+                const appliedOutcome = getPersistedOutcome(
+                  finding,
+                  bundle.reviewDecisions
+                );
+                const tone = getDecisionTone(appliedOutcome);
+                const isSelected = selectedFinding?.id === finding.id;
+
+                return (
+                  <button
+                    key={finding.id}
+                    type="button"
+                    className={`session-review__finding ${
+                      isSelected ? "is-selected" : ""
+                    }`}
+                    onClick={() => setSelectedFindingId(finding.id)}
+                    aria-pressed={isSelected}
+                  >
+                    <div className="session-review__finding-top">
+                      <div>
+                        <p className="session-review__finding-code">{finding.code}</p>
+                        <h4>{finding.title}</h4>
+                      </div>
+                      <span
+                        className={`session-review__decision session-review__decision--${tone}`}
+                      >
+                        {formatDecisionLabel(appliedOutcome)}
+                      </span>
+                    </div>
+
+                    <p className="session-review__finding-summary">
+                      {finding.summary}
+                    </p>
+
+                    <div className="session-review__finding-meta">
+                      <span className="session-review__meta-pill">
+                        {Math.round(finding.confidence * 100)}% confidence
+                      </span>
+                      <span className="session-review__meta-pill">
+                        {finding.detectedBy}
+                      </span>
+                      <span className="session-review__meta-pill">
+                        {finding.evidenceSpans.length} span(s)
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="session-review__empty-detail">
+                Findings have not been saved for this session yet.
               </div>
-              <p className="session-review__panel-note">
-                Evidence-linked findings stay local until a reviewer approves the
-                export path.
-              </p>
+            )}
+          </div>
+        </section>
+
+        <section className="session-review__panel session-review__panel--detail">
+          <div className="session-review__panel-header">
+            <div>
+              <p className="session-review__panel-kicker">Selected finding</p>
+              <h3>
+                {selectedFinding ? selectedFinding.title : "No finding selected"}
+              </h3>
             </div>
+            <p className="session-review__panel-note">
+              {selectedFinding
+                ? "Review outcome is persisted in the local desktop database."
+                : "Open a finding to inspect linked evidence."}
+            </p>
+          </div>
 
-            <div className="session-review__findings-list">
-              {findings.length > 0 ? (
-                findings.map((finding) => {
-                  const appliedOutcome = getPersistedOutcome(
-                    finding,
-                    bundle.reviewDecisions
-                  );
-                  const tone = getDecisionTone(appliedOutcome);
-                  const isSavingDecision = savingFindingId === finding.id;
-                  const isRequestingAssist =
-                    requestingAssistFindingId === finding.id;
-
-                  return (
-                    <article
-                      key={finding.id}
-                      className={`session-review__finding ${
-                        selectedFinding?.id === finding.id ? "is-selected" : ""
-                      }`}
-                      onClick={() => setSelectedFindingId(finding.id)}
-                    >
-                      <div className="session-review__finding-top">
-                        <div>
-                          <p className="session-review__finding-code">{finding.code}</p>
-                          <h4>{finding.title}</h4>
-                        </div>
-                        <span
-                          className={`session-review__decision session-review__decision--${tone}`}
-                        >
-                          {formatDecisionLabel(appliedOutcome)}
-                        </span>
-                      </div>
-
-                      <p className="session-review__finding-summary">
-                        {finding.summary}
-                      </p>
-
-                      <div className="session-review__finding-meta">
-                        <span>{Math.round(finding.confidence * 100)}% confidence</span>
-                        <span>{finding.detectedBy}</span>
-                        <span>{finding.evidenceSpans.length} span(s)</span>
-                      </div>
-
-                      <div className="session-review__actions">
-                        {(
-                          [
-                            ["accepted", "Accept"],
-                            ["rejected", "Reject"],
-                            ["uncertain", "Uncertain"],
-                          ] as Array<[ReviewDecisionOutcome, string]>
-                        ).map(([outcome, label]) => (
-                          <button
-                            key={outcome}
-                            type="button"
-                            className={`session-review__action-button ${
-                              appliedOutcome === outcome ? "is-active" : ""
-                            }`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setSelectedFindingId(finding.id);
-                              void saveReviewDecision(finding.id, outcome);
-                            }}
-                            disabled={isSavingDecision}
-                          >
-                            {isSavingDecision ? "Saving..." : label}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          className="session-review__action-button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedFindingId(finding.id);
-                            void requestSeriousnessAssist(finding.id);
-                          }}
-                          disabled={
-                            isRequestingAssist ||
-                            !bundle.session.consent.remoteAssistAllowed ||
-                            finding.evidenceSpans.length === 0
-                          }
-                        >
-                          {isRequestingAssist
-                            ? "Requesting..."
-                            : "Request Remote assist"}
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })
-              ) : (
-                <div className="session-review__empty-detail">
-                  Findings have not been saved for this session yet.
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="session-review__panel">
-            <div className="session-review__panel-header">
-              <div>
-                <p className="session-review__panel-kicker">Selected finding</p>
-                <h3>
-                  {selectedFinding ? selectedFinding.title : "No finding selected"}
-                </h3>
-              </div>
-              <p className="session-review__panel-note">
-                {selectedFinding
-                  ? "Review outcome is persisted in the local desktop database."
-                  : "Open a finding to inspect linked evidence."}
-              </p>
-            </div>
-
-            {selectedFinding ? (
-              <div className="session-review__detail">
-                <div className="session-review__detail-row">
-                  <span>Decision</span>
+          {selectedFinding ? (
+            <div className="session-review__detail">
+              <div className="session-review__detail-hero">
+                <div className="session-review__detail-hero-top">
+                  <p className="session-review__finding-code">
+                    {selectedFinding.code}
+                  </p>
                   <strong
                     className={`session-review__detail-value session-review__detail-value--${getDecisionTone(
                       selectedOutcome
@@ -669,111 +690,242 @@ export default function SessionReviewView({
                     {formatDecisionLabel(selectedOutcome)}
                   </strong>
                 </div>
-                <div className="session-review__detail-row">
-                  <span>Detected by</span>
-                  <strong>{selectedFinding.detectedBy}</strong>
+                <p className="session-review__detail-summary">
+                  {selectedFinding.summary}
+                </p>
+                <div className="session-review__finding-meta">
+                  <span className="session-review__meta-pill">
+                    {Math.round(selectedFinding.confidence * 100)}% confidence
+                  </span>
+                  <span className="session-review__meta-pill">
+                    {selectedFinding.detectedBy}
+                  </span>
+                  <span className="session-review__meta-pill">
+                    {selectedFinding.evidenceSpans.length} linked span(s)
+                  </span>
                 </div>
-                <div className="session-review__detail-row">
-                  <span>Updated</span>
-                  <strong>{formatDateTime(selectedFinding.updatedAt)}</strong>
-                </div>
-                <div className="session-review__detail-row">
-                  <span>Remote assist</span>
-                  <strong>
-                    {bundle.session.consent.remoteAssistAllowed
-                      ? "Permitted"
-                      : "Disabled for this session"}
-                  </strong>
-                </div>
+              </div>
 
-                <div className="session-review__detail-block">
-                  <p className="session-review__detail-label">Summary</p>
-                  <p>{selectedFinding.summary}</p>
-                </div>
+              <div className="session-review__actions session-review__actions--detail">
+                {(
+                  [
+                    ["accepted", "Accept", "accepted"],
+                    ["uncertain", "Needs follow-up", "uncertain"],
+                    ["rejected", "Reject", "rejected"],
+                  ] as Array<
+                    [ReviewDecisionOutcome, string, Exclude<DecisionTone, "pending">]
+                  >
+                ).map(([outcome, label, tone]) => (
+                  <button
+                    key={outcome}
+                    type="button"
+                    className={`session-review__action-button session-review__action-button--${tone} ${
+                      selectedOutcome === outcome ? "is-active" : ""
+                    }`}
+                    onClick={() =>
+                      void saveReviewDecision(selectedFinding.id, outcome)
+                    }
+                    disabled={isSavingSelectedDecision}
+                  >
+                    {isSavingSelectedDecision ? "Saving..." : label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="session-review__action-button session-review__action-button--assist"
+                  onClick={() =>
+                    void requestSeriousnessAssist(selectedFinding.id)
+                  }
+                  disabled={isRequestingAnyAssist}
+                >
+                  {isRequestingSelectedAssist
+                    ? "Requesting..."
+                    : "Request Remote assist"}
+                </button>
+                {selectedFinding.evidenceSpans.length > 0 && (
+                  <button
+                    type="button"
+                    className="session-review__action-button session-review__action-button--ghost"
+                    onClick={() =>
+                      jumpToTranscriptSegment(
+                        selectedFinding.evidenceSpans[0].transcriptSegmentId
+                      )
+                    }
+                  >
+                    Jump to first evidence
+                  </button>
+                )}
+              </div>
 
-                <div className="session-review__detail-block">
+              <div className="session-review__detail-stats">
+                <article className="session-review__detail-stat">
+                  <p className="session-review__detail-stat-label">Updated</p>
+                  <p className="session-review__detail-stat-value">
+                    {formatDateTime(selectedFinding.updatedAt)}
+                  </p>
+                </article>
+                <article className="session-review__detail-stat">
+                  <p className="session-review__detail-stat-label">Detected by</p>
+                  <p className="session-review__detail-stat-value">
+                    {selectedFinding.detectedBy}
+                  </p>
+                </article>
+                <article className="session-review__detail-stat">
+                  <p className="session-review__detail-stat-label">Evidence</p>
+                  <p className="session-review__detail-stat-value">
+                    {selectedFinding.evidenceSpans.length} span(s)
+                  </p>
+                </article>
+                <article className="session-review__detail-stat">
+                  <p className="session-review__detail-stat-label">
+                    Remote assist
+                  </p>
+                  <p className="session-review__detail-stat-value">
+                    {latestAssistReceipt
+                      ? formatAssistStatus(latestAssistReceipt)
+                      : "Available on demand"}
+                  </p>
+                </article>
+              </div>
+
+              <div className="session-review__detail-block">
+                <div className="session-review__detail-row">
                   <p className="session-review__detail-label">Evidence spans</p>
-                  <div className="session-review__evidence-list">
-                    {selectedFinding.evidenceSpans.map((span) => {
+                  <p className="session-review__detail-note">
+                    Use a span to center the matching segment in the transcript.
+                  </p>
+                </div>
+                <div className="session-review__evidence-list">
+                  {selectedFinding.evidenceSpans.length > 0 ? (
+                    selectedFinding.evidenceSpans.map((span) => {
                       const sourceSegment = transcriptSegments.find(
                         (segment) => segment.id === span.transcriptSegmentId
                       );
 
                       return (
                         <article key={span.id} className="session-review__evidence-card">
-                          <p className="session-review__evidence-label">
-                            {sourceSegment
-                              ? `${formatSpeakerLabel(sourceSegment.speakerLabel)} / ${formatOffset(
-                                  span.startOffsetMs
-                                )}`
-                              : "Detached evidence"}
-                          </p>
+                          <div className="session-review__evidence-card-top">
+                            <p className="session-review__evidence-label">
+                              {sourceSegment
+                                ? `${formatSpeakerLabel(sourceSegment.speakerLabel)} / ${formatOffset(
+                                    span.startOffsetMs
+                                  )}`
+                                : "Detached evidence"}
+                            </p>
+                            {sourceSegment ? (
+                              <button
+                                type="button"
+                                className="session-review__jump-button"
+                                onClick={() =>
+                                  jumpToTranscriptSegment(sourceSegment.id)
+                                }
+                              >
+                                View in transcript
+                              </button>
+                            ) : null}
+                          </div>
                           <p>{span.excerpt}</p>
                         </article>
                       );
-                    })}
-                  </div>
-                </div>
-
-                <div className="session-review__detail-block">
-                  <div className="session-review__detail-row">
-                    <span>Remote assist</span>
-                    <strong>
-                      {latestAssistReceipt
-                        ? formatAssistStatus(latestAssistReceipt)
-                        : "No Remote assist request yet"}
-                    </strong>
-                  </div>
-                  {latestAssistReceipt ? (
-                    <div className="session-review__evidence-list">
-                      <article className="session-review__evidence-card">
-                        <p className="session-review__evidence-label">
-                          {latestAssistReceipt.assessment
-                            ? `${formatAssistDisposition(
-                                latestAssistReceipt.assessment.disposition
-                              )} / ${Math.round(
-                                latestAssistReceipt.assessment.confidence * 100
-                              )}% confidence`
-                            : "Request failed"}
-                        </p>
-                        <p>
-                          {latestAssistReceipt.assessment?.rationale ??
-                            latestAssistReceipt.errorCode ??
-                            "The Remote assist gateway did not return an assessment."}
-                        </p>
-                        {latestAssistReceipt.assessment?.limitations.length ? (
-                          <p className="session-review__evidence-label">
-                            {latestAssistReceipt.assessment.limitations.join(" / ")}
-                          </p>
-                        ) : null}
-                        {latestAssistReceipt.reviewerAction !== "dismissed" && (
-                          <button
-                            type="button"
-                            className="session-review__action-button"
-                            onClick={() =>
-                              void dismissAssistReceipt(latestAssistReceipt.id)
-                            }
-                          >
-                            Dismiss Remote assist result
-                          </button>
-                        )}
-                      </article>
-                    </div>
+                    })
                   ) : (
-                    <p>
-                      Request Remote assist to log a minimized, non-raw result
-                      without moving transcript or findings into the cloud.
-                    </p>
+                    <div className="session-review__empty-detail">
+                      No linked evidence spans were saved for this finding.
+                    </div>
                   )}
                 </div>
               </div>
-            ) : (
-              <div className="session-review__empty-detail">
-                Choose a finding to inspect evidence and reviewer controls.
+
+              <div className="session-review__detail-block">
+                <div className="session-review__detail-row">
+                  <span>Remote assist</span>
+                  <strong>
+                    {latestAssistReceipt
+                      ? formatAssistStatus(latestAssistReceipt)
+                      : "No Remote assist request yet"}
+                  </strong>
+                </div>
+                {latestAssistReceipt ? (
+                  <div className="session-review__evidence-list">
+                    <article className="session-review__evidence-card">
+                      <p className="session-review__evidence-label">
+                        {latestAssistReceipt.assessment
+                          ? `${formatAssistDisposition(
+                              latestAssistReceipt.assessment.disposition
+                            )} / ${Math.round(
+                              latestAssistReceipt.assessment.confidence * 100
+                            )}% confidence`
+                          : "Request failed"}
+                      </p>
+                      <p>
+                        {latestAssistReceipt.assessment?.rationale ??
+                          latestAssistReceipt.errorCode ??
+                          "The Remote assist gateway did not return an assessment."}
+                      </p>
+                      {latestAssistReceipt.assessment?.limitations.length ? (
+                        <p className="session-review__evidence-label">
+                          {latestAssistReceipt.assessment.limitations.join(" / ")}
+                        </p>
+                      ) : null}
+                      {latestAssistReceipt.reviewerAction !== "dismissed" && (
+                        <button
+                          type="button"
+                          className="session-review__action-button session-review__action-button--ghost"
+                          onClick={() =>
+                            void dismissAssistReceipt(latestAssistReceipt.id)
+                          }
+                        >
+                          Dismiss Remote assist result
+                        </button>
+                      )}
+                    </article>
+                  </div>
+                ) : (
+                  <div className="session-review__empty-detail">
+                    Request Remote assist to log a minimized result using the
+                    current finding without moving transcript or findings into
+                    the cloud.
+                  </div>
+                )}
               </div>
-            )}
-          </section>
-        </aside>
+            </div>
+          ) : (
+            <div className="session-review__empty-detail">
+              <p>
+                No finding is selected for this session. Remote assist can still
+                run on minimized session metadata only.
+              </p>
+              <button
+                type="button"
+                className="session-review__action-button session-review__action-button--assist"
+                onClick={() => void requestSeriousnessAssist()}
+                disabled={isRequestingAnyAssist}
+              >
+                {isRequestingSelectedAssist
+                  ? "Requesting..."
+                  : "Request Remote assist for session"}
+              </button>
+              {latestAssistReceipt ? (
+                <article className="session-review__evidence-card">
+                  <p className="session-review__evidence-label">
+                    {latestAssistReceipt.assessment
+                      ? `${formatAssistDisposition(
+                          latestAssistReceipt.assessment.disposition
+                        )} / ${Math.round(
+                          latestAssistReceipt.assessment.confidence * 100
+                        )}% confidence`
+                      : "Request failed"}
+                  </p>
+                  <p>
+                    {latestAssistReceipt.assessment?.rationale ??
+                      latestAssistReceipt.errorCode ??
+                      "The Remote assist gateway did not return an assessment."}
+                  </p>
+                </article>
+              ) : null}
+            </div>
+          )}
+        </section>
       </div>
     </section>
   );
@@ -1082,4 +1234,57 @@ function getNoFindingsMessage(bundle: DesktopSessionBundle): string {
     "No persisted findings are attached to this session yet. Reviewer actions " +
     "stay unavailable until findings are saved."
   );
+}
+
+function buildFindingQueueSummary(
+  bundle: DesktopSessionBundle,
+  findings: Finding[]
+): Array<{
+  caption: string;
+  label: string;
+  tone: DecisionTone;
+  value: number;
+}> {
+  const counts: Record<DecisionTone, number> = {
+    accepted: 0,
+    rejected: 0,
+    uncertain: 0,
+    pending: 0,
+  };
+
+  findings.forEach((finding) => {
+    const outcome = getPersistedOutcome(finding, bundle.reviewDecisions);
+    counts[getDecisionTone(outcome)] += 1;
+  });
+
+  return [
+    {
+      label: "Pending",
+      value: counts.pending,
+      tone: "pending",
+      caption: "Needs a reviewer decision.",
+    },
+    {
+      label: "Accepted",
+      value: counts.accepted,
+      tone: "accepted",
+      caption: "Ready for approved export.",
+    },
+    {
+      label: "Follow-up",
+      value: counts.uncertain,
+      tone: "uncertain",
+      caption: "Marked uncertain or edited.",
+    },
+    {
+      label: "Rejected",
+      value: counts.rejected,
+      tone: "rejected",
+      caption: "Held back from export.",
+    },
+  ];
+}
+
+function getTranscriptSegmentElementId(segmentId: string): string {
+  return `session-review-transcript-segment-${segmentId}`;
 }

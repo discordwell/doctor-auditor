@@ -40,7 +40,7 @@ export interface PersistReviewDecisionRequest {
 
 export interface RequestSeriousnessAssistRequest {
   sessionId: string;
-  findingId: string;
+  findingId?: string;
 }
 
 export interface RequestSeriousnessAssistResult {

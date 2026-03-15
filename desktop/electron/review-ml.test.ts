@@ -126,13 +126,13 @@ describe("PythonReviewMlClient", () => {
     ).resolves.toMatchObject({
       evidenceSpans: [
         {
-          id: "evidence-1",
+          id: "evidence-session1-1",
           transcriptSegmentId: "segment-1",
         },
       ],
       findings: [
         {
-          id: "finding-1",
+          id: "finding-session1-1",
           sessionId: "session-1",
         },
       ],
@@ -229,5 +229,43 @@ describe("PythonReviewMlClient", () => {
     expect(analysis.findings.map((finding) => finding.code)).toContain(
       "missing-follow-up-instructions"
     );
+  });
+
+  it("generates finding ids that stay unique across sessions", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-auditor-review-ml-"));
+    const modelPath = path.join(tempDir, "model.bin");
+    fs.writeFileSync(modelPath, "");
+
+    client = new PythonReviewMlClient({
+      modelPath,
+      pythonExecutable: "python3",
+      workerPath,
+    });
+
+    const first = await client.analyzeTranscript("session-alpha", [
+      {
+        id: "segment-alpha-1",
+        sessionId: "session-alpha",
+        speakerLabel: "patient",
+        text: "Emergency. I cannot control my feet and I am burning up.",
+        startOffsetMs: 0,
+        endOffsetMs: 4000,
+        source: "manual_edit",
+      },
+    ]);
+    const second = await client.analyzeTranscript("session-beta", [
+      {
+        id: "segment-beta-1",
+        sessionId: "session-beta",
+        speakerLabel: "patient",
+        text: "Emergency. I cannot control my feet and I am burning up.",
+        startOffsetMs: 0,
+        endOffsetMs: 4000,
+        source: "manual_edit",
+      },
+    ]);
+
+    expect(first.findings[0]?.id).not.toBe(second.findings[0]?.id);
+    expect(first.evidenceSpans[0]?.id).not.toBe(second.evidenceSpans[0]?.id);
   });
 });

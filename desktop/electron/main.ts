@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import type {
-  Finding,
   ModelAssistReceipt,
   ModelAssistRequest,
   SeriousnessAssessment,
@@ -18,6 +17,10 @@ import { AudioCapture } from "./audio-capture";
 import { resolveCloudSyncConfig } from "./cloud-config";
 import { CloudSyncClient } from "./cloud-sync";
 import { LocalDatabase } from "./database";
+import {
+  buildModelAssistRequest,
+  isRemoteAssistAllowedForExport,
+} from "./model-assist";
 import { PythonReviewMlClient } from "./review-ml";
 import {
   ReviewRuntimeService,
@@ -314,77 +317,12 @@ function hasPersistedSession(sessionId: string): boolean {
   return db.getSessionSummary(sessionId) !== null;
 }
 
-function getFindingOrThrow(
-  bundle: DesktopSessionBundle,
-  findingId: string
-): Finding {
+function getFindingOrThrow(bundle: DesktopSessionBundle, findingId: string) {
   const finding = bundle.findings.find((item) => item.id === findingId);
   if (!finding) {
     throw new Error("The selected finding no longer exists.");
   }
   return finding;
-}
-
-function buildMinimizedConcernPacket(
-  bundle: DesktopSessionBundle,
-  finding: Finding
-): ModelAssistRequest["concern"] {
-  if (finding.evidenceSpans.length === 0) {
-    throw new Error(
-      "Remote assist requires at least one linked evidence span."
-    );
-  }
-
-  const speakerLabels = Array.from(
-    new Set(
-      finding.evidenceSpans
-        .map((span) =>
-          bundle.transcriptSegments.find(
-            (segment) => segment.id === span.transcriptSegmentId
-          )?.speakerLabel
-        )
-        .filter((value): value is TranscriptSegment["speakerLabel"] =>
-          typeof value === "string"
-        )
-    )
-  );
-
-  const encounterStartedAt = Date.parse(bundle.session.encounterStartedAt);
-  const encounterEndedAt = Date.parse(
-    bundle.session.encounterEndedAt ?? bundle.session.encounterStartedAt
-  );
-  const encounterDurationMs =
-    Number.isNaN(encounterStartedAt) || Number.isNaN(encounterEndedAt)
-      ? undefined
-      : Math.max(encounterEndedAt - encounterStartedAt, 0);
-
-  return {
-    findingCode: finding.code,
-    findingStatus: finding.status,
-    findingConfidence: finding.confidence,
-    evidenceSpanCount: finding.evidenceSpans.length,
-    speakerLabels,
-    captureMode: bundle.session.captureMode,
-    encounterDurationMs,
-  };
-}
-
-function buildModelAssistRequest(
-  bundle: DesktopSessionBundle,
-  finding: Finding
-): ModelAssistRequest {
-  const requestedAt = new Date().toISOString();
-
-  return {
-    id: `assist-request-${randomUUID()}`,
-    sessionId: bundle.session.id,
-    findingId: finding.id,
-    requestedBy: DESKTOP_REVIEWER_ID,
-    requestedAt,
-    policyVersion: bundle.session.consent.policyVersion,
-    policyMode: "minimized_no_raw_phi",
-    concern: buildMinimizedConcernPacket(bundle, finding),
-  };
 }
 
 function buildAssistReceipt(
@@ -555,7 +493,7 @@ function buildApprovedExportEnvelope(
     consent: {
       recordedWithConsent: bundle.session.consent.recordedWithConsent,
       exportAllowed: bundle.session.consent.exportAllowed,
-      remoteAssistAllowed: bundle.session.consent.remoteAssistAllowed,
+      remoteAssistAllowed: isRemoteAssistAllowedForExport(bundle),
       policyVersion: bundle.session.consent.policyVersion,
     },
     export: approvedExport,
@@ -725,13 +663,9 @@ function registerIpcHandlers(): void {
       if (!cloudSync) throw new Error("Cloud sync client unavailable");
 
       const bundle = getSessionBundleOrThrow(request.sessionId);
-      if (!bundle.session.consent.remoteAssistAllowed) {
-        throw new Error(
-          "Remote assist is not permitted for this session."
-        );
-      }
-
-      const finding = getFindingOrThrow(bundle, request.findingId);
+      const finding = request.findingId
+        ? getFindingOrThrow(bundle, request.findingId)
+        : undefined;
       const assistRequest = buildModelAssistRequest(bundle, finding);
       const syncErrors: string[] = [];
 

@@ -41,7 +41,7 @@ const IMPORT_STEP_ORDER = IMPORT_STEPS.reduce<Record<string, number>>(
 const DEFAULT_LIVE_CAPTURE_NOTICE: LiveCaptureNotice = {
   tone: "info",
   message:
-    "Use the default microphone to start a new recording. If you already have audio, load it below.",
+    "Use the red button to record, or upload an audio file beside it.",
 };
 
 export default function RecordingView() {
@@ -53,7 +53,7 @@ export default function RecordingView() {
   const [clinicianId, setClinicianId] = useState("");
   const [recordedWithConsent, setRecordedWithConsent] = useState(false);
   const [exportAllowed, setExportAllowed] = useState(false);
-  const [remoteAssistAllowed, setRemoteAssistAllowed] = useState(false);
+  const [remoteAssistAllowed] = useState(true);
   const [importState, setImportState] = useState<{
     stage: ImportStage;
     message: string;
@@ -279,10 +279,10 @@ export default function RecordingView() {
       setDuration(0);
       setAudioLevels(createEmptyAudioLevels());
       setRecentSession(result.session);
-        setLiveCaptureNotice({
-          tone: "active",
-          message: "Recording in progress. Stop when you're ready to transcribe.",
-        });
+      setLiveCaptureNotice({
+        tone: "active",
+        message: "Recording in progress. Stop when you're ready to transcribe.",
+      });
       stopRecordingTimer(timerRef);
       timerRef.current = setInterval(() => {
         setDuration((currentDuration) => currentDuration + 1);
@@ -423,15 +423,15 @@ export default function RecordingView() {
         ? "Finishing the audio file before transcription starts."
         : isRecording
           ? `Recording from the default microphone - ${formatDuration(duration)}`
-          : "Start a new recording here. If you already have audio, load it in the next section.";
+          : "Record from the default microphone here. Upload is available in the next card.";
   const trimmedClinicianId = clinicianId.trim();
   const setupReady = trimmedClinicianId.length > 0 && recordedWithConsent;
   const setupSummaryHeading = setupReady
-    ? "Session setup complete"
-    : "Complete the required setup";
+    ? "Ready to capture"
+    : "Finish setup below";
   const setupSummaryMessage = setupReady
-    ? "Recording and import are both ready. Choose the capture method that matches this encounter."
-    : "Add a clinician label and confirm recorded consent before starting a new session.";
+    ? "Recording and upload are enabled for this session."
+    : "Add a clinician label and recorded consent below before capture starts.";
   const recordActionLabel =
     captureTransition === "starting"
       ? "Starting..."
@@ -440,6 +440,18 @@ export default function RecordingView() {
         : isRecording
           ? "Stop recording"
           : "Start recording";
+  const recordActionSummary =
+    captureTransition === "starting"
+      ? "Preparing the microphone."
+      : captureTransition === "stopping"
+        ? "Saving the audio and queuing transcription."
+        : isRecording
+          ? "Press again to stop and save this session."
+          : !setupReady
+            ? "Add a clinician label and recorded consent below to enable recording."
+            : liveCaptureUnavailable
+              ? "Resolve recorder issues before starting."
+              : "Press to record from the default microphone.";
   const transportDisplay =
     captureTransition === "starting"
       ? "ARMING"
@@ -448,49 +460,19 @@ export default function RecordingView() {
         : isRecording
           ? formatDuration(duration)
           : "00:00";
-  const setupItems = [
-    {
-      label: "Clinician label",
-      status: trimmedClinicianId ? "Ready" : "Required",
-      detail: trimmedClinicianId || "Name the clinician before capture starts.",
-      tone: trimmedClinicianId ? "ready" : "pending",
-    },
-    {
-      label: "Recorded consent",
-      status: recordedWithConsent ? "Confirmed" : "Required",
-      detail: recordedWithConsent
-        ? "The session can be stored locally."
-        : "This must be checked before recording or import is enabled.",
-      tone: recordedWithConsent ? "ready" : "pending",
-    },
-    {
-      label: "Export permission",
-      status: exportAllowed ? "Allowed" : "Local only",
-      detail: exportAllowed
-        ? "The review can be approved for export later."
-        : "The encounter stays local unless this is enabled.",
-      tone: exportAllowed ? "ready" : "neutral",
-    },
-    {
-      label: "Remote assist",
-      status: remoteAssistAllowed ? "Allowed" : "Off",
-      detail: remoteAssistAllowed
-        ? "Minimized finding metadata can be sent from review."
-        : "Remote assist requests stay disabled for this session.",
-      tone: remoteAssistAllowed ? "ready" : "neutral",
-    },
-  ] as const;
+  const importHelperText = !setupReady
+    ? "Add a clinician label and recorded consent below to enable upload."
+    : "Choose a local audio file. It is copied into app storage for review.";
 
   return (
     <div className="recording-view">
       <header className="capture-shell">
         <div className="capture-shell__intro">
-          <span className="section-kicker">Capture workspace</span>
-          <h2>Start a new encounter session</h2>
+          <span className="section-kicker">Record or upload</span>
+          <h2>Create a session</h2>
           <p>
-            Set the session details once, then either record live from the
-            default microphone or import an existing audio file. New sessions
-            update here as transcription lands.
+            Start with live audio or an uploaded file. The session rules below
+            apply to both.
           </p>
         </div>
 
@@ -505,107 +487,6 @@ export default function RecordingView() {
           <p>{setupSummaryMessage}</p>
         </div>
       </header>
-
-      <section className="session-setup">
-        <div className="session-setup__header">
-          <div>
-            <span className="section-kicker">Session setup</span>
-            <h3>Prepare the encounter</h3>
-            <p>
-              These settings apply to both live recording and imported audio.
-            </p>
-          </div>
-        </div>
-
-        <div className="session-setup__grid">
-          <div className="session-setup__form">
-            <div className="input-grid">
-              <label className="field-label" htmlFor="clinician-label">
-                Clinician label
-              </label>
-              <input
-                id="clinician-label"
-                className="text-input"
-                value={clinicianId}
-                onChange={(event) => setClinicianId(event.target.value)}
-                placeholder="Dr. Morales"
-                disabled={inputsLocked}
-              />
-              <p className="field-help">
-                This label is attached to the local review session and shown in
-                history.
-              </p>
-            </div>
-
-            <div className="checkbox-group">
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={recordedWithConsent}
-                  onChange={(event) =>
-                    setRecordedWithConsent(event.target.checked)
-                  }
-                  disabled={inputsLocked}
-                />
-                <span className="checkbox-copy">
-                  <strong>Recorded with consent</strong>
-                  <span>
-                    Required before a local review session can be created.
-                  </span>
-                </span>
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={exportAllowed}
-                  onChange={(event) => setExportAllowed(event.target.checked)}
-                  disabled={inputsLocked}
-                />
-                <span className="checkbox-copy">
-                  <strong>Export permitted</strong>
-                  <span>
-                    Marks the session as eligible for later approved export.
-                  </span>
-                </span>
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={remoteAssistAllowed}
-                  onChange={(event) =>
-                    setRemoteAssistAllowed(event.target.checked)
-                  }
-                  disabled={inputsLocked}
-                />
-                <span className="checkbox-copy">
-                  <strong>Remote assist permitted</strong>
-                  <span>
-                    Allows minimized finding metadata to be sent from the review
-                    screen.
-                  </span>
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <div className="setup-summary">
-            {setupItems.map((item) => (
-              <div
-                key={item.label}
-                className={`setup-item setup-item--${item.tone}`}
-              >
-                <div>
-                  <p className="setup-item__label">{item.label}</p>
-                  <p className="setup-item__detail">{item.detail}</p>
-                </div>
-                <span className="setup-item__status">{item.status}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
       <section className="capture-grid">
         <article className="capture-card capture-card--primary">
@@ -646,17 +527,21 @@ export default function RecordingView() {
             <p className="transport-panel__copy">{liveCaptureDescription}</p>
             <button
               type="button"
-              className={`transport-button ${isRecording ? "recording" : ""}`}
+              className={`record-button ${isRecording ? "recording" : ""}`}
               onClick={toggleRecording}
               disabled={
                 isImporting ||
                 captureTransition !== "idle" ||
                 (!isRecording && liveCaptureUnavailable)
               }
+              aria-label={recordActionLabel}
             >
-              <span className="transport-button__icon" aria-hidden="true" />
-              <span>{recordActionLabel}</span>
+              <span className="record-button-inner" aria-hidden="true" />
             </button>
+            <div className="transport-panel__action">
+              <strong>{recordActionLabel}</strong>
+              <span>{recordActionSummary}</span>
+            </div>
           </div>
 
           <div className="waveform" aria-hidden="true">
@@ -692,11 +577,9 @@ export default function RecordingView() {
         <article className="capture-card">
           <div className="capture-card__header">
             <div>
-              <span className="section-kicker">Audio import</span>
-              <h3>Use an existing file</h3>
-              <p>
-                Import local audio when the encounter was recorded elsewhere.
-              </p>
+              <span className="section-kicker">Upload audio</span>
+              <h3>Upload an existing file</h3>
+              <p>Use local audio when the encounter was recorded elsewhere.</p>
             </div>
           </div>
 
@@ -708,10 +591,7 @@ export default function RecordingView() {
             >
               {isImporting ? "Loading audio..." : "Choose audio file"}
             </button>
-            <p className="intake-helper">
-              Supports common audio formats. The file is copied into app storage
-              so the review session remains available locally.
-            </p>
+            <p className="intake-helper">{importHelperText}</p>
           </div>
 
           <div
@@ -755,6 +635,74 @@ export default function RecordingView() {
         </article>
       </section>
 
+      <section className="session-setup">
+        <div className="session-setup__header">
+          <div>
+            <span className="section-kicker">Session rules</span>
+            <h3>Details and permissions</h3>
+            <p>These rules apply to both recording and upload.</p>
+          </div>
+          <p className="session-setup__required">
+            Required: clinician label and recorded consent.
+          </p>
+        </div>
+
+        <div className="session-setup__form">
+          <div className="input-grid">
+            <label className="field-label" htmlFor="clinician-label">
+              Clinician label
+            </label>
+            <input
+              id="clinician-label"
+              className="text-input"
+              value={clinicianId}
+              onChange={(event) => setClinicianId(event.target.value)}
+              placeholder="Dr. Morales"
+              disabled={inputsLocked}
+            />
+            <p className="field-help">Shown in local session history.</p>
+          </div>
+
+          <div className="checkbox-group">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={recordedWithConsent}
+                onChange={(event) => setRecordedWithConsent(event.target.checked)}
+                disabled={inputsLocked}
+              />
+              <span className="checkbox-copy">
+                <strong>Recorded with consent</strong>
+                <span>Required before a session can be created.</span>
+              </span>
+            </label>
+
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={exportAllowed}
+                onChange={(event) => setExportAllowed(event.target.checked)}
+                disabled={inputsLocked}
+              />
+              <span className="checkbox-copy">
+                <strong>Allow approved export</strong>
+                <span>Optional. Keeps the session eligible for later export.</span>
+              </span>
+            </label>
+
+            <div className="checkbox-field">
+              <span className="checkbox-copy">
+                <strong>Remote assist is available during review</strong>
+                <span>
+                  It uses minimized metadata only. Raw audio and full transcript
+                  stay on the device.
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {recentSession ? (
         <section className="latest-session-card">
           <div className="latest-session-card__summary">
@@ -783,9 +731,7 @@ export default function RecordingView() {
                 : "Local review only"}
             </span>
             <span className="status-chip">
-              {recentSession.session.consent.remoteAssistAllowed
-                ? "Remote assist allowed"
-                : "Remote assist disabled"}
+              Remote assist available
             </span>
           </div>
         </section>
