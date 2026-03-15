@@ -1,4 +1,4 @@
-import type { ApprovedExport, Finding, ReviewSession } from "./api";
+import { api, type ApprovedExport, type Finding, type ReviewSession } from "./api";
 
 export type StatusTone = "attention" | "active" | "success" | "neutral";
 
@@ -28,6 +28,23 @@ export type ReviewSnapshot = {
   sessions: ReviewSession[];
   findings: Finding[];
   approvedExports: ApprovedExport[];
+};
+
+export type ResourceSourceMode = "live" | "preview";
+export type ReviewSnapshotSourceMode = ResourceSourceMode | "mixed";
+
+export type ResourceLoadResult<T> = {
+  data: T;
+  sourceMode: ResourceSourceMode;
+  message: string;
+  error?: string;
+};
+
+export type ReviewSnapshotLoadResult = {
+  snapshot: ReviewSnapshot;
+  sourceMode: ReviewSnapshotSourceMode;
+  message: string;
+  errors: Partial<Record<keyof ReviewSnapshot, string>>;
 };
 
 export type OverviewModel = {
@@ -285,6 +302,57 @@ export const previewReviewSnapshot: ReviewSnapshot = {
   approvedExports: previewApprovedExports,
 };
 
+function formatLoadError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  return "Request failed";
+}
+
+function formatResourceList(values: string[]): string {
+  if (values.length === 0) {
+    return "";
+  }
+
+  if (values.length === 1) {
+    return values[0] ?? "";
+  }
+
+  if (values.length === 2) {
+    return `${values[0]} and ${values[1]}`;
+  }
+
+  const leading = values.slice(0, -1).join(", ");
+  const trailing = values[values.length - 1] ?? "";
+  return `${leading}, and ${trailing}`;
+}
+
+async function loadCollection<T>({
+  label,
+  loadLive,
+  loadPreview,
+}: {
+  label: string;
+  loadLive: () => Promise<T[]>;
+  loadPreview: () => T[];
+}): Promise<ResourceLoadResult<T[]>> {
+  try {
+    return {
+      data: await loadLive(),
+      sourceMode: "live",
+      message: `Connected to live ${label}.`,
+    };
+  } catch (error) {
+    return {
+      data: loadPreview(),
+      sourceMode: "preview",
+      message: `${label} endpoint unavailable. Showing preview ${label} instead.`,
+      error: formatLoadError(error),
+    };
+  }
+}
+
 export function formatDateTime(value: string): string {
   return new Date(value).toLocaleString("en-US", {
     month: "short",
@@ -393,6 +461,97 @@ export function sortApprovedExports(
       filter === "all" ? true : approvedExport.status === filter
     )
     .sort((left, right) => right.approvedAt.localeCompare(left.approvedAt));
+}
+
+export async function loadSessions(
+  filter: "all" | ReviewSession["reviewStatus"] = "all"
+): Promise<ResourceLoadResult<ReviewSession[]>> {
+  return loadCollection({
+    label: "review sessions",
+    loadLive: async () =>
+      sortSessions(
+        await api.getSessions(
+          filter === "all" ? undefined : { reviewStatus: filter }
+        ),
+        filter
+      ),
+    loadPreview: () => sortSessions(previewSessions, filter),
+  });
+}
+
+export async function loadFindings(
+  filter: "all" | Finding["status"] = "all"
+): Promise<ResourceLoadResult<Finding[]>> {
+  return loadCollection({
+    label: "findings",
+    loadLive: async () =>
+      sortFindings(
+        await api.getFindings(filter === "all" ? undefined : { status: filter }),
+        filter
+      ),
+    loadPreview: () => sortFindings(previewFindings, filter),
+  });
+}
+
+export async function loadApprovedExports(
+  filter: "all" | ApprovedExport["status"] = "all"
+): Promise<ResourceLoadResult<ApprovedExport[]>> {
+  return loadCollection({
+    label: "approved exports",
+    loadLive: async () =>
+      sortApprovedExports(
+        await api.getApprovedExports(
+          filter === "all" ? undefined : { exportStatus: filter }
+        ),
+        filter
+      ),
+    loadPreview: () => sortApprovedExports(previewApprovedExports, filter),
+  });
+}
+
+export async function loadReviewSnapshot(): Promise<ReviewSnapshotLoadResult> {
+  const [sessions, findings, approvedExports] = await Promise.all([
+    loadSessions(),
+    loadFindings(),
+    loadApprovedExports(),
+  ]);
+
+  const failedResources = [
+    sessions.sourceMode === "preview" ? "sessions" : null,
+    findings.sourceMode === "preview" ? "findings" : null,
+    approvedExports.sourceMode === "preview" ? "approved exports" : null,
+  ].filter((value): value is string => value !== null);
+
+  const sourceMode: ReviewSnapshotSourceMode =
+    failedResources.length === 0
+      ? "live"
+      : failedResources.length === 3
+        ? "preview"
+        : "mixed";
+
+  const message =
+    sourceMode === "live"
+      ? "Connected to live review data across sessions, findings, and approved exports."
+      : sourceMode === "preview"
+        ? "The review API is unavailable. Showing preview sessions, findings, and approved exports."
+        : `Live review data loaded, but ${formatResourceList(
+            failedResources
+          )} fell back to preview data.`;
+
+  return {
+    snapshot: {
+      sessions: sessions.data,
+      findings: findings.data,
+      approvedExports: approvedExports.data,
+    },
+    sourceMode,
+    message,
+    errors: {
+      ...(sessions.error ? { sessions: sessions.error } : {}),
+      ...(findings.error ? { findings: findings.error } : {}),
+      ...(approvedExports.error ? { approvedExports: approvedExports.error } : {}),
+    },
+  };
 }
 
 function startOfUtcWeek(value: string | Date): Date {

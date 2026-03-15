@@ -2,11 +2,13 @@ import React, { useState } from "react";
 import RecordingView from "./views/RecordingView";
 import HistoryView from "./views/HistoryView";
 import SettingsView from "./views/SettingsView";
+import SessionReviewView from "./views/SessionReviewView";
 
 type View = "recording" | "history" | "settings";
 
 export default function App() {
   const [currentView, setCurrentView] = useState<View>("recording");
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   return (
     <div className="app">
@@ -25,7 +27,10 @@ export default function App() {
           </li>
           <li
             className={currentView === "history" ? "active" : ""}
-            onClick={() => setCurrentView("history")}
+            onClick={() => {
+              setCurrentView("history");
+              setSelectedSessionId(null);
+            }}
           >
             <span className="nav-icon">&#9776;</span>
             History
@@ -45,7 +50,15 @@ export default function App() {
       </nav>
       <main className="content">
         {currentView === "recording" && <RecordingView />}
-        {currentView === "history" && <HistoryView />}
+        {currentView === "history" &&
+          (selectedSessionId ? (
+            <SessionReviewView
+              sessionId={selectedSessionId}
+              onBack={() => setSelectedSessionId(null)}
+            />
+          ) : (
+            <HistoryView onOpenSession={setSelectedSessionId} />
+          ))}
         {currentView === "settings" && <SettingsView />}
       </main>
     </div>

@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { api, ReviewSession } from "../services/api";
+import React, { useEffect, useState } from "react";
+import type { ReviewSession } from "../services/api";
 import {
   formatDateTime,
   formatStatusLabel,
   getSessionStatusTone,
-  previewSessions,
-  sortSessions,
+  loadSessions,
+  type ResourceSourceMode,
 } from "../services/reviewDashboard";
 
 type SessionFilter = "all" | "ready" | "in_review" | "completed";
@@ -13,36 +13,26 @@ type SessionFilter = "all" | "ready" | "in_review" | "completed";
 const FILTERS: SessionFilter[] = ["all", "ready", "in_review", "completed"];
 
 export default function DoctorsView() {
-  const [sessions, setSessions] = useState<ReviewSession[]>(previewSessions);
+  const [sessions, setSessions] = useState<ReviewSession[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<SessionFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<"live" | "preview">("preview");
-  const [notice, setNotice] = useState("");
+  const [sourceMode, setSourceMode] = useState<ResourceSourceMode>("live");
+  const [sourceMessage, setSourceMessage] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
-    setNotice("");
 
-    api
-      .getSessions()
-      .then((data) => {
-        if (active) {
-          setSessions(data);
-          setSourceMode("live");
+    loadSessions(selectedFilter)
+      .then((result) => {
+        if (!active) {
+          return;
         }
-      })
-      .catch((fetchError) => {
-        if (active) {
-          setSessions(previewSessions);
-          setSourceMode("preview");
-          setNotice(
-            fetchError instanceof Error
-              ? `Live review sessions unavailable. Showing preview data instead. ${fetchError.message}`
-              : "Live review sessions unavailable. Showing preview data instead."
-          );
-        }
+
+        setSessions(result.data);
+        setSourceMode(result.sourceMode);
+        setSourceMessage(result.message);
       })
       .finally(() => {
         if (active) {
@@ -53,12 +43,7 @@ export default function DoctorsView() {
     return () => {
       active = false;
     };
-  }, []);
-
-  const visibleSessions = useMemo(
-    () => sortSessions(sessions, selectedFilter),
-    [selectedFilter, sessions]
-  );
+  }, [selectedFilter]);
 
   if (loading) {
     return <div className="empty-state">Loading review sessions...</div>;
@@ -92,18 +77,18 @@ export default function DoctorsView() {
 
       <div className="view-status">
         <span className={`source-pill ${sourceMode}`}>
-          {sourceMode === "live" ? "Live sessions" : "Preview fallback"}
+          {sourceMode === "live" ? "Live review data" : "Preview fallback"}
         </span>
-        {notice ? <span className="view-status-copy">{notice}</span> : null}
+        <span className="view-status-copy">{sourceMessage}</span>
       </div>
 
-      {visibleSessions.length === 0 ? (
+      {sessions.length === 0 ? (
         <div className="empty-state">
           No sessions matched the current review filter.
         </div>
       ) : null}
 
-      {visibleSessions.length > 0 ? (
+      {sessions.length > 0 ? (
         <table className="data-table">
           <thead>
             <tr>
@@ -117,7 +102,7 @@ export default function DoctorsView() {
             </tr>
           </thead>
           <tbody>
-            {visibleSessions.map((session) => (
+            {sessions.map((session) => (
               <tr key={session.id}>
                 <td>
                   <div className="mono-code">{session.id}</div>

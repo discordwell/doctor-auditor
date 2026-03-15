@@ -1,6 +1,11 @@
 import asyncio
+import os
+from pathlib import Path
 
 from fastapi.testclient import TestClient
+
+TEST_DATABASE_PATH = Path(__file__).with_suffix(".sqlite3").resolve()
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
 
 from app.main import app
 from app.models.database import Base, engine
@@ -137,6 +142,24 @@ def approved_export_payload() -> dict:
     }
 
 
+def create_review_decision(
+    client: TestClient,
+    headers: dict[str, str],
+    outcome: str = "accepted",
+) -> str:
+    review_decision = client.post(
+        "/api/findings/finding-001/review-decisions",
+        json={
+            "outcome": outcome,
+            "reviewedBy": "reviewer-1",
+            "rationale": "Evidence is direct and should move forward to export.",
+        },
+        headers=headers,
+    )
+    assert review_decision.status_code == 201, review_decision.text
+    return review_decision.json()["id"]
+
+
 def test_review_workflow_round_trip() -> None:
     reset_database()
 
@@ -164,17 +187,7 @@ def test_review_workflow_round_trip() -> None:
         assert listed_findings.status_code == 200, listed_findings.text
         assert listed_findings.json()[0]["id"] == "finding-001"
 
-        review_decision = client.post(
-            "/api/findings/finding-001/review-decisions",
-            json={
-                "outcome": "accepted",
-                "reviewedBy": "reviewer-1",
-                "rationale": "Evidence is direct and should move forward to export.",
-            },
-            headers=headers,
-        )
-        assert review_decision.status_code == 201, review_decision.text
-        decision_id = review_decision.json()["id"]
+        decision_id = create_review_decision(client, headers)
 
         accepted_finding = client.get("/api/findings/finding-001", headers=headers)
         assert accepted_finding.status_code == 200, accepted_finding.text
@@ -205,3 +218,97 @@ def test_review_workflow_round_trip() -> None:
         assert session_bundle.status_code == 200, session_bundle.text
         assert session_bundle.json()["session"]["reviewStatus"] == "completed"
         assert session_bundle.json()["session"]["exportStatus"] == "approved"
+
+
+def test_approved_export_rejects_raw_transcript_fields() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        create_session = client.post(
+            "/api/sessions/",
+            json=session_bundle_payload(),
+            headers=headers,
+        )
+        assert create_session.status_code == 201, create_session.text
+
+        decision_id = create_review_decision(client, headers)
+        export_payload = approved_export_payload()
+        export_payload["findings"][0]["reviewDecisionId"] = decision_id
+        export_payload["transcriptSegments"] = session_bundle_payload()[
+            "transcriptSegments"
+        ]
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=export_payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 422, response.text
+        assert any(
+            error["loc"] == ["body", "transcriptSegments"]
+            for error in response.json()["detail"]
+        )
+
+
+def test_approved_export_rejects_audio_upload_fields() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        create_session = client.post(
+            "/api/sessions/",
+            json=session_bundle_payload(),
+            headers=headers,
+        )
+        assert create_session.status_code == 201, create_session.text
+
+        decision_id = create_review_decision(client, headers)
+        export_payload = approved_export_payload()
+        export_payload["findings"][0]["reviewDecisionId"] = decision_id
+        export_payload["audioBase64"] = "ZmFrZS1hdWRpby1ieXRlcw=="
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=export_payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 422, response.text
+        assert any(
+            error["loc"] == ["body", "audioBase64"]
+            for error in response.json()["detail"]
+        )
+
+
+def test_approved_export_requires_accepted_or_edited_review_decision() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        create_session = client.post(
+            "/api/sessions/",
+            json=session_bundle_payload(),
+            headers=headers,
+        )
+        assert create_session.status_code == 201, create_session.text
+
+        decision_id = create_review_decision(client, headers, outcome="uncertain")
+        export_payload = approved_export_payload()
+        export_payload["findings"][0]["reviewDecisionId"] = decision_id
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=export_payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 400, response.text
+        assert (
+            response.json()["detail"]
+            == "approved export findings must reference accepted or edited review decisions"
+        )

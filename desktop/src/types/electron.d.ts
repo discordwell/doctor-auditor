@@ -1,5 +1,11 @@
 import type { ReviewSession, SessionBundle } from "@doctor-auditor/shared";
 
+export interface SessionIntakeRequest {
+  clinicianId: string;
+  recordedWithConsent: boolean;
+  exportAllowed: boolean;
+}
+
 export interface DesktopSessionSummary {
   session: ReviewSession;
   audioPath?: string;
@@ -10,10 +16,34 @@ export interface DesktopSessionBundle extends SessionBundle {
   audioPath?: string;
 }
 
-export interface ImportSessionRequest {
-  clinicianId: string;
-  recordedWithConsent: boolean;
-  exportAllowed: boolean;
+export interface AudioDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
+export type RecorderBackend = "sox" | "rec";
+
+export type MicrophoneAccessStatus =
+  | "not-determined"
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "unknown"
+  | "unsupported";
+
+export interface LiveCaptureStatus {
+  available: boolean;
+  experimental: boolean;
+  recorder: RecorderBackend | null;
+  microphoneAccess: MicrophoneAccessStatus;
+  issues: string[];
+  notes: string[];
+}
+
+export interface LiveCaptureError {
+  message: string;
+  session: DesktopSessionSummary | null;
 }
 
 export interface SessionImportProgress {
@@ -26,29 +56,32 @@ export interface SessionImportProgress {
 export interface DoctorAuditorAPI {
   audio: {
     startRecording: (
-      request: ImportSessionRequest
-    ) => Promise<DesktopSessionSummary>;
+      request: SessionIntakeRequest
+    ) => Promise<{ sessionPath: string; session: DesktopSessionSummary }>;
     stopRecording: () => Promise<{
       filePath: string;
       duration: number;
       session: DesktopSessionSummary | null;
     }>;
-    getDevices: () => Promise<
-      Array<{ id: string; name: string; isDefault: boolean }>
-    >;
+    getDevices: () => Promise<AudioDevice[]>;
+    getCaptureStatus: () => Promise<LiveCaptureStatus>;
     onAudioLevel: (callback: (level: number) => void) => () => void;
+    onCaptureError: (callback: (error: LiveCaptureError) => void) => () => void;
   };
   session: {
     getAll: () => Promise<DesktopSessionSummary[]>;
     get: (sessionId: string) => Promise<DesktopSessionBundle | null>;
     importAudio: (
-      request: ImportSessionRequest
+      request: SessionIntakeRequest
     ) => Promise<
       | { cancelled: true }
       | { cancelled: false; session: DesktopSessionSummary }
     >;
     onImportProgress: (
       callback: (update: SessionImportProgress) => void
+    ) => () => void;
+    onSessionChanged: (
+      callback: (sessionSummary: DesktopSessionSummary) => void
     ) => () => void;
   };
 }

@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("./api", () => ({
+  api: {
+    getSessions: vi.fn(),
+    getFindings: vi.fn(),
+    getApprovedExports: vi.fn(),
+  },
+}));
 
 import {
   buildOverviewModel,
@@ -6,13 +14,26 @@ import {
   getExportTone,
   getFindingTone,
   getSessionStatusTone,
+  loadReviewSnapshot,
+  loadSessions,
   previewReviewSnapshot,
   sortApprovedExports,
   sortFindings,
   sortSessions,
 } from "./reviewDashboard";
+import { api } from "./api";
+
+const getSessionsMock = vi.mocked(api.getSessions);
+const getFindingsMock = vi.mocked(api.getFindings);
+const getApprovedExportsMock = vi.mocked(api.getApprovedExports);
 
 describe("reviewDashboard helpers", () => {
+  beforeEach(() => {
+    getSessionsMock.mockReset();
+    getFindingsMock.mockReset();
+    getApprovedExportsMock.mockReset();
+  });
+
   it("builds stable overview metrics from the preview snapshot", () => {
     const model = buildOverviewModel(
       previewReviewSnapshot,
@@ -58,5 +79,33 @@ describe("reviewDashboard helpers", () => {
     expect(getSessionStatusTone("in_review")).toBe("active");
     expect(getFindingTone("accepted")).toBe("success");
     expect(getExportTone("approved")).toBe("attention");
+  });
+
+  it("falls back to preview sessions when the live endpoint fails", async () => {
+    getSessionsMock.mockRejectedValue(new Error("fetch failed"));
+
+    const result = await loadSessions("ready");
+
+    expect(result.sourceMode).toBe("preview");
+    expect(result.data.map((session) => session.id)).toEqual([
+      "session-preview-003",
+    ]);
+    expect(result.message).toContain("preview review sessions");
+    expect(result.error).toBe("fetch failed");
+  });
+
+  it("marks the overview snapshot as mixed when one endpoint falls back", async () => {
+    getSessionsMock.mockResolvedValue(previewReviewSnapshot.sessions);
+    getFindingsMock.mockRejectedValue(new Error("findings offline"));
+    getApprovedExportsMock.mockResolvedValue(previewReviewSnapshot.approvedExports);
+
+    const result = await loadReviewSnapshot();
+
+    expect(result.sourceMode).toBe("mixed");
+    expect(result.snapshot.sessions).toHaveLength(4);
+    expect(result.snapshot.findings).toHaveLength(5);
+    expect(result.snapshot.approvedExports).toHaveLength(3);
+    expect(result.message).toContain("findings");
+    expect(result.errors.findings).toBe("findings offline");
   });
 });

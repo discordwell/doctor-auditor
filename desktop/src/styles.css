@@ -402,6 +402,110 @@ body {
   gap: 8px;
 }
 
+.capture-status-card {
+  background: rgba(10, 14, 23, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.capture-status-card.error {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.capture-status-header,
+.settings-section__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.capture-status-header h3,
+.settings-section__header h3 {
+  margin-bottom: 6px;
+}
+
+.capture-status-header p,
+.settings-section__header p {
+  margin-bottom: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.capture-status-button {
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 999px;
+  background: rgba(10, 14, 23, 0.72);
+  color: #bae6fd;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.capture-status-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(125, 211, 252, 0.4);
+}
+
+.capture-status-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.capture-status-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capture-status-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.capture-status-list--issues {
+  color: #fecaca;
+}
+
+.capture-notice {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.24);
+  color: #bfdbfe;
+}
+
+.capture-notice.active {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.24);
+  color: #7dd3fc;
+}
+
+.capture-notice.success {
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  color: #bbf7d0;
+}
+
+.capture-notice.error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  color: #fecaca;
+}
+
 .record-button {
   align-self: center;
   width: 120px;
@@ -416,13 +520,20 @@ body {
   transition: all 0.2s;
 }
 
-.record-button:hover {
+.record-button:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.25);
   transform: scale(1.05);
 }
 
 .record-button.recording {
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+.record-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.08);
 }
 
 .record-button-inner {
@@ -538,6 +649,8 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .capture-status-header,
+  .settings-section__header,
   .import-status-header,
   .import-result-card {
     flex-direction: column;

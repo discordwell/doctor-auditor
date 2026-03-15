@@ -342,6 +342,31 @@
   border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
 
+.history-shell__card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.history-shell__card-action-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-shell__card-action-copy strong {
+  font-size: 14px;
+}
+
+.history-shell__card-action-copy span {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .history-shell__state {
   background:
     linear-gradient(180deg, rgba(96, 165, 250, 0.06), rgba(15, 23, 42, 0.9)),
@@ -391,6 +416,11 @@
 
   .history-shell__search input {
     width: 100%;
+  }
+
+  .history-shell__card-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .history-shell__state-pill {

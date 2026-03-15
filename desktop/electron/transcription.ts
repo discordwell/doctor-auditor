@@ -28,7 +28,8 @@ export class TranscriptionService extends EventEmitter {
 
   async transcribeFile(
     audioPath: string,
-    sessionId: string
+    sessionId: string,
+    source: TranscriptSegment["source"]
   ): Promise<TranscriptSegment[]> {
     if (this.isProcessing) {
       throw new Error("Already processing a transcription");
@@ -59,7 +60,7 @@ export class TranscriptionService extends EventEmitter {
             startOffsetMs: Math.round(this.timestampToSeconds(item.start) * 1000),
             endOffsetMs: Math.round(this.timestampToSeconds(item.end) * 1000),
             transcriptConfidence: 0.8,
-            source: "audio_import",
+            source,
           };
 
           if (segment.text) {
@@ -73,53 +74,6 @@ export class TranscriptionService extends EventEmitter {
     }
 
     return segments;
-  }
-
-  async transcribeStream(
-    audioStream: NodeJS.ReadableStream,
-    sessionId: string
-  ): Promise<AsyncGenerator<TranscriptSegment>> {
-    const self = this;
-
-    async function* generate(): AsyncGenerator<TranscriptSegment> {
-      const chunkDuration = 5;
-      const bytesPerSecond = 32000;
-      const chunkSize = chunkDuration * bytesPerSecond;
-      let buffer = Buffer.alloc(0);
-      let timeOffset = 0;
-
-      for await (const data of audioStream) {
-        buffer = Buffer.concat([buffer, data as Buffer]);
-
-        while (buffer.length >= chunkSize) {
-          const chunk = buffer.subarray(0, chunkSize);
-          buffer = buffer.subarray(chunkSize);
-
-          const tempPath = path.join(
-            app.getPath("temp"),
-            `whisper-chunk-${Date.now()}.wav`
-          );
-          fs.writeFileSync(tempPath, chunk);
-
-          try {
-            const segments = await self.transcribeFile(tempPath, sessionId);
-            for (const segment of segments) {
-              yield {
-                ...segment,
-                startOffsetMs: segment.startOffsetMs + timeOffset * 1000,
-                endOffsetMs: segment.endOffsetMs + timeOffset * 1000,
-              };
-            }
-          } finally {
-            fs.unlinkSync(tempPath);
-          }
-
-          timeOffset += chunkDuration;
-        }
-      }
-    }
-
-    return generate();
   }
 
   private timestampToSeconds(timestamp: string): number {

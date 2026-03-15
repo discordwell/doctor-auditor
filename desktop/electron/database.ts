@@ -13,7 +13,7 @@ import type {
 import type {
   DesktopSessionBundle,
   DesktopSessionSummary,
-  ImportSessionRequest,
+  SessionIntakeRequest,
 } from "./review-models";
 
 const DESKTOP_ACTOR_ID = "desktop";
@@ -28,84 +28,24 @@ export class LocalDatabase {
   }
 
   createImportedSession(
-    input: ImportSessionRequest & {
+    input: SessionIntakeRequest & {
       audioPath: string;
       capturedAt: string;
       sourceFileName: string;
     }
   ): DesktopSessionSummary {
-    const now = new Date().toISOString();
-    const session: ReviewSession = {
-      id: uuidv4(),
+    const sessionSummary = this.createSessionShell({
+      captureMode: "audio_import",
       clinicianId: input.clinicianId,
+      recordedWithConsent: input.recordedWithConsent,
+      exportAllowed: input.exportAllowed,
       encounterStartedAt: input.capturedAt,
       encounterEndedAt: input.capturedAt,
-      captureMode: "audio_import",
-      transcriptStatus: "not_started",
-      reviewStatus: "not_started",
-      exportStatus: "not_requested",
-      createdAt: now,
-      updatedAt: now,
-      consent: {
-        recordedWithConsent: input.recordedWithConsent,
-        exportAllowed: input.exportAllowed,
-        capturedAt: now,
-        capturedBy: DESKTOP_ACTOR_ID,
-      },
-    };
-
-    this.db
-      .prepare(
-        `INSERT INTO sessions (
-          id,
-          clinician_id,
-          organization_id,
-          encounter_started_at,
-          encounter_ended_at,
-          capture_mode,
-          transcript_status,
-          review_status,
-          export_status,
-          created_at,
-          updated_at,
-          consent_recorded,
-          consent_export_allowed,
-          consent_captured_at,
-          consent_captured_by,
-          audio_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        session.id,
-        session.clinicianId,
-        session.organizationId ?? null,
-        session.encounterStartedAt,
-        session.encounterEndedAt ?? null,
-        session.captureMode,
-        session.transcriptStatus,
-        session.reviewStatus,
-        session.exportStatus,
-        session.createdAt,
-        session.updatedAt,
-        session.consent.recordedWithConsent ? 1 : 0,
-        session.consent.exportAllowed ? 1 : 0,
-        session.consent.capturedAt ?? null,
-        session.consent.capturedBy ?? null,
-        input.audioPath
-      );
-
-    this.addAuditLog({
-      sessionId: session.id,
-      action: "session_created",
-      actorId: DESKTOP_ACTOR_ID,
-      details: {
-        captureMode: session.captureMode,
-        transcriptStatus: session.transcriptStatus,
-        reviewStatus: session.reviewStatus,
-      },
+      audioPath: input.audioPath,
     });
+
     this.addAuditLog({
-      sessionId: session.id,
+      sessionId: sessionSummary.session.id,
       action: "audio_imported",
       actorId: DESKTOP_ACTOR_ID,
       details: {
@@ -114,56 +54,125 @@ export class LocalDatabase {
       },
     });
 
-    return {
-      session,
-      audioPath: input.audioPath,
-      transcriptSegmentCount: 0,
-    };
+    return sessionSummary;
   }
 
   createLiveCaptureSession(
-    input: ImportSessionRequest & {
+    input: SessionIntakeRequest & {
+      startedAt: string;
       audioPath: string;
-      capturedAt: string;
     }
   ): DesktopSessionSummary {
-    const now = new Date().toISOString();
-    const session: ReviewSession = {
-      id: uuidv4(),
-      clinicianId: input.clinicianId,
-      encounterStartedAt: input.capturedAt,
+    return this.createSessionShell({
       captureMode: "live_capture",
-      transcriptStatus: "in_progress",
-      reviewStatus: "not_started",
-      exportStatus: "not_requested",
-      createdAt: now,
-      updatedAt: now,
-      consent: {
-        recordedWithConsent: input.recordedWithConsent,
-        exportAllowed: input.exportAllowed,
-        capturedAt: now,
-        capturedBy: DESKTOP_ACTOR_ID,
-      },
-    };
-
-    this.insertSession(session, input.audioPath);
-
-    this.addAuditLog({
-      sessionId: session.id,
-      action: "session_created",
-      actorId: DESKTOP_ACTOR_ID,
-      details: {
-        captureMode: session.captureMode,
-        transcriptStatus: session.transcriptStatus,
-        reviewStatus: session.reviewStatus,
-      },
-    });
-
-    return {
-      session,
+      clinicianId: input.clinicianId,
+      recordedWithConsent: input.recordedWithConsent,
+      exportAllowed: input.exportAllowed,
+      encounterStartedAt: input.startedAt,
       audioPath: input.audioPath,
-      transcriptSegmentCount: 0,
+    });
+  }
+
+  finalizeLiveCaptureSession(
+    sessionId: string,
+    input: {
+      endedAt: string;
+      audioPath: string;
+    }
+  ): DesktopSessionSummary | null {
+    return this.updateSession(sessionId, {
+      encounterEndedAt: input.endedAt,
+      audioPath: input.audioPath,
+    });
+  }
+
+  failLiveCaptureSession(
+    sessionId: string,
+    failedAt: string
+  ): DesktopSessionSummary | null {
+    return this.updateSession(sessionId, {
+      transcriptStatus: "failed",
+      reviewStatus: "not_started",
+      encounterEndedAt: failedAt,
+    });
+  }
+
+  updateSession(
+    sessionId: string,
+    updates: {
+      transcriptStatus?: TranscriptStatus;
+      reviewStatus?: ReviewStatus;
+      encounterEndedAt?: string;
+      audioPath?: string;
+    }
+  ): DesktopSessionSummary | null {
+    const currentSummary = this.getSessionSummary(sessionId);
+    if (!currentSummary) {
+      return null;
+    }
+
+    const nextSession = {
+      ...currentSummary.session,
+      transcriptStatus:
+        updates.transcriptStatus ?? currentSummary.session.transcriptStatus,
+      reviewStatus: updates.reviewStatus ?? currentSummary.session.reviewStatus,
+      encounterEndedAt:
+        updates.encounterEndedAt ?? currentSummary.session.encounterEndedAt,
+      updatedAt: new Date().toISOString(),
     };
+    const nextAudioPath = updates.audioPath ?? currentSummary.audioPath;
+
+    this.db
+      .prepare(
+        `UPDATE sessions
+         SET clinician_id = ?,
+             organization_id = ?,
+             encounter_started_at = ?,
+             encounter_ended_at = ?,
+             capture_mode = ?,
+             transcript_status = ?,
+             review_status = ?,
+             export_status = ?,
+             updated_at = ?,
+             consent_recorded = ?,
+             consent_export_allowed = ?,
+             consent_captured_at = ?,
+             consent_captured_by = ?,
+             audio_path = ?
+         WHERE id = ?`
+      )
+      .run(
+        nextSession.clinicianId,
+        nextSession.organizationId ?? null,
+        nextSession.encounterStartedAt,
+        nextSession.encounterEndedAt ?? null,
+        nextSession.captureMode,
+        nextSession.transcriptStatus,
+        nextSession.reviewStatus,
+        nextSession.exportStatus,
+        nextSession.updatedAt,
+        nextSession.consent.recordedWithConsent ? 1 : 0,
+        nextSession.consent.exportAllowed ? 1 : 0,
+        nextSession.consent.capturedAt ?? null,
+        nextSession.consent.capturedBy ?? null,
+        nextAudioPath ?? null,
+        sessionId
+      );
+
+    return this.getSessionSummary(sessionId);
+  }
+
+  replaceTranscriptSegments(
+    sessionId: string,
+    segments: TranscriptSegment[]
+  ): void {
+    this.db
+      .prepare("DELETE FROM transcript_segments WHERE session_id = ?")
+      .run(sessionId);
+
+    for (const segment of segments) {
+      this.addTranscriptSegment(segment);
+    }
   }
 
   addTranscriptSegment(segment: TranscriptSegment): void {
@@ -230,6 +239,28 @@ export class LocalDatabase {
     };
   }
 
+  getSessionSummary(sessionId: string): DesktopSessionSummary | null {
+    const row = this.db
+      .prepare(
+        `SELECT s.*, COUNT(ts.id) AS transcript_segment_count
+         FROM sessions s
+         LEFT JOIN transcript_segments ts ON ts.session_id = s.id
+         WHERE s.id = ?
+         GROUP BY s.id`
+      )
+      .get(sessionId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      session: this.mapSession(row),
+      audioPath: normalizeString(row.audio_path),
+      transcriptSegmentCount: normalizeNumber(row.transcript_segment_count) ?? 0,
+    };
+  }
+
   getAllSessions(): DesktopSessionSummary[] {
     const rows = this.db
       .prepare(
@@ -248,40 +279,95 @@ export class LocalDatabase {
     }));
   }
 
-  completeLiveCaptureSession(
-    sessionId: string,
-    completedAt: string
-  ): DesktopSessionSummary | null {
-    const transcriptSegmentCount = this.getTranscriptSegmentCount(sessionId);
-    const transcriptStatus: TranscriptStatus =
-      transcriptSegmentCount > 0 ? "completed" : "not_started";
-    const reviewStatus: ReviewStatus =
-      transcriptStatus === "completed" ? "ready" : "not_started";
+  close(): void {
+    this.db.close();
+  }
+
+  private createSessionShell(input: {
+    captureMode: CaptureMode;
+    clinicianId: string;
+    recordedWithConsent: boolean;
+    exportAllowed: boolean;
+    encounterStartedAt: string;
+    encounterEndedAt?: string;
+    audioPath?: string;
+  }): DesktopSessionSummary {
+    const now = new Date().toISOString();
+    const session: ReviewSession = {
+      id: uuidv4(),
+      clinicianId: input.clinicianId,
+      encounterStartedAt: input.encounterStartedAt,
+      encounterEndedAt: input.encounterEndedAt,
+      captureMode: input.captureMode,
+      transcriptStatus: "not_started",
+      reviewStatus: "not_started",
+      exportStatus: "not_requested",
+      createdAt: now,
+      updatedAt: now,
+      consent: {
+        recordedWithConsent: input.recordedWithConsent,
+        exportAllowed: input.exportAllowed,
+        capturedAt: now,
+        capturedBy: DESKTOP_ACTOR_ID,
+      },
+    };
 
     this.db
       .prepare(
-        `UPDATE sessions
-         SET encounter_ended_at = ?, updated_at = ?, transcript_status = ?, review_status = ?
-         WHERE id = ?`
+        `INSERT INTO sessions (
+          id,
+          clinician_id,
+          organization_id,
+          encounter_started_at,
+          encounter_ended_at,
+          capture_mode,
+          transcript_status,
+          review_status,
+          export_status,
+          created_at,
+          updated_at,
+          consent_recorded,
+          consent_export_allowed,
+          consent_captured_at,
+          consent_captured_by,
+          audio_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        completedAt,
-        completedAt,
-        transcriptStatus,
-        reviewStatus,
-        sessionId
+        session.id,
+        session.clinicianId,
+        session.organizationId ?? null,
+        session.encounterStartedAt,
+        session.encounterEndedAt ?? null,
+        session.captureMode,
+        session.transcriptStatus,
+        session.reviewStatus,
+        session.exportStatus,
+        session.createdAt,
+        session.updatedAt,
+        session.consent.recordedWithConsent ? 1 : 0,
+        session.consent.exportAllowed ? 1 : 0,
+        session.consent.capturedAt ?? null,
+        session.consent.capturedBy ?? null,
+        input.audioPath ?? null
       );
 
-    const row = this.getSessionSummaryRow(sessionId);
-    if (!row) {
-      return null;
-    }
+    this.addAuditLog({
+      sessionId: session.id,
+      action: "session_created",
+      actorId: DESKTOP_ACTOR_ID,
+      details: {
+        captureMode: session.captureMode,
+        transcriptStatus: session.transcriptStatus,
+        reviewStatus: session.reviewStatus,
+      },
+    });
 
-    return this.mapSessionSummary(row);
-  }
-
-  close(): void {
-    this.db.close();
+    return {
+      session,
+      audioPath: input.audioPath,
+      transcriptSegmentCount: 0,
+    };
   }
 
   private initializeSchema(): void {
@@ -382,80 +468,6 @@ export class LocalDatabase {
         entry.actorId ?? null,
         JSON.stringify(entry.details)
       );
-  }
-
-  private insertSession(session: ReviewSession, audioPath?: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO sessions (
-          id,
-          clinician_id,
-          organization_id,
-          encounter_started_at,
-          encounter_ended_at,
-          capture_mode,
-          transcript_status,
-          review_status,
-          export_status,
-          created_at,
-          updated_at,
-          consent_recorded,
-          consent_export_allowed,
-          consent_captured_at,
-          consent_captured_by,
-          audio_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        session.id,
-        session.clinicianId,
-        session.organizationId ?? null,
-        session.encounterStartedAt,
-        session.encounterEndedAt ?? null,
-        session.captureMode,
-        session.transcriptStatus,
-        session.reviewStatus,
-        session.exportStatus,
-        session.createdAt,
-        session.updatedAt,
-        session.consent.recordedWithConsent ? 1 : 0,
-        session.consent.exportAllowed ? 1 : 0,
-        session.consent.capturedAt ?? null,
-        session.consent.capturedBy ?? null,
-        audioPath ?? null
-      );
-  }
-
-  private getSessionSummaryRow(
-    sessionId: string
-  ): Record<string, unknown> | undefined {
-    return this.db
-      .prepare(
-        `SELECT s.*, COUNT(ts.id) AS transcript_segment_count
-         FROM sessions s
-         LEFT JOIN transcript_segments ts ON ts.session_id = s.id
-         WHERE s.id = ?
-         GROUP BY s.id`
-      )
-      .get(sessionId) as Record<string, unknown> | undefined;
-  }
-
-  private getTranscriptSegmentCount(sessionId: string): number {
-    const row = this.db
-      .prepare(
-        "SELECT COUNT(*) AS transcript_segment_count FROM transcript_segments WHERE session_id = ?"
-      )
-      .get(sessionId) as Record<string, unknown> | undefined;
-
-    return normalizeNumber(row?.transcript_segment_count) ?? 0;
-  }
-
-  private mapSessionSummary(row: Record<string, unknown>): DesktopSessionSummary {
-    return {
-      session: this.mapSession(row),
-      audioPath: normalizeString(row.audio_path),
-      transcriptSegmentCount: normalizeNumber(row.transcript_segment_count) ?? 0,
-    };
   }
 
   private mapSession(row: Record<string, unknown>): ReviewSession {

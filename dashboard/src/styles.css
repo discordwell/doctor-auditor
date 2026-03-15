@@ -431,6 +431,11 @@ h4 {
   color: var(--success);
 }
 
+.source-pill.mixed {
+  background: rgba(140, 201, 255, 0.16);
+  color: var(--support);
+}
+
 .source-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

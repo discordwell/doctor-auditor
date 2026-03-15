@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CaptureMode,
   ReviewStatus,
@@ -6,10 +6,18 @@ import type {
 } from "@doctor-auditor/shared";
 import type {
   DesktopSessionSummary,
+  LiveCaptureStatus,
   SessionImportProgress,
+  SessionIntakeRequest,
 } from "../types/electron";
 
 type ImportStage = "idle" | "cancelled" | SessionImportProgress["stage"];
+type LiveCaptureNoticeTone = "info" | "active" | "success" | "error";
+
+interface LiveCaptureNotice {
+  tone: LiveCaptureNoticeTone;
+  message: string;
+}
 
 const IMPORT_STEPS: Array<{
   key: SessionImportProgress["stage"];
@@ -18,7 +26,7 @@ const IMPORT_STEPS: Array<{
   { key: "selected", label: "Audio selected" },
   { key: "copying", label: "Local copy created" },
   { key: "creating-session", label: "Review session created" },
-  { key: "completed", label: "Ready in history" },
+  { key: "completed", label: "Transcription queued" },
 ];
 
 const IMPORT_STEP_ORDER = IMPORT_STEPS.reduce<Record<string, number>>(
@@ -29,10 +37,16 @@ const IMPORT_STEP_ORDER = IMPORT_STEPS.reduce<Record<string, number>>(
   {}
 );
 
+const DEFAULT_LIVE_CAPTURE_NOTICE: LiveCaptureNotice = {
+  tone: "info",
+  message:
+    "Import audio is the recommended demo path. Live capture remains experimental and uses the system default microphone only.",
+};
+
 export default function RecordingView() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioLevels, setAudioLevels] = useState<number[]>(
-    new Array(60).fill(0)
+    createEmptyAudioLevels()
   );
   const [duration, setDuration] = useState(0);
   const [clinicianId, setClinicianId] = useState("");
@@ -49,12 +63,45 @@ export default function RecordingView() {
       "Choose a local audio file, confirm consent, and create a review session shell.",
   });
   const [isImporting, setIsImporting] = useState(false);
+  const [liveCaptureNotice, setLiveCaptureNotice] = useState<LiveCaptureNotice>(
+    DEFAULT_LIVE_CAPTURE_NOTICE
+  );
+  const [liveCaptureStatus, setLiveCaptureStatus] =
+    useState<LiveCaptureStatus | null>(null);
+  const [isLoadingLiveCaptureStatus, setIsLoadingLiveCaptureStatus] =
+    useState(true);
   const [recentSession, setRecentSession] =
     useState<DesktopSessionSummary | null>(null);
-  const [recentSessionOrigin, setRecentSessionOrigin] = useState<
-    "import" | "live" | null
-  >(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const refreshLiveCaptureStatus = useCallback(async () => {
+    if (!window.doctorAuditor) {
+      setLiveCaptureStatus(
+        createUnavailableLiveCaptureStatus(
+          "Live capture is only available inside the Electron shell."
+        )
+      );
+      setIsLoadingLiveCaptureStatus(false);
+      return;
+    }
+
+    setIsLoadingLiveCaptureStatus(true);
+
+    try {
+      const status = await window.doctorAuditor.audio.getCaptureStatus();
+      setLiveCaptureStatus(status);
+    } catch (error) {
+      setLiveCaptureStatus(
+        createUnavailableLiveCaptureStatus(
+          error instanceof Error
+            ? error.message
+            : "Unable to inspect live capture prerequisites."
+        )
+      );
+    } finally {
+      setIsLoadingLiveCaptureStatus(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!window.doctorAuditor) {
@@ -65,6 +112,32 @@ export default function RecordingView() {
       setAudioLevels((prev) => [...prev.slice(1), level]);
     });
   }, []);
+
+  useEffect(() => {
+    void refreshLiveCaptureStatus();
+  }, [refreshLiveCaptureStatus]);
+
+  useEffect(() => {
+    if (!window.doctorAuditor) {
+      return undefined;
+    }
+
+    return window.doctorAuditor.audio.onCaptureError((captureError) => {
+      stopRecordingTimer(timerRef);
+      setIsRecording(false);
+      setAudioLevels(createEmptyAudioLevels());
+      setLiveCaptureNotice({
+        tone: "error",
+        message: captureError.message,
+      });
+
+      if (captureError.session) {
+        setRecentSession(captureError.session);
+      }
+
+      void refreshLiveCaptureStatus();
+    });
+  }, [refreshLiveCaptureStatus]);
 
   useEffect(() => {
     if (!window.doctorAuditor) {
@@ -82,83 +155,133 @@ export default function RecordingView() {
   }, []);
 
   useEffect(() => {
+    if (!window.doctorAuditor) {
+      return undefined;
+    }
+
+    return window.doctorAuditor.session.onSessionChanged((sessionSummary) => {
+      setRecentSession((currentSession) => {
+        if (!currentSession) {
+          return currentSession;
+        }
+
+        return currentSession.session.id === sessionSummary.session.id
+          ? sessionSummary
+          : currentSession;
+      });
+    });
+  }, []);
+
+  useEffect(() => {
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
+      stopRecordingTimer(timerRef);
     };
   }, []);
 
   const toggleRecording = useCallback(async () => {
     if (!window.doctorAuditor) {
-      console.warn("Electron API not available — running in browser mode");
-      setIsRecording((prev) => !prev);
+      setLiveCaptureNotice({
+        tone: "error",
+        message:
+          "Live capture is only available inside the Electron shell. Use imported audio in the browser preview.",
+      });
+      return;
+    }
+
+    if (isImporting) {
       return;
     }
 
     if (isRecording) {
       try {
         const result = await window.doctorAuditor.audio.stopRecording();
+        stopRecordingTimer(timerRef);
         setIsRecording(false);
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-        }
+        setAudioLevels(createEmptyAudioLevels());
+        setLiveCaptureNotice({
+          tone: "success",
+          message: result.session
+            ? "Live capture saved locally. Transcript processing started."
+            : "Live capture saved locally.",
+        });
+
         if (result.session) {
           setRecentSession(result.session);
-          setRecentSessionOrigin("live");
         }
       } catch (error) {
-        setImportState({
-          stage: "error",
+        stopRecordingTimer(timerRef);
+        setIsRecording(false);
+        setAudioLevels(createEmptyAudioLevels());
+        setLiveCaptureNotice({
+          tone: "error",
           message:
             error instanceof Error
               ? error.message
               : "Live capture could not be finalized.",
         });
+        void refreshLiveCaptureStatus();
       }
-    } else {
-      const trimmedClinicianId = clinicianId.trim();
-      if (!trimmedClinicianId) {
-        setImportState({
-          stage: "error",
-          message: "Add a clinician label before starting live capture.",
-        });
-        return;
-      }
-
-      if (!recordedWithConsent) {
-        setImportState({
-          stage: "error",
-          message: "Confirm recorded consent before starting live capture.",
-        });
-        return;
-      }
-
-      try {
-        await window.doctorAuditor.audio.startRecording({
-          clinicianId: trimmedClinicianId,
-          recordedWithConsent,
-          exportAllowed,
-        });
-        setRecentSession(null);
-        setRecentSessionOrigin(null);
-        setIsRecording(true);
-        setDuration(0);
-        setAudioLevels(new Array(60).fill(0));
-        timerRef.current = setInterval(() => {
-          setDuration((currentDuration) => currentDuration + 1);
-        }, 1000);
-      } catch (error) {
-        setImportState({
-          stage: "error",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Live capture could not be started.",
-        });
-      }
+      return;
     }
-  }, [clinicianId, exportAllowed, isRecording, recordedWithConsent]);
+
+    const intake = getValidatedIntakeRequest({
+      clinicianId,
+      recordedWithConsent,
+      exportAllowed,
+    });
+
+    if ("error" in intake) {
+      setLiveCaptureNotice({
+        tone: "error",
+        message: intake.error,
+      });
+      return;
+    }
+
+    if (!liveCaptureStatus?.available) {
+      setLiveCaptureNotice({
+        tone: "error",
+        message:
+          liveCaptureStatus?.issues[0] ??
+          "Live capture is unavailable on this machine. Import audio instead.",
+      });
+      return;
+    }
+
+    try {
+      const result = await window.doctorAuditor.audio.startRecording(intake);
+      setIsRecording(true);
+      setDuration(0);
+      setAudioLevels(createEmptyAudioLevels());
+      setRecentSession(result.session);
+      setLiveCaptureNotice({
+        tone: "active",
+        message:
+          "Live capture session created. Stop recording to queue local transcription.",
+      });
+      stopRecordingTimer(timerRef);
+      timerRef.current = setInterval(() => {
+        setDuration((currentDuration) => currentDuration + 1);
+      }, 1000);
+    } catch (error) {
+      setLiveCaptureNotice({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Live capture could not be started.",
+      });
+      void refreshLiveCaptureStatus();
+    }
+  }, [
+    clinicianId,
+    exportAllowed,
+    isImporting,
+    isRecording,
+    liveCaptureStatus,
+    recordedWithConsent,
+    refreshLiveCaptureStatus,
+  ]);
 
   const importAudio = useCallback(async () => {
     if (!window.doctorAuditor) {
@@ -169,37 +292,29 @@ export default function RecordingView() {
       return;
     }
 
-    const trimmedClinicianId = clinicianId.trim();
-    if (!trimmedClinicianId) {
-      setImportState({
-        stage: "error",
-        message: "Add a clinician label before importing audio.",
-      });
-      return;
-    }
+    const intake = getValidatedIntakeRequest({
+      clinicianId,
+      recordedWithConsent,
+      exportAllowed,
+    });
 
-    if (!recordedWithConsent) {
+    if ("error" in intake) {
       setImportState({
         stage: "error",
-        message: "Confirm recorded consent before importing audio.",
+        message: intake.error,
       });
       return;
     }
 
     setIsImporting(true);
-    setRecentSession(null);
-    setRecentSessionOrigin(null);
     setImportState({
       stage: "idle",
       message: "Waiting for you to select an audio file.",
     });
+    setLiveCaptureNotice(DEFAULT_LIVE_CAPTURE_NOTICE);
 
     try {
-      const result = await window.doctorAuditor.session.importAudio({
-        clinicianId: trimmedClinicianId,
-        recordedWithConsent,
-        exportAllowed,
-      });
+      const result = await window.doctorAuditor.session.importAudio(intake);
 
       if (result.cancelled) {
         setImportState({
@@ -210,13 +325,12 @@ export default function RecordingView() {
       }
 
       setRecentSession(result.session);
-      setRecentSessionOrigin("import");
       setImportState((current) => ({
         stage: current.stage === "completed" ? current.stage : "completed",
         message:
           current.stage === "completed"
             ? current.message
-            : "Import complete. Review session shell is ready in history.",
+            : "Import complete. Review session created and transcription queued.",
         fileName: current.fileName ?? getFileName(result.session.audioPath),
         sessionId: current.sessionId ?? result.session.session.id,
       }));
@@ -241,7 +355,19 @@ export default function RecordingView() {
       : IMPORT_STEP_ORDER[importState.stage];
 
   const canImport =
-    clinicianId.trim().length > 0 && recordedWithConsent && !isImporting;
+    clinicianId.trim().length > 0 &&
+    recordedWithConsent &&
+    !isImporting &&
+    !isRecording;
+  const inputsLocked = isImporting || isRecording;
+  const liveCaptureAvailable = liveCaptureStatus?.available ?? false;
+  const liveCaptureUnavailable = !liveCaptureAvailable;
+  const captureStatusSummary = isLoadingLiveCaptureStatus
+    ? "Checking local recorder prerequisites."
+    : liveCaptureAvailable
+      ? "Recorder preflight passed. Default microphone only; import audio is still the safer demo path."
+      : liveCaptureStatus?.issues[0] ??
+        "Live capture is unavailable on this machine. Import audio instead.";
 
   return (
     <div className="recording-view">
@@ -266,6 +392,7 @@ export default function RecordingView() {
               value={clinicianId}
               onChange={(event) => setClinicianId(event.target.value)}
               placeholder="Dr. Morales"
+              disabled={inputsLocked}
             />
           </div>
 
@@ -277,6 +404,7 @@ export default function RecordingView() {
                 onChange={(event) =>
                   setRecordedWithConsent(event.target.checked)
                 }
+                disabled={inputsLocked}
               />
               <span className="checkbox-copy">
                 <strong>Recorded with consent</strong>
@@ -289,6 +417,7 @@ export default function RecordingView() {
                 type="checkbox"
                 checked={exportAllowed}
                 onChange={(event) => setExportAllowed(event.target.checked)}
+                disabled={inputsLocked}
               />
               <span className="checkbox-copy">
                 <strong>Export permitted</strong>
@@ -355,20 +484,16 @@ export default function RecordingView() {
           {recentSession && (
             <div className="import-result-card">
               <div>
-                <span className="section-kicker">
-                  {recentSessionOrigin === "live"
-                    ? "Live capture session"
-                    : "Review session shell"}
-                </span>
+                <span className="section-kicker">Latest review session</span>
                 <h3>{formatClinicianLabel(recentSession.session.clinicianId)}</h3>
                 <p>
-                  {recentSessionOrigin === "live" ? "Captured" : "Imported"}{" "}
-                  {formatDateTime(recentSession.session.createdAt)}. Transcript
-                  state is{" "}
-                  {formatTranscriptStatus(
+                  {formatCaptureMode(recentSession.session.captureMode)} /
+                  Transcript {formatTranscriptStatus(
                     recentSession.session.transcriptStatus
-                  ).toLowerCase()}
-                  .
+                  ).toLowerCase()} /
+                  Review {formatReviewStatus(
+                    recentSession.session.reviewStatus
+                  ).toLowerCase()}.
                 </p>
               </div>
               <div className="import-result-meta">
@@ -376,10 +501,7 @@ export default function RecordingView() {
                   {getFileName(recentSession.audioPath)}
                 </span>
                 <span className="status-chip">
-                  {formatCaptureMode(recentSession.session.captureMode)}
-                </span>
-                <span className="status-chip">
-                  {formatReviewStatus(recentSession.session.reviewStatus)}
+                  {recentSession.transcriptSegmentCount} segments
                 </span>
                 <span className="status-chip">
                   {recentSession.session.consent.exportAllowed
@@ -397,13 +519,78 @@ export default function RecordingView() {
         <p>
           {isRecording
             ? `Local capture in progress — ${formatDuration(duration)}`
-            : "Use live capture when you need a fresh recording. Import remains the fastest intake path."}
+            : "Use live capture when you need a fresh recording. Imported and recorded sessions now queue the same local transcription path."}
         </p>
+        <div
+          className={`capture-notice ${
+            liveCaptureNotice.tone === "active"
+              ? "active"
+              : liveCaptureNotice.tone
+          }`}
+        >
+          {liveCaptureNotice.message}
+        </div>
+      </div>
+
+      <div
+        className={`capture-status-card ${liveCaptureUnavailable ? "error" : ""}`}
+      >
+        <div className="capture-status-header">
+          <div>
+            <h3>
+              {liveCaptureAvailable
+                ? "Experimental live capture"
+                : "Live capture unavailable"}
+            </h3>
+            <p>{captureStatusSummary}</p>
+          </div>
+          <button
+            type="button"
+            className="capture-status-button"
+            onClick={() => void refreshLiveCaptureStatus()}
+            disabled={isLoadingLiveCaptureStatus}
+          >
+            {isLoadingLiveCaptureStatus ? "Checking..." : "Refresh status"}
+          </button>
+        </div>
+
+        {liveCaptureStatus && (
+          <>
+            <div className="capture-status-meta">
+              <span className="status-chip">
+                {liveCaptureStatus.recorder
+                  ? `Recorder ${liveCaptureStatus.recorder}`
+                  : "Recorder missing"}
+              </span>
+              <span className="status-chip">
+                {formatMicrophoneAccess(liveCaptureStatus.microphoneAccess)}
+              </span>
+              <span className="status-chip">Default mic only</span>
+            </div>
+
+            {liveCaptureStatus.issues.length > 0 && (
+              <ul className="capture-status-list capture-status-list--issues">
+                {liveCaptureStatus.issues.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            )}
+
+            {liveCaptureStatus.notes.length > 0 && (
+              <ul className="capture-status-list">
+                {liveCaptureStatus.notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
       </div>
 
       <button
         className={`record-button ${isRecording ? "recording" : ""}`}
         onClick={toggleRecording}
+        disabled={isImporting || (!isRecording && liveCaptureUnavailable)}
       >
         <div className="record-button-inner" />
       </button>
@@ -421,27 +608,58 @@ export default function RecordingView() {
   );
 }
 
+function getValidatedIntakeRequest(
+  request: SessionIntakeRequest
+): SessionIntakeRequest | { error: string } {
+  const clinicianId = request.clinicianId.trim();
+  if (!clinicianId) {
+    return { error: "Add a clinician label before starting capture." };
+  }
+
+  if (!request.recordedWithConsent) {
+    return { error: "Confirm recorded consent before starting capture." };
+  }
+
+  return {
+    clinicianId,
+    recordedWithConsent: request.recordedWithConsent,
+    exportAllowed: request.exportAllowed,
+  };
+}
+
+function createEmptyAudioLevels(): number[] {
+  return new Array(60).fill(0);
+}
+
+function stopRecordingTimer(
+  timerRef: React.RefObject<ReturnType<typeof setInterval> | null>
+): void {
+  if (timerRef.current) {
+    clearInterval(timerRef.current);
+    timerRef.current = null;
+  }
+}
+
+function createUnavailableLiveCaptureStatus(message: string): LiveCaptureStatus {
+  return {
+    available: false,
+    experimental: true,
+    recorder: null,
+    microphoneAccess: "unknown",
+    issues: [message],
+    notes: [
+      "Import audio remains available without the live microphone path.",
+      "Only the system default microphone is supported once live capture is enabled.",
+    ],
+  };
+}
+
 function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return `${minutes.toString().padStart(2, "0")}:${remainder
     .toString()
     .padStart(2, "0")}`;
-}
-
-function formatDateTime(value: string): string {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return "time unavailable";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(timestamp);
 }
 
 function formatClinicianLabel(value: string): string {
@@ -463,26 +681,43 @@ function formatCaptureMode(value: CaptureMode): string {
 function formatTranscriptStatus(value: TranscriptStatus): string {
   switch (value) {
     case "not_started":
-      return "Transcript not started";
+      return "not started";
     case "in_progress":
-      return "Transcript in progress";
+      return "in progress";
     case "completed":
-      return "Transcript completed";
+      return "completed";
     case "failed":
-      return "Transcript failed";
+      return "failed";
   }
 }
 
 function formatReviewStatus(value: ReviewStatus): string {
   switch (value) {
     case "not_started":
-      return "Review not started";
+      return "not started";
     case "ready":
-      return "Ready for review";
+      return "ready";
     case "in_review":
-      return "Review in progress";
+      return "in progress";
     case "completed":
-      return "Review complete";
+      return "completed";
+  }
+}
+
+function formatMicrophoneAccess(value: LiveCaptureStatus["microphoneAccess"]): string {
+  switch (value) {
+    case "granted":
+      return "Microphone granted";
+    case "denied":
+      return "Microphone denied";
+    case "restricted":
+      return "Microphone restricted";
+    case "not-determined":
+      return "Microphone prompt pending";
+    case "unsupported":
+      return "Permission status unavailable";
+    case "unknown":
+      return "Permission status unknown";
   }
 }
 

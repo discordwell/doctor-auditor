@@ -9,11 +9,12 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-import { api } from "../services/api";
 import {
   buildOverviewModel,
+  loadReviewSnapshot,
   previewReviewSnapshot,
   type ReviewSnapshot,
+  type ReviewSnapshotSourceMode,
 } from "../services/reviewDashboard";
 
 const compactNumber = new Intl.NumberFormat("en-US", {
@@ -24,61 +25,24 @@ const compactNumber = new Intl.NumberFormat("en-US", {
 export default function OverviewView() {
   const [snapshot, setSnapshot] = useState<ReviewSnapshot>(previewReviewSnapshot);
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<"live" | "preview">("preview");
-  const [notice, setNotice] = useState("");
+  const [sourceMode, setSourceMode] =
+    useState<ReviewSnapshotSourceMode>("preview");
+  const [sourceMessage, setSourceMessage] = useState(
+    "The review API is unavailable. Showing preview sessions, findings, and approved exports."
+  );
 
   useEffect(() => {
     let active = true;
 
-    Promise.allSettled([
-      api.getSessions(),
-      api.getFindings(),
-      api.getApprovedExports(),
-    ])
-      .then(([sessionsResult, findingsResult, exportsResult]) => {
+    loadReviewSnapshot()
+      .then((result) => {
         if (!active) {
           return;
         }
 
-        const hasLiveData =
-          sessionsResult.status === "fulfilled" ||
-          findingsResult.status === "fulfilled" ||
-          exportsResult.status === "fulfilled";
-
-        setSnapshot({
-          sessions:
-            sessionsResult.status === "fulfilled"
-              ? sessionsResult.value
-              : previewReviewSnapshot.sessions,
-          findings:
-            findingsResult.status === "fulfilled"
-              ? findingsResult.value
-              : previewReviewSnapshot.findings,
-          approvedExports:
-            exportsResult.status === "fulfilled"
-              ? exportsResult.value
-              : previewReviewSnapshot.approvedExports,
-        });
-        setSourceMode(hasLiveData ? "live" : "preview");
-
-        if (!hasLiveData) {
-          setNotice(
-            "Review API unavailable. Showing resilient preview data instead of an empty shell."
-          );
-          return;
-        }
-
-        const fallbackParts = [
-          sessionsResult.status === "rejected" ? "sessions" : "",
-          findingsResult.status === "rejected" ? "findings" : "",
-          exportsResult.status === "rejected" ? "approved exports" : "",
-        ].filter(Boolean);
-
-        setNotice(
-          fallbackParts.length > 0
-            ? `Using preview fallback for ${fallbackParts.join(", ")} while other review data stays live.`
-            : ""
-        );
+        setSnapshot(result.snapshot);
+        setSourceMode(result.sourceMode);
+        setSourceMessage(result.message);
       })
       .finally(() => {
         if (active) {
@@ -101,6 +65,13 @@ export default function OverviewView() {
     return <div className="empty-state">Loading review operations surface...</div>;
   }
 
+  const sourceLabel =
+    sourceMode === "live"
+      ? "Live review data"
+      : sourceMode === "mixed"
+        ? "Mixed live + preview"
+        : "Preview fallback";
+
   return (
     <div className="overview-shell">
       <section className="overview-hero">
@@ -114,13 +85,9 @@ export default function OverviewView() {
         </div>
         <div className="source-card">
           <span className={`source-pill ${sourceMode}`}>
-            {sourceMode === "live" ? "Live review data" : "Preview fallback"}
+            {sourceLabel}
           </span>
-          <p>
-            {sourceMode === "live"
-              ? "Connected to the active review surface. Metrics are derived from sessions, findings, and approved exports."
-              : "The review API is unavailable, so the dashboard is rendering preview data instead of failing closed."}
-          </p>
+          <p>{sourceMessage}</p>
           <dl className="source-details">
             <div>
               <dt>Sessions in scope</dt>
@@ -133,8 +100,6 @@ export default function OverviewView() {
           </dl>
         </div>
       </section>
-
-      {notice ? <div className="notice-card">{notice}</div> : null}
 
       <section className="stats-grid overview-kpis">
         <div className="stat-card kpi-card">

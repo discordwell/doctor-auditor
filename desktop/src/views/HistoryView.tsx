@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import type {
   CaptureMode,
   ExportStatus,
@@ -40,7 +40,11 @@ const FILTER_LABELS: Record<HistoryFilter, string> = {
   attention: "Needs follow-up",
 };
 
-export default function HistoryView() {
+interface HistoryViewProps {
+  onOpenSession: (sessionId: string) => void;
+}
+
+export default function HistoryView({ onOpenSession }: HistoryViewProps) {
   const [sessions, setSessions] = useState<DesktopSessionSummary[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
@@ -48,43 +52,56 @@ export default function HistoryView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  async function loadSessions(mode: "initial" | "refresh" = "initial") {
-    if (!window.doctorAuditor) {
-      setLoadState("error");
-      setErrorMessage("Desktop session API unavailable.");
-      return;
-    }
-
-    if (mode === "refresh") {
-      setIsRefreshing(true);
-    } else {
-      setLoadState("loading");
-    }
-
-    setErrorMessage("");
-
-    try {
-      const data = await window.doctorAuditor.session.getAll();
-      setSessions(data);
-      setLoadState("ready");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unable to load local sessions.";
-
-      if (mode === "refresh" && sessions.length > 0) {
-        setErrorMessage(message);
-      } else {
+  const loadSessions = useCallback(
+    async (mode: "initial" | "refresh" = "initial") => {
+      if (!window.doctorAuditor) {
         setLoadState("error");
-        setErrorMessage(message);
+        setErrorMessage("Desktop session API unavailable.");
+        return;
       }
-    } finally {
-      setIsRefreshing(false);
-    }
-  }
+
+      if (mode === "refresh") {
+        setIsRefreshing(true);
+      } else {
+        setLoadState("loading");
+      }
+
+      setErrorMessage("");
+
+      try {
+        const data = await window.doctorAuditor.session.getAll();
+        setSessions(data);
+        setLoadState("ready");
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load local sessions.";
+
+        setErrorMessage(message);
+        setLoadState((currentState) =>
+          mode === "refresh" && currentState === "ready" ? currentState : "error"
+        );
+      } finally {
+        setIsRefreshing(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     void loadSessions();
-  }, []);
+  }, [loadSessions]);
+
+  useEffect(() => {
+    if (!window.doctorAuditor) {
+      return undefined;
+    }
+
+    return window.doctorAuditor.session.onSessionChanged(() => {
+      void loadSessions("refresh");
+    });
+  }, [loadSessions]);
 
   const filteredSessions = sessions.filter((session) => {
     return (
@@ -316,7 +333,12 @@ export default function HistoryView() {
                       </div>
                       <div className="history-shell__metric">
                         <span>Transcript</span>
-                        <strong>{formatTranscriptStatus(session.transcriptStatus)}</strong>
+                        <strong>
+                          {formatTranscriptStatus(session.transcriptStatus)}
+                          {sessionSummary.transcriptSegmentCount > 0
+                            ? ` (${sessionSummary.transcriptSegmentCount})`
+                            : ""}
+                        </strong>
                       </div>
                       <div className="history-shell__metric">
                         <span>Review</span>
@@ -376,6 +398,30 @@ export default function HistoryView() {
                     <p className="history-shell__card-note">
                       {sessionState.detail}
                     </p>
+
+                    <div className="history-shell__card-actions">
+                      <div className="history-shell__card-action-copy">
+                        <strong>
+                          {sessionSummary.transcriptSegmentCount > 0
+                            ? `${sessionSummary.transcriptSegmentCount} transcript segment${
+                                sessionSummary.transcriptSegmentCount === 1 ? "" : "s"
+                              } available`
+                            : "Transcript not attached yet"}
+                        </strong>
+                        <span>
+                          {sessionSummary.transcriptSegmentCount > 0
+                            ? "Open the drill-down to inspect linked evidence and review findings."
+                            : "Open the session to inspect current status and any persisted review data."}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="history-shell__button"
+                        onClick={() => onOpenSession(session.id)}
+                      >
+                        Open review
+                      </button>
+                    </div>
                   </article>
                 );
               })}
@@ -515,6 +561,15 @@ function getSessionState(sessionSummary: DesktopSessionSummary): SessionState {
       tone: "active",
       detail:
         "This encounter is actively being reviewed. Transcript and findings should stay attached to the current bundle.",
+    };
+  }
+
+  if (session.transcriptStatus === "failed") {
+    return {
+      label: "Needs follow-up",
+      tone: "warning",
+      detail:
+        "Live capture or transcription failed for this encounter. Validate the local audio asset or fall back to the import-first path before relying on it downstream.",
     };
   }
 

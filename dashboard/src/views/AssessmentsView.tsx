@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { api, Finding, FindingStatus } from "../services/api";
+import React, { useEffect, useState } from "react";
+import type { Finding, FindingStatus } from "../services/api";
 import {
   formatDateTime,
   formatStatusLabel,
   getFindingTone,
-  previewFindings,
-  sortFindings,
+  loadFindings,
+  type ResourceSourceMode,
 } from "../services/reviewDashboard";
 
 type FindingFilter = "all" | FindingStatus;
@@ -19,36 +19,26 @@ const FILTERS: FindingFilter[] = [
 ];
 
 export default function AssessmentsView() {
-  const [findings, setFindings] = useState<Finding[]>(previewFindings);
+  const [findings, setFindings] = useState<Finding[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<FindingFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<"live" | "preview">("preview");
-  const [notice, setNotice] = useState("");
+  const [sourceMode, setSourceMode] = useState<ResourceSourceMode>("live");
+  const [sourceMessage, setSourceMessage] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
-    setNotice("");
 
-    api
-      .getFindings()
-      .then((data) => {
-        if (active) {
-          setFindings(data);
-          setSourceMode("live");
+    loadFindings(selectedFilter)
+      .then((result) => {
+        if (!active) {
+          return;
         }
-      })
-      .catch((fetchError) => {
-        if (active) {
-          setFindings(previewFindings);
-          setSourceMode("preview");
-          setNotice(
-            fetchError instanceof Error
-              ? `Live finding queue unavailable. Showing preview data instead. ${fetchError.message}`
-              : "Live finding queue unavailable. Showing preview data instead."
-          );
-        }
+
+        setFindings(result.data);
+        setSourceMode(result.sourceMode);
+        setSourceMessage(result.message);
       })
       .finally(() => {
         if (active) {
@@ -59,12 +49,7 @@ export default function AssessmentsView() {
     return () => {
       active = false;
     };
-  }, []);
-
-  const visibleFindings = useMemo(
-    () => sortFindings(findings, selectedFilter),
-    [findings, selectedFilter]
-  );
+  }, [selectedFilter]);
 
   if (loading) {
     return <div className="empty-state">Loading findings...</div>;
@@ -98,18 +83,18 @@ export default function AssessmentsView() {
 
       <div className="view-status">
         <span className={`source-pill ${sourceMode}`}>
-          {sourceMode === "live" ? "Live findings" : "Preview fallback"}
+          {sourceMode === "live" ? "Live review data" : "Preview fallback"}
         </span>
-        {notice ? <span className="view-status-copy">{notice}</span> : null}
+        <span className="view-status-copy">{sourceMessage}</span>
       </div>
 
-      {visibleFindings.length === 0 ? (
+      {findings.length === 0 ? (
         <div className="empty-state">
           No findings matched the current review state.
         </div>
       ) : null}
 
-      {visibleFindings.length > 0 ? (
+      {findings.length > 0 ? (
         <table className="data-table">
           <thead>
             <tr>
@@ -123,7 +108,7 @@ export default function AssessmentsView() {
             </tr>
           </thead>
           <tbody>
-            {visibleFindings.map((finding) => (
+            {findings.map((finding) => (
               <tr key={finding.id}>
                 <td>{formatDateTime(finding.updatedAt)}</td>
                 <td>

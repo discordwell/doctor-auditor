@@ -8,7 +8,9 @@ from app.models.schemas import User, UserRole
 from app.auth.jwt import create_access_token
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Prefer a built-in hash for new credentials, but continue accepting bcrypt hashes
+# if older records already exist.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 class RegisterRequest(BaseModel):

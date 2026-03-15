@@ -1,14 +1,21 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import * as fs from "fs/promises";
 import * as path from "path";
+import type { TranscriptSegment } from "@doctor-auditor/shared";
 import { AudioCapture } from "./audio-capture";
 import { LocalDatabase } from "./database";
-import type { ImportSessionRequest } from "./review-models";
+import { TranscriptionService } from "./transcription";
+import type {
+  DesktopSessionSummary,
+  SessionIntakeRequest,
+} from "./review-models";
 
 let mainWindow: BrowserWindow | null = null;
 let audioCapture: AudioCapture | null = null;
 let db: LocalDatabase | null = null;
+let transcription: TranscriptionService | null = null;
 let activeRecordingSessionId: string | null = null;
+let transcriptionQueue: Promise<void> = Promise.resolve();
 
 type ImportStage =
   | "selected"
@@ -53,8 +60,13 @@ async function initializeServices(): Promise<void> {
 
   db = new LocalDatabase(path.join(userDataPath, "doctor-auditor.db"));
   audioCapture = new AudioCapture();
+  transcription = new TranscriptionService();
+
   audioCapture.on("level", (level: number) => {
     mainWindow?.webContents.send("audio:level", level);
+  });
+  audioCapture.on("capture-error", (message: string) => {
+    failActiveRecordingSession(message);
   });
 }
 
@@ -62,64 +74,206 @@ function emitImportProgress(payload: ImportProgressPayload): void {
   mainWindow?.webContents.send("session:import-progress", payload);
 }
 
+function emitSessionChanged(sessionSummary: DesktopSessionSummary): void {
+  mainWindow?.webContents.send("session:changed", sessionSummary);
+}
+
+function emitLiveCaptureError(payload: {
+  message: string;
+  session: DesktopSessionSummary | null;
+}): void {
+  mainWindow?.webContents.send("audio:capture-error", payload);
+}
+
+function failActiveRecordingSession(message: string): DesktopSessionSummary | null {
+  if (!db || !activeRecordingSessionId) {
+    emitLiveCaptureError({
+      message,
+      session: null,
+    });
+    return null;
+  }
+
+  const failedSummary = db.failLiveCaptureSession(
+    activeRecordingSessionId,
+    new Date().toISOString()
+  );
+  activeRecordingSessionId = null;
+
+  if (failedSummary) {
+    emitSessionChanged(failedSummary);
+  }
+
+  emitLiveCaptureError({
+    message,
+    session: failedSummary,
+  });
+
+  return failedSummary;
+}
+
+function queueTranscription(
+  sessionId: string,
+  audioPath: string,
+  source: TranscriptSegment["source"]
+): DesktopSessionSummary | null {
+  if (!db) {
+    return null;
+  }
+
+  const queuedSummary = db.updateSession(sessionId, {
+    transcriptStatus: "in_progress",
+  });
+
+  if (queuedSummary) {
+    emitSessionChanged(queuedSummary);
+  }
+
+  transcriptionQueue = transcriptionQueue
+    .catch(() => undefined)
+    .then(async () => {
+      if (!db || !transcription) {
+        throw new Error("Transcription service unavailable.");
+      }
+
+      const modelAvailable = await transcription.isModelAvailable();
+      if (!modelAvailable) {
+        throw new Error("Local transcription model not found.");
+      }
+
+      const segments = await transcription.transcribeFile(audioPath, sessionId, source);
+      db.replaceTranscriptSegments(sessionId, segments);
+
+      const completedSummary = db.updateSession(sessionId, {
+        transcriptStatus: segments.length > 0 ? "completed" : "failed",
+        reviewStatus: segments.length > 0 ? "ready" : "not_started",
+      });
+
+      if (completedSummary) {
+        emitSessionChanged(completedSummary);
+      }
+    })
+    .catch((error) => {
+      console.error("Transcription pipeline failed:", error);
+      if (!db) {
+        return;
+      }
+
+      const failedSummary = db.updateSession(sessionId, {
+        transcriptStatus: "failed",
+      });
+
+      if (failedSummary) {
+        emitSessionChanged(failedSummary);
+      }
+    });
+
+  return queuedSummary;
+}
+
+function getValidatedIntake(
+  request: SessionIntakeRequest | undefined
+): SessionIntakeRequest {
+  if (!request) {
+    throw new Error("Session details are required before starting capture.");
+  }
+
+  const clinicianId = request.clinicianId.trim();
+  if (!clinicianId) {
+    throw new Error("Add a clinician label before starting capture.");
+  }
+
+  if (!request.recordedWithConsent) {
+    throw new Error("Confirm recorded consent before starting capture.");
+  }
+
+  return {
+    clinicianId,
+    recordedWithConsent: request.recordedWithConsent,
+    exportAllowed: request.exportAllowed,
+  };
+}
+
 function registerIpcHandlers(): void {
-  ipcMain.handle("audio:start-recording", async (_event, request?: ImportSessionRequest) => {
+  ipcMain.handle("audio:start-recording", async (_event, request?: SessionIntakeRequest) => {
     if (!audioCapture) throw new Error("Audio capture not initialized");
     if (!db) throw new Error("Database not initialized");
-    if (!request) {
-      throw new Error("Capture details are required before recording.");
-    }
 
-    const clinicianId = request.clinicianId.trim();
-    if (!clinicianId) {
-      throw new Error("Add a clinician label before starting live capture.");
-    }
-
-    if (!request.recordedWithConsent) {
-      throw new Error("Confirm recorded consent before starting live capture.");
-    }
-
+    const intake = getValidatedIntake(request);
+    const startedAt = new Date().toISOString();
     const recording = await audioCapture.startRecording();
 
     try {
       const session = db.createLiveCaptureSession({
-        clinicianId,
-        recordedWithConsent: request.recordedWithConsent,
-        exportAllowed: request.exportAllowed,
+        ...intake,
+        startedAt,
         audioPath: recording.sessionPath,
-        capturedAt: new Date().toISOString(),
       });
-
       activeRecordingSessionId = session.session.id;
-      return session;
+      emitSessionChanged(session);
+      return {
+        sessionPath: recording.sessionPath,
+        session,
+      };
     } catch (error) {
-      await audioCapture.stopRecording();
+      await audioCapture.stopRecording().catch(() => undefined);
       throw error;
     }
   });
 
   ipcMain.handle("audio:stop-recording", async () => {
     if (!audioCapture) throw new Error("Audio capture not initialized");
-    const result = await audioCapture.stopRecording();
-    const sessionId = activeRecordingSessionId;
-    activeRecordingSessionId = null;
-
-    if (!db || !sessionId) {
-      return {
-        ...result,
-        session: null,
-      };
+    if (!db) throw new Error("Database not initialized");
+    if (!activeRecordingSessionId) {
+      throw new Error("No active live capture session.");
     }
 
-    return {
-      ...result,
-      session: db.completeLiveCaptureSession(sessionId, new Date().toISOString()),
-    };
+    const sessionId = activeRecordingSessionId;
+    try {
+      const stoppedRecording = await audioCapture.stopRecording();
+      activeRecordingSessionId = null;
+
+      const finalizedSession = db.finalizeLiveCaptureSession(sessionId, {
+        endedAt: new Date().toISOString(),
+        audioPath: stoppedRecording.filePath,
+      });
+
+      if (finalizedSession) {
+        emitSessionChanged(finalizedSession);
+      }
+
+      const queuedSummary = queueTranscription(
+        sessionId,
+        stoppedRecording.filePath,
+        "live_capture"
+      );
+
+      return {
+        filePath: stoppedRecording.filePath,
+        duration: stoppedRecording.duration,
+        session: queuedSummary ?? finalizedSession,
+      };
+    } catch (error) {
+      if (activeRecordingSessionId === sessionId) {
+        failActiveRecordingSession(
+          error instanceof Error
+            ? error.message
+            : "Live capture could not be finalized."
+        );
+      }
+
+      throw error;
+    }
   });
 
   ipcMain.handle("audio:get-devices", async () => {
     if (!audioCapture) throw new Error("Audio capture not initialized");
     return audioCapture.getDevices();
+  });
+
+  ipcMain.handle("audio:get-capture-status", async () => {
+    if (!audioCapture) throw new Error("Audio capture not initialized");
+    return audioCapture.getCaptureStatus();
   });
 
   ipcMain.handle("session:get-all", async () => {
@@ -134,21 +288,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "session:import-audio",
-    async (_event, request?: ImportSessionRequest) => {
+    async (_event, request?: SessionIntakeRequest) => {
       if (!mainWindow) throw new Error("Main window not initialized");
       if (!db) throw new Error("Database not initialized");
-      if (!request) {
-        throw new Error("Import details are required before selecting audio.");
-      }
 
-      const clinicianId = request.clinicianId.trim();
-      if (!clinicianId) {
-        throw new Error("Add a clinician label before importing audio.");
-      }
-
-      if (!request.recordedWithConsent) {
-        throw new Error("Confirm recorded consent before importing audio.");
-      }
+      const intake = getValidatedIntake(request);
 
       const selection = await dialog.showOpenDialog(mainWindow, {
         title: "Import Encounter Audio",
@@ -197,24 +341,29 @@ function registerIpcHandlers(): void {
           fileName,
         });
         const session = db.createImportedSession({
-          clinicianId,
-          recordedWithConsent: request.recordedWithConsent,
-          exportAllowed: request.exportAllowed,
+          ...intake,
           audioPath: targetPath,
           capturedAt: sourceStats.mtime.toISOString(),
           sourceFileName: fileName,
         });
 
+        emitSessionChanged(session);
+        const queuedSummary = queueTranscription(
+          session.session.id,
+          targetPath,
+          "audio_import"
+        );
+
         emitImportProgress({
           stage: "completed",
-          message: "Import complete. Review session shell is ready.",
+          message: "Import complete. Review session created and transcription queued.",
           fileName,
           sessionId: session.session.id,
         });
 
         return {
           cancelled: false as const,
-          session,
+          session: queuedSummary ?? session,
         };
       } catch (error) {
         emitImportProgress({

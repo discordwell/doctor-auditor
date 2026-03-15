@@ -1,39 +1,105 @@
+import { spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
 import { EventEmitter } from "events";
 import * as path from "path";
 import * as fs from "fs";
-import { app } from "electron";
-
-export interface AudioDevice {
-  id: string;
-  name: string;
-  isDefault: boolean;
-}
+import { app, systemPreferences } from "electron";
+import type {
+  AudioDevice,
+  LiveCaptureStatus,
+  MicrophoneAccessStatus,
+  RecorderBackend,
+} from "./review-models";
 
 interface RecorderProcess {
+  process?: ChildProcessWithoutNullStreams | null;
   stream(): NodeJS.ReadableStream;
   stop(): void;
 }
 
+const AUDIO_BYTES_PER_SECOND = 32000;
+const RECORDER_STARTUP_GRACE_MS = 900;
+const RECORDER_STOP_TIMEOUT_MS = 3000;
+const WAV_HEADER_BYTES = 44;
+
 export class AudioCapture extends EventEmitter {
   private isRecording = false;
   private recordingProcess: RecorderProcess | null = null;
+  private recordingStream: NodeJS.ReadableStream | null = null;
+  private outputStream: fs.WriteStream | null = null;
   private outputPath: string | null = null;
+  private activeRecorder: RecorderBackend | null = null;
+  private stopRequested = false;
 
   async getDevices(): Promise<AudioDevice[]> {
-    // Use sox/rec to list audio devices on macOS
-    // In production, we'd use a native module for better device enumeration
+    const status = await this.getCaptureStatus();
+    if (!status.available) {
+      return [];
+    }
+
     return [
       {
         id: "default",
-        name: "Default Microphone",
+        name: "System default microphone",
         isDefault: true,
       },
     ];
   }
 
+  async getCaptureStatus(): Promise<LiveCaptureStatus> {
+    const recorder = this.resolveRecorderBackend();
+    const microphoneAccess = this.getMicrophoneAccessStatus();
+    const issues: string[] = [];
+    const notes: string[] = [
+      "Live capture is still experimental. Import audio remains the recommended intake path.",
+      "Only the system default microphone is supported in this build.",
+    ];
+
+    if (!recorder) {
+      issues.push(
+        "Live capture requires a local SoX recorder binary (`sox` or `rec`). Install it before using the microphone path."
+      );
+    } else {
+      notes.push(`Recorder backend detected: ${recorder}.`);
+    }
+
+    if (microphoneAccess === "denied" || microphoneAccess === "restricted") {
+      issues.push(
+        "Microphone access is blocked for the desktop app. Re-enable it in system privacy settings before trying live capture again."
+      );
+    } else if (microphoneAccess === "not-determined") {
+      notes.push(
+        "The OS may still prompt for microphone access the first time live capture starts."
+      );
+    } else if (microphoneAccess === "unsupported") {
+      notes.push(
+        "Microphone permission status cannot be inspected on this platform, so failures must be validated manually."
+      );
+    }
+
+    return {
+      available:
+        recorder !== null &&
+        microphoneAccess !== "denied" &&
+        microphoneAccess !== "restricted",
+      experimental: true,
+      recorder,
+      microphoneAccess,
+      issues,
+      notes,
+    };
+  }
+
   async startRecording(deviceId = "default"): Promise<{ sessionPath: string }> {
-    if (this.isRecording) {
-      throw new Error("Already recording");
+    if (this.isRecording || this.recordingProcess) {
+      throw new Error("Live capture is already running.");
+    }
+
+    const status = await this.getCaptureStatus();
+    if (!status.available || !status.recorder) {
+      throw new Error(
+        status.issues[0] ??
+          "Live capture is unavailable on this machine. Import audio instead."
+      );
     }
 
     const userDataPath = app.getPath("userData");
@@ -41,71 +107,391 @@ export class AudioCapture extends EventEmitter {
     fs.mkdirSync(sessionsDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    this.outputPath = path.join(sessionsDir, `session-${timestamp}.wav`);
+    const outputPath = path.join(sessionsDir, `session-${timestamp}.wav`);
 
-    // Use node-record-lpcm16 for cross-platform audio capture
-    // Records 16-bit PCM at 16kHz (optimal for Whisper)
     const record = require("node-record-lpcm16");
-
-    this.recordingProcess = record.record({
+    const recordingProcess = record.record({
       sampleRate: 16000,
       channels: 1,
       audioType: "wav",
-      recorder: "rec", // Uses SoX on macOS
+      recorder: status.recorder,
       device: deviceId === "default" ? undefined : deviceId,
     }) as RecorderProcess;
 
-    const fileStream = fs.createWriteStream(this.outputPath);
-    this.recordingProcess!.stream().pipe(fileStream);
+    let recordingStream: NodeJS.ReadableStream;
+    try {
+      recordingStream = recordingProcess.stream();
+    } catch {
+      throw new Error(
+        "Live capture could not attach to the recorder stream. Import audio instead."
+      );
+    }
 
-    // Emit audio levels for waveform visualization
-    this.recordingProcess!.stream().on("data", (chunk: Buffer) => {
-      const level = this.calculateAudioLevel(chunk);
-      this.emit("level", level);
-    });
+    const outputStream = fs.createWriteStream(outputPath);
 
-    this.isRecording = true;
-    return { sessionPath: this.outputPath };
+    this.recordingProcess = recordingProcess;
+    this.recordingStream = recordingStream;
+    this.outputStream = outputStream;
+    this.outputPath = outputPath;
+    this.activeRecorder = status.recorder;
+    this.stopRequested = false;
+
+    recordingStream.on("data", this.handleAudioData);
+    recordingStream.pipe(outputStream);
+
+    recordingProcess.process?.on("close", this.handleRecorderClose);
+    recordingProcess.process?.on("error", this.handleRecorderProcessError);
+
+    try {
+      await this.awaitRecorderStartup(recordingStream, outputStream);
+      this.isRecording = true;
+      this.emit("level", 0);
+      return { sessionPath: outputPath };
+    } catch (error) {
+      await this.cleanupActiveCapture({ deleteOutput: true });
+      throw toError(error, "Live capture could not be started.");
+    }
   }
 
   async stopRecording(): Promise<{ filePath: string; duration: number }> {
-    if (!this.isRecording || !this.recordingProcess) {
-      throw new Error("Not currently recording");
+    if (
+      !this.isRecording ||
+      !this.recordingProcess ||
+      !this.recordingStream ||
+      !this.outputStream ||
+      !this.outputPath
+    ) {
+      throw new Error("No active live capture session.");
     }
 
-    return new Promise((resolve) => {
-      this.recordingProcess!.stop();
-      this.isRecording = false;
+    const filePath = this.outputPath;
+    const recordingProcess = this.recordingProcess;
+    const recordingStream = this.recordingStream;
+    const outputStream = this.outputStream;
 
-      const filePath = this.outputPath!;
-      this.outputPath = null;
-      this.recordingProcess = null;
+    this.stopRequested = true;
 
-      // Get file stats for duration estimate
-      const stats = fs.statSync(filePath);
-      // 16kHz, 16-bit, mono = 32000 bytes per second
-      const duration = stats.size / 32000;
+    return new Promise((resolve, reject) => {
+      let settled = false;
 
-      resolve({ filePath, duration });
+      const cleanupListeners = () => {
+        clearTimeout(timeoutId);
+        recordingStream.removeListener("error", onRecordingError);
+        outputStream.removeListener("error", onOutputError);
+        outputStream.removeListener("finish", onFinalizeSignal);
+        outputStream.removeListener("close", onFinalizeSignal);
+      };
+
+      const finalize = async () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanupListeners();
+
+        try {
+          const stats = await fs.promises.stat(filePath);
+          const audioBytes = Math.max(stats.size - WAV_HEADER_BYTES, 0);
+          this.clearActiveCaptureState();
+          this.emit("level", 0);
+
+          if (audioBytes === 0) {
+            throw new Error(
+              "Live capture ended before any audio was written. Check recorder setup and microphone access."
+            );
+          }
+
+          resolve({
+            filePath,
+            duration: audioBytes / AUDIO_BYTES_PER_SECOND,
+          });
+        } catch (error) {
+          this.clearActiveCaptureState();
+          this.emit("level", 0);
+          reject(toError(error, "Live capture could not be finalized."));
+        }
+      };
+
+      const fail = async (error: unknown) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanupListeners();
+        await this.cleanupActiveCapture({ deleteOutput: false });
+        reject(toError(error, "Live capture could not be finalized."));
+      };
+
+      const onFinalizeSignal = () => {
+        void finalize();
+      };
+      const onRecordingError = (error: unknown) => {
+        void fail(error);
+      };
+      const onOutputError = (error: unknown) => {
+        void fail(error);
+      };
+      const timeoutId = setTimeout(() => {
+        void finalize();
+      }, RECORDER_STOP_TIMEOUT_MS);
+
+      recordingStream.once("error", onRecordingError);
+      outputStream.once("error", onOutputError);
+      outputStream.once("finish", onFinalizeSignal);
+      outputStream.once("close", onFinalizeSignal);
+
+      try {
+        recordingProcess.stop();
+      } catch (error) {
+        void fail(error);
+      }
     });
   }
 
+  private async awaitRecorderStartup(
+    recordingStream: NodeJS.ReadableStream,
+    outputStream: fs.WriteStream
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        recordingStream.removeListener("data", onFirstData);
+        recordingStream.removeListener("error", onRecordingError);
+        outputStream.removeListener("error", onOutputError);
+        this.recordingProcess?.process?.removeListener("error", onProcessError);
+        this.recordingProcess?.process?.removeListener("close", onProcessClose);
+      };
+
+      const succeed = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = (error: unknown) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        reject(toError(error, "Live capture could not be started."));
+      };
+
+      const onFirstData = () => {
+        succeed();
+      };
+      const onRecordingError = (error: unknown) => {
+        fail(error);
+      };
+      const onOutputError = (error: unknown) => {
+        fail(error);
+      };
+      const onProcessError = (error: unknown) => {
+        fail(this.describeRecorderFailure(error));
+      };
+      const onProcessClose = (code: number | null, signal: NodeJS.Signals | null) => {
+        fail(this.describeRecorderExit(code, signal));
+      };
+      const timeoutId = setTimeout(() => {
+        succeed();
+      }, RECORDER_STARTUP_GRACE_MS);
+
+      recordingStream.once("data", onFirstData);
+      recordingStream.once("error", onRecordingError);
+      outputStream.once("error", onOutputError);
+      this.recordingProcess?.process?.once("error", onProcessError);
+      this.recordingProcess?.process?.once("close", onProcessClose);
+    });
+  }
+
+  private readonly handleAudioData = (chunk: Buffer) => {
+    const level = this.calculateAudioLevel(chunk);
+    this.emit("level", level);
+  };
+
+  private readonly handleRecorderClose = (
+    code: number | null,
+    signal: NodeJS.Signals | null
+  ) => {
+    if (!this.isRecording || this.stopRequested) {
+      return;
+    }
+
+    const message = this.describeRecorderExit(code, signal);
+    void this.failActiveRecording(message);
+  };
+
+  private readonly handleRecorderProcessError = (error: unknown) => {
+    if (!this.isRecording || this.stopRequested) {
+      return;
+    }
+
+    const message = this.describeRecorderFailure(error);
+    void this.failActiveRecording(message);
+  };
+
+  private async failActiveRecording(message: string): Promise<void> {
+    await this.cleanupActiveCapture({ deleteOutput: false });
+    this.emit("capture-error", message);
+  }
+
+  private async cleanupActiveCapture(options: {
+    deleteOutput: boolean;
+  }): Promise<void> {
+    const currentState = this.clearActiveCaptureState();
+
+    try {
+      currentState.recordingProcess?.stop();
+    } catch {
+      // Ignore secondary stop failures while tearing down a broken recorder.
+    }
+
+    currentState.outputStream?.destroy();
+    const destroyableStream = currentState.recordingStream as
+      | (NodeJS.ReadableStream & { destroy?: () => void })
+      | null;
+    destroyableStream?.destroy?.();
+
+    if (options.deleteOutput && currentState.outputPath) {
+      await fs.promises.rm(currentState.outputPath, { force: true });
+    }
+
+    this.emit("level", 0);
+  }
+
+  private clearActiveCaptureState(): {
+    recordingProcess: RecorderProcess | null;
+    recordingStream: NodeJS.ReadableStream | null;
+    outputStream: fs.WriteStream | null;
+    outputPath: string | null;
+  } {
+    const currentState = {
+      recordingProcess: this.recordingProcess,
+      recordingStream: this.recordingStream,
+      outputStream: this.outputStream,
+      outputPath: this.outputPath,
+    };
+
+    this.recordingProcess?.process?.removeListener(
+      "close",
+      this.handleRecorderClose
+    );
+    this.recordingProcess?.process?.removeListener(
+      "error",
+      this.handleRecorderProcessError
+    );
+    this.recordingStream?.removeListener("data", this.handleAudioData);
+
+    this.isRecording = false;
+    this.recordingProcess = null;
+    this.recordingStream = null;
+    this.outputStream = null;
+    this.outputPath = null;
+    this.activeRecorder = null;
+    this.stopRequested = false;
+
+    return currentState;
+  }
+
+  private resolveRecorderBackend(): RecorderBackend | null {
+    const candidates: RecorderBackend[] = ["sox", "rec"];
+
+    for (const candidate of candidates) {
+      const result = spawnSync(candidate, ["--version"], {
+        stdio: "ignore",
+        timeout: 1000,
+      });
+
+      if (!result.error && result.status === 0) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private getMicrophoneAccessStatus(): MicrophoneAccessStatus {
+    if (process.platform !== "darwin" && process.platform !== "win32") {
+      return "unsupported";
+    }
+
+    try {
+      return systemPreferences.getMediaAccessStatus("microphone");
+    } catch {
+      return "unknown";
+    }
+  }
+
+  private describeRecorderFailure(error: unknown): string {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Recorder process failed.";
+
+    if (message.includes("ENOENT") || message.includes("spawn")) {
+      return "Live capture requires a local SoX recorder binary (`sox` or `rec`). Import audio remains available.";
+    }
+
+    return `Live capture failed while using ${
+      this.activeRecorder ?? "the local recorder"
+    }: ${message}`;
+  }
+
+  private describeRecorderExit(
+    code: number | null,
+    signal: NodeJS.Signals | null
+  ): string {
+    if (code === null && signal === "SIGTERM" && this.stopRequested) {
+      return "Live capture stopped.";
+    }
+
+    const exitDetail =
+      code !== null ? `exit code ${code}` : signal ? `signal ${signal}` : "an unknown exit";
+
+    return `Live capture stopped unexpectedly (${exitDetail}). Import audio is still available while this path remains experimental.`;
+  }
+
   private calculateAudioLevel(chunk: Buffer): number {
-    // Calculate RMS audio level from 16-bit PCM data
     let sum = 0;
     const samples = chunk.length / 2;
 
-    for (let i = 0; i < chunk.length; i += 2) {
-      const sample = chunk.readInt16LE(i);
+    if (samples === 0) {
+      return 0;
+    }
+
+    for (let index = 0; index < chunk.length; index += 2) {
+      const sample = chunk.readInt16LE(index);
       sum += sample * sample;
     }
 
     const rms = Math.sqrt(sum / samples);
-    // Normalize to 0-1 range (16-bit max is 32768)
     return Math.min(rms / 32768, 1);
   }
 
   get recording(): boolean {
     return this.isRecording;
   }
+}
+
+function toError(error: unknown, fallbackMessage: string): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  if (typeof error === "string") {
+    return new Error(error);
+  }
+
+  return new Error(fallbackMessage);
 }
