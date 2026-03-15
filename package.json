@@ -11,11 +11,26 @@
   "scripts": {
     "desktop": "npm run dev --workspace=desktop",
     "dashboard": "npm run dev --workspace=dashboard",
+    "dev:desktop": "npm run dev --workspace=desktop",
+    "dev:dashboard": "npm run dev --workspace=dashboard",
+    "dev:server": "cd server && python -m uvicorn app.main:app --reload",
     "build:desktop": "npm run build --workspace=desktop",
     "build:dashboard": "npm run build --workspace=dashboard",
     "server": "cd server && python -m uvicorn app.main:app --reload",
+    "typecheck:desktop": "npm run typecheck --workspace=desktop",
+    "typecheck:dashboard": "npm run typecheck --workspace=dashboard",
+    "typecheck:shared": "npm run typecheck --workspace=shared",
+    "test:desktop": "npm run test --workspace=desktop",
+    "test:dashboard": "npm run test --workspace=dashboard",
+    "check:desktop": "npm run typecheck:desktop && npm run test:desktop",
+    "check:dashboard": "npm run typecheck:dashboard && npm run test:dashboard",
+    "check:shared": "npm run typecheck:shared",
+    "check:server": "cd server && python -m compileall app",
+    "check:contracts": "npm run check:shared && npm run check:server",
+    "check:ui": "npm run check:desktop && npm run check:dashboard",
+    "check:all": "npm run check:shared && npm run check:desktop && npm run check:dashboard && npm run check:server",
     "lint": "eslint . --ext .ts,.tsx",
-    "test": "npm run test --workspaces"
+    "test": "npm run test:desktop && npm run test:dashboard"
   },
   "engines": {
     "node": ">=18.0.0"

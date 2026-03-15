@@ -6,7 +6,7 @@ services:
       context: ./server
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - DATABASE_URL=postgresql://doctor_auditor:doctor_auditor@db:5432/doctor_auditor
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}

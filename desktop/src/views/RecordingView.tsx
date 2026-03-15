@@ -22,7 +22,7 @@ export default function RecordingView() {
   );
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [duration, setDuration] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (window.doctorAuditor) {

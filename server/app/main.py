@@ -1,11 +1,23 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import assessments, auth, doctors, dashboard
+from app.models.database import engine, Base
+import app.models.schemas  # noqa: F401 — register models with Base
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
 
 app = FastAPI(
     title="Doctor Auditor API",
     description="Cloud API for de-identified malpractice risk assessments",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

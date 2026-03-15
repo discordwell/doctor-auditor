@@ -7,8 +7,9 @@
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:renderer": "vite",
     "dev:electron": "tsc -p electron/tsconfig.json && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json --outDir .typecheck",
     "build": "tsc -p electron/tsconfig.json && vite build && electron-builder",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

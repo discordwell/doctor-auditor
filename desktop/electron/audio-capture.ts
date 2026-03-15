@@ -9,9 +9,14 @@ export interface AudioDevice {
   isDefault: boolean;
 }
 
+interface RecorderProcess {
+  stream(): NodeJS.ReadableStream;
+  stop(): void;
+}
+
 export class AudioCapture extends EventEmitter {
   private isRecording = false;
-  private recordingProcess: ReturnType<typeof import("child_process").spawn> | null = null;
+  private recordingProcess: RecorderProcess | null = null;
   private outputPath: string | null = null;
 
   async getDevices(): Promise<AudioDevice[]> {
@@ -48,7 +53,7 @@ export class AudioCapture extends EventEmitter {
       audioType: "wav",
       recorder: "rec", // Uses SoX on macOS
       device: deviceId === "default" ? undefined : deviceId,
-    });
+    }) as RecorderProcess;
 
     const fileStream = fs.createWriteStream(this.outputPath);
     this.recordingProcess!.stream().pipe(fileStream);
