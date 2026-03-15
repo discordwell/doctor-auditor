@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from passlib.context import CryptContext
@@ -27,6 +27,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     role: str
+    organization_id: str
 
 
 @router.post("/register", response_model=TokenResponse)
@@ -45,9 +46,19 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
     await db.commit()
 
     token = create_access_token(
-        {"sub": str(user.id), "email": user.email, "role": user.role.value}
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "role": user.role.value,
+            "org": user.organization_id,
+            "organization_id": user.organization_id,
+        }
     )
-    return TokenResponse(access_token=token, role=user.role.value)
+    return TokenResponse(
+        access_token=token,
+        role=user.role.value,
+        organization_id=user.organization_id,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -62,6 +73,16 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         )
 
     token = create_access_token(
-        {"sub": str(user.id), "email": user.email, "role": user.role.value}
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "role": user.role.value,
+            "org": user.organization_id,
+            "organization_id": user.organization_id,
+        }
     )
-    return TokenResponse(access_token=token, role=user.role.value)
+    return TokenResponse(
+        access_token=token,
+        role=user.role.value,
+        organization_id=user.organization_id,
+    )

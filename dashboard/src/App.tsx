@@ -9,8 +9,11 @@ export default function App() {
     <div className="dashboard-app">
       <header className="dashboard-header">
         <div className="header-brand">
-          <h1>Doctor Auditor</h1>
-          <span className="header-badge">DASHBOARD</span>
+          <div>
+            <h1>Doctor Auditor</h1>
+            <p>Review operations overview</p>
+          </div>
+          <span className="header-badge">BEACON</span>
         </div>
         <nav className="header-nav">
           <NavLink to="/" end>

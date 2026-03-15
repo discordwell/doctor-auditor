@@ -1,114 +1,118 @@
-# Doctor Auditor — Architecture
+# Doctor Auditor - Architecture
 
 ## Overview
 
-Doctor Auditor is a malpractice risk assessment system that analyzes doctor-patient conversations. It uses a hybrid architecture where HIPAA-sensitive data stays local and only de-identified risk metrics are sent to a cloud server.
+Doctor Auditor is a local-first encounter review system. It captures or imports consented clinician-patient encounters, keeps raw audio and full transcripts on the desktop, generates evidence-backed findings for human review, and only crosses the cloud boundary with approved, redacted exports.
+
+The shared contract is intentionally review-centric. It does not define malpractice scores, overall risk buckets, or impairment rankings as first-class outputs.
 
 ## System Components
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  Doctor's Office (Local)                  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Electron Desktop App                 │   │
-│  │                                                    │   │
-│  │  Microphone → Audio Capture                       │   │
-│  │       ↓                                            │   │
-│  │  Whisper.cpp (Local STT)                          │   │
-│  │       ↓                                            │   │
-│  │  Speaker Diarization (Doctor vs Patient)           │   │
-│  │       ↓                                            │   │
-│  │  Transcript → Encrypted SQLite (PHI stays here)   │   │
-│  │       ↓                                            │   │
-│  │  LLM Analysis ─┬─ Ollama (local, default)        │   │
-│  │                 └─ Claude API (opt-in, de-ID'd)    │   │
-│  │       ↓                                            │   │
-│  │  Risk Assessment (scores + flags)                 │   │
-│  └──────────┬───────────────────────────────────────┘   │
-│             │ De-identified risk scores only              │
-└─────────────┼────────────────────────────────────────────┘
-              │ HTTPS (encrypted)
-              ↓
-┌─────────────────────────────────────────────────────────┐
-│                    Cloud Server                          │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              FastAPI Backend                       │   │
-│  │                                                    │   │
-│  │  API Endpoints (receive risk assessments)         │   │
-│  │  Authentication (JWT, role-based)                 │   │
-│  │  PostgreSQL (de-identified data only)             │   │
-│  └──────────┬───────────────────────────────────────┘   │
-│             │                                            │
-│  ┌──────────┴───────────────────────────────────────┐   │
-│  │              React Dashboard                      │   │
-│  │                                                    │   │
-│  │  Insurance Underwriters: risk overview, trends    │   │
-│  │  Hospital Admins: doctor detail, department view  │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                 Clinician Workstation (Local)               │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │               Electron Desktop App                    │  │
+│  │                                                        │  │
+│  │  Audio import / live capture                           │  │
+│  │         ↓                                              │  │
+│  │  Transcript generation + speaker attribution           │  │
+│  │         ↓                                              │  │
+│  │  Review session + transcript segments                  │  │
+│  │         ↓                                              │  │
+│  │  Findings + evidence spans                             │  │
+│  │         ↓                                              │  │
+│  │  Human review decisions                                │  │
+│  │         ↓                                              │  │
+│  │  Approved redacted export                              │  │
+│  └──────────────┬─────────────────────────────────────────┘  │
+│                 │ Approved exports only                      │
+└─────────────────┼────────────────────────────────────────────┘
+                  │ HTTPS
+                  ↓
+┌──────────────────────────────────────────────────────────────┐
+│                        Cloud Server                           │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │                 FastAPI Backend                       │  │
+│  │                                                        │  │
+│  │  Approved export ingestion                             │  │
+│  │  Authentication and audit metadata                     │  │
+│  │  Storage for approved summaries only                   │  │
+│  └──────────────┬─────────────────────────────────────────┘  │
+│                 │                                            │
+│  ┌──────────────┴─────────────────────────────────────────┐  │
+│  │               Review Dashboard                         │  │
+│  │                                                        │  │
+│  │  Review queues, finding activity, export status        │  │
+│  │  Throughput and approved summary visibility            │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow & Privacy Boundary
+## Data Flow and Privacy Boundary
 
-### What stays LOCAL (HIPAA-protected):
+### What stays local
+
 - Raw audio recordings
-- Full transcripts with speaker labels
-- Patient-identifying information
-- Specific medical details discussed
-- Audit logs of all local data access
+- Full transcripts and speaker labels
+- Draft findings and confidence values
+- Reviewer notes before export approval
+- Local audit history and file-system pointers
 
-### What goes to the CLOUD (de-identified):
-- Risk scores (1-10 per category, overall H/M/L)
-- Session metadata (date, duration, doctor ID)
-- Anonymized behavioral flags
-- Aggregated trend data
+### What can leave the workstation
 
-### De-identification Pipeline (for opt-in Claude API):
-1. Strip patient names → "Patient"
-2. Remove dates of birth, addresses, phone numbers
-3. Remove medical record numbers
-4. Optionally generalize condition names
+- Session metadata needed for an approved export
+- Reviewed findings that a human explicitly approved
+- Redacted evidence excerpts tied to those approved findings
+- Export approval metadata and delivery status
 
-## Risk Assessment Model
+### Export pipeline
 
-Three scoring dimensions, each 1-10:
+1. Create a `ReviewSession` from imported audio or live capture.
+2. Produce `TranscriptSegment` records with timing and confidence.
+3. Generate `Finding` records with linked `EvidenceSpan` references.
+4. Capture human `ReviewDecision` records for accept, reject, uncertain, or edited outcomes.
+5. Build an `ApprovedExport` that contains only approved summaries and redacted evidence excerpts.
 
-| Category | What It Detects |
-|----------|----------------|
-| **Communication** | Dismissiveness, not explaining risks, rushing, poor bedside manner, interrupting |
-| **Clinical** | Skipping assessments, ignoring symptoms, premature diagnosis, missing follow-ups |
-| **Behavioral** | Impairment signs, fatigue, hostility, inappropriate comments, emotional instability |
+## Shared Contract Surface
 
-**Overall risk**: Weighted combination → High (7-10) / Medium (4-6) / Low (1-3)
+The shared TypeScript package now centers on auditable review artifacts:
+
+- `ReviewSession`
+- `TranscriptSegment`
+- `Finding`
+- `EvidenceSpan`
+- `ReviewDecision`
+- `ApprovedExport`
+- `SessionBundle`
+
+That contract deliberately avoids score-heavy language. Downstream lanes should model review queues and approved exports, not assume a required malpractice ranking step.
 
 ## Tech Stack
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
-| Desktop shell | Electron | Cross-platform, native mic access |
-| Desktop UI | React + TypeScript | Component reuse with dashboard |
-| Speech-to-text | Whisper.cpp | Local, fast on Apple Silicon, privacy-preserving |
-| Speaker diarization | sherpa-onnx | Local, runs on CPU/Metal |
-| Local LLM | Ollama | Easy model management, Apple Silicon optimized |
-| Cloud LLM | Claude API | Superior nuance for subtle risk signals |
-| Local storage | SQLite + SQLCipher | Encrypted at rest, no server dependency |
-| Cloud API | Python + FastAPI | Async, typed, excellent for REST APIs |
-| Cloud DB | PostgreSQL | Reliable, good for analytics queries |
-| Cloud dashboard | React + TypeScript | Shared components with desktop app |
-| Auth | JWT + RBAC | Role separation: underwriter vs admin |
+| Desktop shell | Electron | Cross-platform shell with local device access |
+| Desktop UI | React + TypeScript | Fast local review workflows and shared UI patterns |
+| Speech-to-text | Whisper.cpp or equivalent local runtime | Privacy-preserving transcript generation |
+| Speaker attribution | Local diarization tooling | Useful review context without a cloud dependency |
+| Findings engine | Rules plus optional local/cloud LLM extraction | Evidence-backed findings instead of opaque scoring |
+| Local storage | SQLite | Durable local session and audit storage |
+| Cloud API | Python + FastAPI | Typed export boundary and straightforward service surface |
+| Cloud DB | PostgreSQL | Storage for approved summaries and export activity |
+| Dashboard | React + TypeScript | Review queue and export visibility |
+| Auth | JWT + RBAC | Reviewer, quality lead, and admin separation |
 
 ## Directory Structure
 
 ```
 doctor-auditor/
-├── desktop/          # Electron desktop app (local, HIPAA)
-├── server/           # FastAPI cloud backend
-├── dashboard/        # React cloud dashboard
-├── shared/           # Shared TypeScript types/contracts
+├── desktop/          # Electron desktop app
+├── server/           # FastAPI backend for approved exports
+├── dashboard/        # Review dashboard
+├── shared/           # Shared TypeScript contracts
 ├── docker-compose.yml
 └── ARCHITECTURE.md
 ```
-
-See each subdirectory's README for component-specific details.

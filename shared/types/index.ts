@@ -1,106 +1,189 @@
-// Risk assessment types shared between desktop app and cloud dashboard
+// Review workflow contracts shared across desktop, server, and dashboard lanes.
 
-export type RiskLevel = "high" | "medium" | "low";
+export type ISO8601Timestamp = string;
 
-export interface RiskCategoryScore {
-  score: number; // 1-10
-  flags: string[]; // specific issues detected
+export type CaptureMode = "audio_import" | "live_capture" | "manual_entry";
+
+export type TranscriptStatus =
+  | "not_started"
+  | "in_progress"
+  | "completed"
+  | "failed";
+
+export type ReviewStatus =
+  | "not_started"
+  | "ready"
+  | "in_review"
+  | "completed";
+
+export type ExportStatus =
+  | "not_requested"
+  | "draft"
+  | "approved"
+  | "sent";
+
+export type FindingStatus =
+  | "draft"
+  | "pending_review"
+  | "accepted"
+  | "rejected"
+  | "uncertain"
+  | "revised";
+
+export type ReviewDecisionOutcome =
+  | "accepted"
+  | "rejected"
+  | "uncertain"
+  | "edited";
+
+export type FindingSource = "rules" | "local_llm" | "cloud_llm" | "human";
+
+export type TranscriptSpeakerLabel =
+  | "clinician"
+  | "patient"
+  | "caregiver"
+  | "staff"
+  | "speaker_a"
+  | "speaker_b"
+  | "unknown";
+
+export type UserRole = "reviewer" | "quality_lead" | "admin";
+
+export interface SessionConsent {
+  recordedWithConsent: boolean;
+  exportAllowed: boolean;
+  capturedAt?: ISO8601Timestamp;
+  capturedBy?: string;
 }
 
-export interface RiskAssessment {
+export interface ReviewSession {
   id: string;
-  sessionId: string;
-  doctorId: string;
-  timestamp: string; // ISO 8601
-  duration: number; // seconds
-
-  communication: RiskCategoryScore;
-  clinical: RiskCategoryScore;
-  behavioral: RiskCategoryScore;
-
-  overallScore: number; // 1-10 weighted average
-  overallRisk: RiskLevel;
-
-  analysisSource: "local" | "cloud" | "hybrid";
+  clinicianId: string;
+  organizationId?: string;
+  encounterStartedAt: ISO8601Timestamp;
+  encounterEndedAt?: ISO8601Timestamp;
+  captureMode: CaptureMode;
+  transcriptStatus: TranscriptStatus;
+  reviewStatus: ReviewStatus;
+  exportStatus: ExportStatus;
+  createdAt: ISO8601Timestamp;
+  updatedAt: ISO8601Timestamp;
+  consent: SessionConsent;
 }
 
-/** De-identified payload sent from desktop to cloud server */
-export interface DeidentifiedAssessment {
-  sessionId: string;
-  doctorId: string;
-  timestamp: string;
-  duration: number;
-
-  communication: RiskCategoryScore;
-  clinical: RiskCategoryScore;
-  behavioral: RiskCategoryScore;
-
-  overallScore: number;
-  overallRisk: RiskLevel;
-  analysisSource: "local" | "cloud" | "hybrid";
-}
-
-/** Transcript segment with speaker label (LOCAL ONLY — never sent to server) */
 export interface TranscriptSegment {
-  speaker: "doctor" | "patient" | "unknown";
-  text: string;
-  startTime: number; // seconds from session start
-  endTime: number;
-  confidence: number; // 0-1
-}
-
-/** Full session stored locally */
-export interface LocalSession {
   id: string;
-  doctorId: string;
-  startTime: string;
-  endTime?: string;
-  transcript: TranscriptSegment[];
-  riskAssessment?: RiskAssessment;
-  audioPath?: string; // local file path to encrypted audio
-  cloudAnalysisConsent: boolean;
+  sessionId: string;
+  speakerLabel: TranscriptSpeakerLabel;
+  text: string;
+  startOffsetMs: number;
+  endOffsetMs: number;
+  transcriptConfidence?: number; // 0-1 confidence from the transcription pipeline
+  speakerConfidence?: number; // 0-1 confidence from speaker attribution
+  source: "audio_import" | "live_capture" | "manual_edit";
 }
 
-/** Audit log entry (LOCAL ONLY) */
+export interface EvidenceSpan {
+  id: string;
+  transcriptSegmentId: string;
+  excerpt: string;
+  startOffsetMs: number;
+  endOffsetMs: number;
+  startTextOffset?: number;
+  endTextOffset?: number;
+}
+
+export interface Finding {
+  id: string;
+  sessionId: string;
+  code: string;
+  title: string;
+  summary: string;
+  status: FindingStatus;
+  confidence: number; // 0-1 confidence for the specific finding
+  evidenceSpans: EvidenceSpan[];
+  detectedBy: FindingSource;
+  createdAt: ISO8601Timestamp;
+  updatedAt: ISO8601Timestamp;
+  reviewDecisionId?: string;
+}
+
+export interface ReviewDecision {
+  id: string;
+  sessionId: string;
+  findingId: string;
+  outcome: ReviewDecisionOutcome;
+  reviewedBy: string;
+  reviewedAt: ISO8601Timestamp;
+  rationale?: string;
+  editedTitle?: string;
+  editedSummary?: string;
+  approvedEvidenceSpans?: EvidenceSpan[];
+}
+
+export interface ApprovedEvidenceExcerpt {
+  sourceEvidenceSpanId: string;
+  sourceTranscriptSegmentId: string;
+  excerpt: string;
+  startOffsetMs: number;
+  endOffsetMs: number;
+}
+
+export interface ApprovedExportFinding {
+  findingId: string;
+  code: string;
+  title: string;
+  summary: string;
+  reviewDecisionId: string;
+  evidenceExcerpts: ApprovedEvidenceExcerpt[];
+}
+
+export interface ApprovedExport {
+  id: string;
+  sessionId: string;
+  status: "draft" | "approved" | "sent";
+  summary: string;
+  findings: ApprovedExportFinding[];
+  approvedBy: string;
+  approvedAt: ISO8601Timestamp;
+  destination?: string;
+  sentAt?: ISO8601Timestamp;
+}
+
+export interface SessionBundle {
+  session: ReviewSession;
+  transcriptSegments: TranscriptSegment[];
+  findings: Finding[];
+  reviewDecisions: ReviewDecision[];
+  approvedExports: ApprovedExport[];
+  auditLogEntries: AuditLogEntry[];
+}
+
 export interface AuditLogEntry {
   id: string;
-  timestamp: string;
+  sessionId: string;
+  timestamp: ISO8601Timestamp;
   action:
-    | "session_started"
-    | "session_ended"
-    | "transcript_accessed"
-    | "audio_accessed"
-    | "assessment_generated"
-    | "data_sent_to_cloud"
-    | "cloud_analysis_requested";
+    | "session_created"
+    | "audio_imported"
+    | "transcript_viewed"
+    | "finding_reviewed"
+    | "export_approved"
+    | "export_sent";
+  actorId?: string;
   details: Record<string, unknown>;
 }
 
-/** User roles for the cloud dashboard */
-export type UserRole = "underwriter" | "admin";
-
-export interface DashboardUser {
+export interface ReviewUser {
   id: string;
   email: string;
   role: UserRole;
   organizationId: string;
 }
 
-/** Doctor profile (de-identified on server, full details local) */
-export interface DoctorProfile {
+export interface ClinicianProfile {
   id: string;
   specialty?: string;
   departmentId?: string;
   organizationId: string;
-}
-
-/** Trend data for dashboard charts */
-export interface RiskTrend {
-  doctorId: string;
-  period: string; // ISO date
-  avgCommunication: number;
-  avgClinical: number;
-  avgBehavioral: number;
-  avgOverall: number;
-  sessionCount: number;
 }

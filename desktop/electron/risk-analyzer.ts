@@ -4,7 +4,7 @@ import type {
   RiskAssessment,
   RiskCategoryScore,
   DeidentifiedAssessment,
-} from "@doctor-auditor/shared";
+} from "./contracts";
 
 interface OllamaResponse {
   message?: { content: string };

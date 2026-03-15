@@ -24,6 +24,28 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
   session: {
     getAll: () => ipcRenderer.invoke("session:get-all"),
     get: (sessionId: string) => ipcRenderer.invoke("session:get", sessionId),
+    importAudio: (doctorId?: string) =>
+      ipcRenderer.invoke("session:import-audio", doctorId),
+    onImportProgress: (
+      callback: (update: {
+        stage: "selected" | "copying" | "creating-session" | "completed" | "error";
+        message: string;
+        fileName?: string;
+        sessionId?: string;
+      }) => void
+    ) => {
+      const listener = (_event: Electron.IpcRendererEvent, update: {
+        stage: "selected" | "copying" | "creating-session" | "completed" | "error";
+        message: string;
+        fileName?: string;
+        sessionId?: string;
+      }) => callback(update);
+
+      ipcRenderer.on("session:import-progress", listener);
+      return () => {
+        ipcRenderer.removeListener("session:import-progress", listener);
+      };
+    },
   },
   analysis: {
     getRisk: (sessionId: string) =>

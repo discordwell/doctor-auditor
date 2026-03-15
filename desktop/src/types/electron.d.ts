@@ -1,3 +1,19 @@
+export interface ImportedSessionShell {
+  id: string;
+  doctorId: string;
+  startTime: string;
+  endTime?: string;
+  audioPath?: string;
+  cloudAnalysisConsent: boolean;
+}
+
+export interface SessionImportProgress {
+  stage: "selected" | "copying" | "creating-session" | "completed" | "error";
+  message: string;
+  fileName?: string;
+  sessionId?: string;
+}
+
 export interface DoctorAuditorAPI {
   audio: {
     startRecording: () => Promise<{ sessionPath: string }>;
@@ -18,11 +34,18 @@ export interface DoctorAuditorAPI {
   session: {
     getAll: () => Promise<unknown[]>;
     get: (sessionId: string) => Promise<unknown>;
+    importAudio: (
+      doctorId?: string
+    ) => Promise<
+      | { cancelled: true }
+      | { cancelled: false; session: ImportedSessionShell }
+    >;
+    onImportProgress: (
+      callback: (update: SessionImportProgress) => void
+    ) => () => void;
   };
   analysis: {
-    getRisk: (
-      sessionId: string
-    ) => Promise<unknown>;
+    getRisk: (sessionId: string) => Promise<unknown>;
     onRiskUpdate: (
       callback: (assessment: {
         overallRisk: string;

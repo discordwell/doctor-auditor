@@ -8,7 +8,8 @@ import enum
 
 
 class UserRole(str, enum.Enum):
-    underwriter = "underwriter"
+    reviewer = "reviewer"
+    quality_lead = "quality_lead"
     admin = "admin"
 
 

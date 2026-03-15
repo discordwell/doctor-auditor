@@ -5,7 +5,7 @@ import type {
   TranscriptSegment,
   RiskAssessment,
   AuditLogEntry,
-} from "@doctor-auditor/shared";
+} from "./contracts";
 
 export class LocalDatabase {
   private db: Database.Database;
@@ -84,6 +84,36 @@ export class LocalDatabase {
 
     this.addAuditLog("session_started", { sessionId: id, doctorId });
     return id;
+  }
+
+  createImportedSession(doctorId: string, audioPath: string): LocalSession {
+    const id = uuidv4();
+    const timestamp = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO sessions (id, doctor_id, start_time, end_time, audio_path)
+       VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(id, doctorId, timestamp, timestamp, audioPath);
+
+    this.addAuditLog("session_started", {
+      sessionId: id,
+      doctorId,
+      source: "import",
+      audioPath,
+    });
+    this.addAuditLog("session_ended", { sessionId: id, source: "import" });
+
+    return {
+      id,
+      doctorId,
+      startTime: timestamp,
+      endTime: timestamp,
+      transcript: [],
+      audioPath,
+      cloudAnalysisConsent: false,
+    };
   }
 
   endSession(sessionId: string): void {

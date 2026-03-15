@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import type {
+  ImportedSessionShell,
+  SessionImportProgress,
+} from "../types/electron";
 
 interface TranscriptEntry {
   speaker: string;
@@ -14,6 +18,29 @@ interface RiskState {
   overall: string;
 }
 
+type ImportStage =
+  | "idle"
+  | "cancelled"
+  | SessionImportProgress["stage"];
+
+const IMPORT_STEPS: Array<{
+  key: SessionImportProgress["stage"];
+  label: string;
+}> = [
+  { key: "selected", label: "Audio selected" },
+  { key: "copying", label: "Local copy created" },
+  { key: "creating-session", label: "Session shell created" },
+  { key: "completed", label: "Ready in history" },
+];
+
+const IMPORT_STEP_ORDER = IMPORT_STEPS.reduce<Record<string, number>>(
+  (accumulator, step, index) => {
+    accumulator[step.key] = index;
+    return accumulator;
+  },
+  {}
+);
+
 export default function RecordingView() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -22,6 +49,19 @@ export default function RecordingView() {
   );
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [duration, setDuration] = useState(0);
+  const [clinicianLabel, setClinicianLabel] = useState("Imported encounter");
+  const [importState, setImportState] = useState<{
+    stage: ImportStage;
+    message: string;
+    fileName?: string;
+    sessionId?: string;
+  }>({
+    stage: "idle",
+    message: "Choose an audio file to create a local encounter shell.",
+  });
+  const [isImporting, setIsImporting] = useState(false);
+  const [importedSession, setImportedSession] =
+    useState<ImportedSessionShell | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -44,6 +84,27 @@ export default function RecordingView() {
         }));
       });
     }
+  }, []);
+
+  useEffect(() => {
+    if (!window.doctorAuditor) return undefined;
+
+    return window.doctorAuditor.session.onImportProgress((update) => {
+      setImportState({
+        stage: update.stage,
+        message: update.message,
+        fileName: update.fileName,
+        sessionId: update.sessionId,
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
   }, []);
 
   const toggleRecording = useCallback(async () => {
@@ -69,6 +130,59 @@ export default function RecordingView() {
     }
   }, [isRecording]);
 
+  const importAudio = useCallback(async () => {
+    if (!window.doctorAuditor) {
+      setImportState({
+        stage: "error",
+        message: "Desktop import is only available inside the Electron app.",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+    setImportedSession(null);
+    setImportState({
+      stage: "idle",
+      message: "Waiting for you to select an audio file.",
+    });
+
+    try {
+      const result = await window.doctorAuditor.session.importAudio(
+        clinicianLabel.trim()
+      );
+
+      if (result.cancelled) {
+        setImportState({
+          stage: "cancelled",
+          message: "Import cancelled. No local session was created.",
+        });
+        return;
+      }
+
+      setImportedSession(result.session);
+      setImportState((current) => ({
+        stage: current.stage === "completed" ? current.stage : "completed",
+        message:
+          current.stage === "completed"
+            ? current.message
+            : "Import complete. Session shell is ready in history.",
+        fileName:
+          current.fileName ?? getFileName(result.session.audioPath),
+        sessionId: current.sessionId ?? result.session.id,
+      }));
+    } catch (error) {
+      setImportState({
+        stage: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Import failed while preparing the encounter.",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  }, [clinicianLabel]);
+
   const formatDuration = (seconds: number): string => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -81,14 +195,116 @@ export default function RecordingView() {
     return "low";
   };
 
+  const completedImportSteps =
+    importState.stage === "idle" ||
+    importState.stage === "cancelled" ||
+    importState.stage === "error"
+      ? -1
+      : IMPORT_STEP_ORDER[importState.stage];
+
   return (
     <div className="recording-view">
+      <div className="recording-hero">
+        <div className="recording-status recording-status-primary">
+          <span className="section-kicker">Import-first intake</span>
+          <h2>Start from existing encounter audio</h2>
+          <p>
+            Pull in a local recording, keep the file on-device, and create a
+            session shell before live capture is production-ready.
+          </p>
+        </div>
+
+        <div className="intake-panel">
+          <label className="field-label" htmlFor="clinician-label">
+            Clinician label
+          </label>
+          <input
+            id="clinician-label"
+            className="text-input"
+            value={clinicianLabel}
+            onChange={(event) => setClinicianLabel(event.target.value)}
+            placeholder="Imported encounter"
+          />
+
+          <div className="intake-actions">
+            <button
+              className="import-button"
+              onClick={importAudio}
+              disabled={isImporting}
+            >
+              {isImporting ? "Importing audio..." : "Import Audio File"}
+            </button>
+            <p className="intake-helper">
+              Supports common local audio formats and creates a session shell in
+              the local database.
+            </p>
+          </div>
+
+          <div
+            className={`import-status-card ${
+              importState.stage === "error"
+                ? "error"
+                : importState.stage === "completed"
+                  ? "success"
+                  : ""
+            }`}
+          >
+            <div className="import-status-header">
+              <div>
+                <h3>Import status</h3>
+                <p>{importState.message}</p>
+              </div>
+              {importState.fileName && (
+                <span className="status-chip">{importState.fileName}</span>
+              )}
+            </div>
+
+            <div className="import-step-list">
+              {IMPORT_STEPS.map((step, index) => {
+                const isDone = completedImportSteps >= index;
+                const isActive = importState.stage === step.key;
+
+                return (
+                  <div
+                    key={step.key}
+                    className={`import-step ${
+                      isDone ? "done" : ""
+                    } ${isActive ? "active" : ""}`}
+                  >
+                    <span className="import-step-dot" />
+                    <span>{step.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {importedSession && (
+            <div className="import-result-card">
+              <div>
+                <span className="section-kicker">Local session shell</span>
+                <h3>{importedSession.doctorId}</h3>
+                <p>
+                  Created {new Date(importedSession.startTime).toLocaleString()}
+                </p>
+              </div>
+              <div className="import-result-meta">
+                <span className="status-chip">
+                  {getFileName(importedSession.audioPath)}
+                </span>
+                <span className="status-chip">{importedSession.id}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="recording-status">
-        <h2>{isRecording ? "Recording Session" : "Ready to Record"}</h2>
+        <h2>{isRecording ? "Recording Session" : "Live Capture Beta"}</h2>
         <p>
           {isRecording
             ? `Session in progress — ${formatDuration(duration)}`
-            : "Click the button to start monitoring a consultation"}
+            : "Use live recording when you need a fresh capture. Import remains the faster path."}
         </p>
       </div>
 
@@ -147,4 +363,13 @@ export default function RecordingView() {
       )}
     </div>
   );
+}
+
+function getFileName(filePath?: string): string {
+  if (!filePath) {
+    return "Local audio";
+  }
+
+  const parts = filePath.split(/[/\\]/);
+  return parts[parts.length - 1] || "Local audio";
 }
