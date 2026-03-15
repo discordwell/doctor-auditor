@@ -146,10 +146,6 @@ export default function OperationsView() {
         <div>
           <p className="section-kicker">Operations</p>
           <h2>Ops event stream</h2>
-          <p className="page-copy">
-            Review assist activity, release events, and failures across reviewed
-            sessions.
-          </p>
         </div>
         <input
           className="search-field"
@@ -165,22 +161,22 @@ export default function OperationsView() {
         <article className="stat-card">
           <div className="stat-label">Assist requests</div>
           <div className="stat-value active">{summary.assistRequested}</div>
-          <p className="stat-detail">Reviewer-initiated assist requests.</p>
+          <p className="stat-detail">Requested by reviewers.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Overrides</div>
           <div className="stat-value active">{summary.assistOverrides}</div>
-          <p className="stat-detail">Assist outcomes that were manually overruled.</p>
+          <p className="stat-detail">Assist outcomes overruled.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Failures</div>
           <div className="stat-value attention">{summary.failures}</div>
-          <p className="stat-detail">Assist or gateway failures requiring attention.</p>
+          <p className="stat-detail">Assist or gateway failures.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Redaction blocks</div>
           <div className="stat-value attention">{summary.blocks}</div>
-          <p className="stat-detail">Sessions paused by privacy or redaction rules.</p>
+          <p className="stat-detail">Sessions blocked by privacy rules.</p>
         </article>
       </section>
 

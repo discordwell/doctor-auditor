@@ -116,10 +116,6 @@ export default function ApprovedExportsView() {
         <div>
           <p className="section-kicker">Exports</p>
           <h2>Release queue</h2>
-          <p className="page-copy">
-            Review approved exports, what is still in review, and what has
-            already been delivered downstream.
-          </p>
         </div>
         <input
           className="search-field"
@@ -135,22 +131,22 @@ export default function ApprovedExportsView() {
         <article className="stat-card">
           <div className="stat-label">All exports</div>
           <div className="stat-value neutral">{summary.total}</div>
-          <p className="stat-detail">Every export envelope in the current org.</p>
+          <p className="stat-detail">All export envelopes.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">In review</div>
           <div className="stat-value active">{summary.draft}</div>
-          <p className="stat-detail">Reviewed locally but not approved yet.</p>
+          <p className="stat-detail">Reviewed, not approved.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Ready to send</div>
           <div className="stat-value attention">{summary.approved}</div>
-          <p className="stat-detail">Approved and waiting for release.</p>
+          <p className="stat-detail">Approved, waiting on release.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Sent</div>
           <div className="stat-value success">{summary.sent}</div>
-          <p className="stat-detail">Delivered after review and approval.</p>
+          <p className="stat-detail">Delivered downstream.</p>
         </article>
       </section>
 

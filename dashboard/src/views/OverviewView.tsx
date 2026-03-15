@@ -88,21 +88,17 @@ export default function OverviewView() {
         <div>
           <p className="section-kicker">Overview</p>
           <h2>What needs attention today</h2>
-          <p className="page-copy">
-            Release backlog, operator issues, and recent activity across the
-            reviewed session queue.
-          </p>
         </div>
         <div className="hero-stats">
           <div className="hero-stat">
             <span>Average release time</span>
             <strong>{formatDuration(overview.averageSendLatencyMs)}</strong>
-            <p>Approval to downstream delivery.</p>
+            <p>Approval to release.</p>
           </div>
           <div className="hero-stat">
             <span>Sent in the last 7 days</span>
             <strong>{overview.sentLast7Days}</strong>
-            <p>Completed releases during the current weekly window.</p>
+            <p>Completed releases.</p>
           </div>
         </div>
       </section>
@@ -111,30 +107,22 @@ export default function OverviewView() {
         <article className="stat-card">
           <div className="stat-label">Ready to send</div>
           <div className="stat-value attention">{overview.approvedExports}</div>
-          <p className="stat-detail">
-            Approved exports waiting on manual or downstream release.
-          </p>
+          <p className="stat-detail">Approved exports waiting on release.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">In review</div>
           <div className="stat-value active">{overview.draftExports}</div>
-          <p className="stat-detail">
-            Sessions reviewed locally but not approved yet.
-          </p>
+          <p className="stat-detail">Reviewed sessions not approved yet.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Sent</div>
           <div className="stat-value success">{overview.sentExports}</div>
-          <p className="stat-detail">
-            Exports already handed off after approval.
-          </p>
+          <p className="stat-detail">Exports already delivered.</p>
         </article>
         <article className="stat-card">
           <div className="stat-label">Active issues</div>
           <div className="stat-value attention">{overview.activeIssuesCount}</div>
-          <p className="stat-detail">
-            Failed assists, redaction blocks, and aging release backlog.
-          </p>
+          <p className="stat-detail">Blocks, failures, and overdue releases.</p>
         </article>
       </section>
 
@@ -145,10 +133,7 @@ export default function OverviewView() {
               <p className="section-kicker">Trend</p>
               <h3>Weekly release and assist activity</h3>
             </div>
-            <p>
-              Compare export volume against assist traffic and privacy blocks to
-              spot backlog pressure quickly.
-            </p>
+            <p>Exports, assist events, and blocks by week.</p>
           </div>
           <div className="chart-shell">
             <ResponsiveContainer width="100%" height={320}>
@@ -220,7 +205,7 @@ export default function OverviewView() {
               <p className="section-kicker">Backlog</p>
               <h3>Clinician workload</h3>
             </div>
-            <p>Pending reviewed sessions grouped by clinician.</p>
+            <p>Pending work by clinician.</p>
           </div>
           {overview.clinicianWorkload.length === 0 ? (
             <div className="empty-state compact">No workload to show.</div>
@@ -273,7 +258,7 @@ export default function OverviewView() {
               <p className="section-kicker">Queue</p>
               <h3>Release queue</h3>
             </div>
-            <p>Oldest approved exports rise to the top, followed by drafts.</p>
+            <p>Oldest approved exports first.</p>
           </div>
           {overview.releaseQueue.length === 0 ? (
             <div className="empty-state compact">No releases are waiting.</div>
@@ -320,7 +305,7 @@ export default function OverviewView() {
               <p className="section-kicker">Issues</p>
               <h3>Operator follow-up</h3>
             </div>
-            <p>Failures, blocks, and release delays that still need action.</p>
+            <p>Failures, blocks, and delays.</p>
           </div>
           {overview.opsIssues.length === 0 ? (
             <div className="empty-state compact">
@@ -354,7 +339,7 @@ export default function OverviewView() {
             <p className="section-kicker">Recent activity</p>
             <h3>Latest export and ops events</h3>
           </div>
-          <p>The most recent queue changes across approvals, releases, and ops.</p>
+          <p>Newest queue changes.</p>
         </div>
         <div className="activity-list">
           {overview.activityFeed.map((item) => (
