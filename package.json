@@ -1,0 +1,23 @@
+{
+  "name": "doctor-auditor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Malpractice risk assessment system for doctor-patient conversations",
+  "workspaces": [
+    "desktop",
+    "dashboard",
+    "shared"
+  ],
+  "scripts": {
+    "desktop": "npm run dev --workspace=desktop",
+    "dashboard": "npm run dev --workspace=dashboard",
+    "build:desktop": "npm run build --workspace=desktop",
+    "build:dashboard": "npm run build --workspace=dashboard",
+    "server": "cd server && python -m uvicorn app.main:app --reload",
+    "lint": "eslint . --ext .ts,.tsx",
+    "test": "npm run test --workspaces"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

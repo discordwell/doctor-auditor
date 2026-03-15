@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build output
+dist/
+build/
+out/
+*.egg-info/
+
+# Environment & secrets
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio files (can be large)
+*.wav
+*.mp3
+*.ogg
+*.flac
+
+# Whisper models (large binaries)
+desktop/models/*.bin
+desktop/models/*.ggml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+htmlcov/
+.coverage
+
+# Electron
+desktop/release/
+
+# Docker
+docker-compose.override.yml
