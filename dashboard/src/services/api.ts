@@ -6,6 +6,7 @@ const DEMO_CREDENTIALS = {
   role: "reviewer" as const,
   organization_id: "demo-health",
 };
+const DEMO_BOOTSTRAP_COOLDOWN_MS = 15_000;
 
 type AuthResponse = {
   access_token: string;
@@ -20,6 +21,7 @@ type StoredAuthSession = AuthResponse & {
 
 let authToken: string | null = null;
 let demoBootstrapPromise: Promise<string | null> | null = null;
+let lastBootstrapFailureAt = 0;
 
 function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -63,6 +65,13 @@ async function ensureDemoSession(): Promise<string | null> {
     return authToken;
   }
 
+  if (
+    lastBootstrapFailureAt > 0 &&
+    Date.now() - lastBootstrapFailureAt < DEMO_BOOTSTRAP_COOLDOWN_MS
+  ) {
+    return null;
+  }
+
   if (demoBootstrapPromise) {
     return demoBootstrapPromise;
   }
@@ -86,6 +95,7 @@ async function ensureDemoSession(): Promise<string | null> {
           ...loginResponse,
           email: DEMO_CREDENTIALS.email,
         });
+        lastBootstrapFailureAt = 0;
         return loginResponse.access_token;
       } catch {
         const registerResponse = await request<AuthResponse>(
@@ -101,9 +111,11 @@ async function ensureDemoSession(): Promise<string | null> {
           ...registerResponse,
           email: DEMO_CREDENTIALS.email,
         });
+        lastBootstrapFailureAt = 0;
         return registerResponse.access_token;
       }
     } catch {
+      lastBootstrapFailureAt = Date.now();
       persistSession(null);
       return null;
     } finally {

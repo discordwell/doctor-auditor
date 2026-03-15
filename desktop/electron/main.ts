@@ -8,6 +8,7 @@ import type { ImportSessionRequest } from "./review-models";
 let mainWindow: BrowserWindow | null = null;
 let audioCapture: AudioCapture | null = null;
 let db: LocalDatabase | null = null;
+let activeRecordingSessionId: string | null = null;
 
 type ImportStage =
   | "selected"
@@ -62,14 +63,58 @@ function emitImportProgress(payload: ImportProgressPayload): void {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle("audio:start-recording", async () => {
+  ipcMain.handle("audio:start-recording", async (_event, request?: ImportSessionRequest) => {
     if (!audioCapture) throw new Error("Audio capture not initialized");
-    return audioCapture.startRecording();
+    if (!db) throw new Error("Database not initialized");
+    if (!request) {
+      throw new Error("Capture details are required before recording.");
+    }
+
+    const clinicianId = request.clinicianId.trim();
+    if (!clinicianId) {
+      throw new Error("Add a clinician label before starting live capture.");
+    }
+
+    if (!request.recordedWithConsent) {
+      throw new Error("Confirm recorded consent before starting live capture.");
+    }
+
+    const recording = await audioCapture.startRecording();
+
+    try {
+      const session = db.createLiveCaptureSession({
+        clinicianId,
+        recordedWithConsent: request.recordedWithConsent,
+        exportAllowed: request.exportAllowed,
+        audioPath: recording.sessionPath,
+        capturedAt: new Date().toISOString(),
+      });
+
+      activeRecordingSessionId = session.session.id;
+      return session;
+    } catch (error) {
+      await audioCapture.stopRecording();
+      throw error;
+    }
   });
 
   ipcMain.handle("audio:stop-recording", async () => {
     if (!audioCapture) throw new Error("Audio capture not initialized");
-    return audioCapture.stopRecording();
+    const result = await audioCapture.stopRecording();
+    const sessionId = activeRecordingSessionId;
+    activeRecordingSessionId = null;
+
+    if (!db || !sessionId) {
+      return {
+        ...result,
+        session: null,
+      };
+    }
+
+    return {
+      ...result,
+      session: db.completeLiveCaptureSession(sessionId, new Date().toISOString()),
+    };
   });
 
   ipcMain.handle("audio:get-devices", async () => {

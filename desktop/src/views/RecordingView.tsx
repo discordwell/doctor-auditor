@@ -49,8 +49,11 @@ export default function RecordingView() {
       "Choose a local audio file, confirm consent, and create a review session shell.",
   });
   const [isImporting, setIsImporting] = useState(false);
-  const [importedSession, setImportedSession] =
+  const [recentSession, setRecentSession] =
     useState<DesktopSessionSummary | null>(null);
+  const [recentSessionOrigin, setRecentSessionOrigin] = useState<
+    "import" | "live" | null
+  >(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -94,21 +97,68 @@ export default function RecordingView() {
     }
 
     if (isRecording) {
-      await window.doctorAuditor.audio.stopRecording();
-      setIsRecording(false);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+      try {
+        const result = await window.doctorAuditor.audio.stopRecording();
+        setIsRecording(false);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
+        if (result.session) {
+          setRecentSession(result.session);
+          setRecentSessionOrigin("live");
+        }
+      } catch (error) {
+        setImportState({
+          stage: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Live capture could not be finalized.",
+        });
       }
     } else {
-      await window.doctorAuditor.audio.startRecording();
-      setIsRecording(true);
-      setDuration(0);
-      setAudioLevels(new Array(60).fill(0));
-      timerRef.current = setInterval(() => {
-        setDuration((currentDuration) => currentDuration + 1);
-      }, 1000);
+      const trimmedClinicianId = clinicianId.trim();
+      if (!trimmedClinicianId) {
+        setImportState({
+          stage: "error",
+          message: "Add a clinician label before starting live capture.",
+        });
+        return;
+      }
+
+      if (!recordedWithConsent) {
+        setImportState({
+          stage: "error",
+          message: "Confirm recorded consent before starting live capture.",
+        });
+        return;
+      }
+
+      try {
+        await window.doctorAuditor.audio.startRecording({
+          clinicianId: trimmedClinicianId,
+          recordedWithConsent,
+          exportAllowed,
+        });
+        setRecentSession(null);
+        setRecentSessionOrigin(null);
+        setIsRecording(true);
+        setDuration(0);
+        setAudioLevels(new Array(60).fill(0));
+        timerRef.current = setInterval(() => {
+          setDuration((currentDuration) => currentDuration + 1);
+        }, 1000);
+      } catch (error) {
+        setImportState({
+          stage: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Live capture could not be started.",
+        });
+      }
     }
-  }, [isRecording]);
+  }, [clinicianId, exportAllowed, isRecording, recordedWithConsent]);
 
   const importAudio = useCallback(async () => {
     if (!window.doctorAuditor) {
@@ -137,7 +187,8 @@ export default function RecordingView() {
     }
 
     setIsImporting(true);
-    setImportedSession(null);
+    setRecentSession(null);
+    setRecentSessionOrigin(null);
     setImportState({
       stage: "idle",
       message: "Waiting for you to select an audio file.",
@@ -158,7 +209,8 @@ export default function RecordingView() {
         return;
       }
 
-      setImportedSession(result.session);
+      setRecentSession(result.session);
+      setRecentSessionOrigin("import");
       setImportState((current) => ({
         stage: current.stage === "completed" ? current.stage : "completed",
         message:
@@ -300,32 +352,37 @@ export default function RecordingView() {
             </div>
           </div>
 
-          {importedSession && (
+          {recentSession && (
             <div className="import-result-card">
               <div>
-                <span className="section-kicker">Review session shell</span>
-                <h3>{formatClinicianLabel(importedSession.session.clinicianId)}</h3>
+                <span className="section-kicker">
+                  {recentSessionOrigin === "live"
+                    ? "Live capture session"
+                    : "Review session shell"}
+                </span>
+                <h3>{formatClinicianLabel(recentSession.session.clinicianId)}</h3>
                 <p>
-                  Imported {formatDateTime(importedSession.session.createdAt)}.
-                  Transcript state is{" "}
+                  {recentSessionOrigin === "live" ? "Captured" : "Imported"}{" "}
+                  {formatDateTime(recentSession.session.createdAt)}. Transcript
+                  state is{" "}
                   {formatTranscriptStatus(
-                    importedSession.session.transcriptStatus
+                    recentSession.session.transcriptStatus
                   ).toLowerCase()}
                   .
                 </p>
               </div>
               <div className="import-result-meta">
                 <span className="status-chip">
-                  {getFileName(importedSession.audioPath)}
+                  {getFileName(recentSession.audioPath)}
                 </span>
                 <span className="status-chip">
-                  {formatCaptureMode(importedSession.session.captureMode)}
+                  {formatCaptureMode(recentSession.session.captureMode)}
                 </span>
                 <span className="status-chip">
-                  {formatReviewStatus(importedSession.session.reviewStatus)}
+                  {formatReviewStatus(recentSession.session.reviewStatus)}
                 </span>
                 <span className="status-chip">
-                  {importedSession.session.consent.exportAllowed
+                  {recentSession.session.consent.exportAllowed
                     ? "Export allowed"
                     : "Local review only"}
                 </span>

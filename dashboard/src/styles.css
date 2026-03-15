@@ -401,6 +401,15 @@ h4 {
   line-height: 1.6;
 }
 
+.notice-card {
+  padding: 14px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 209, 102, 0.28);
+  background: rgba(255, 209, 102, 0.08);
+  color: #f5df9b;
+  line-height: 1.5;
+}
+
 .source-pill {
   display: inline-flex;
   width: fit-content;
@@ -491,6 +500,18 @@ h4 {
   max-width: 56ch;
   color: var(--text-secondary);
   line-height: 1.55;
+}
+
+.view-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.view-status-copy {
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .filter-row {

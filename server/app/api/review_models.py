@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CaptureMode = Literal["audio_import", "live_capture", "manual_entry"]
 TranscriptStatus = Literal["not_started", "in_progress", "completed", "failed"]
@@ -135,6 +136,61 @@ class ApprovedExportModel(BaseModel):
     approvedAt: str
     destination: str | None = None
     sentAt: str | None = None
+
+
+def _validate_iso8601_timestamp(value: str | None) -> str | None:
+    if value is None:
+        return None
+    datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return value
+
+
+class StrictApprovedExportRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ApprovedEvidenceExcerptRequestModel(StrictApprovedExportRequestModel):
+    sourceEvidenceSpanId: str = Field(min_length=1)
+    sourceTranscriptSegmentId: str = Field(min_length=1)
+    excerpt: str = Field(min_length=1)
+    startOffsetMs: int
+    endOffsetMs: int
+
+
+class ApprovedExportFindingRequestModel(StrictApprovedExportRequestModel):
+    findingId: str = Field(min_length=1)
+    code: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    reviewDecisionId: str = Field(min_length=1)
+    evidenceExcerpts: list[ApprovedEvidenceExcerptRequestModel] = Field(
+        default_factory=list
+    )
+
+
+class ApprovedExportIngestRequest(StrictApprovedExportRequestModel):
+    id: str = Field(min_length=1)
+    sessionId: str = Field(min_length=1)
+    status: Literal["approved", "sent"]
+    summary: str = Field(min_length=1)
+    findings: list[ApprovedExportFindingRequestModel] = Field(default_factory=list)
+    approvedBy: str = Field(min_length=1)
+    approvedAt: str
+    destination: str | None = None
+    sentAt: str | None = None
+
+    @field_validator("approvedAt", "sentAt")
+    @classmethod
+    def validate_timestamps(cls, value: str | None) -> str | None:
+        return _validate_iso8601_timestamp(value)
+
+    @model_validator(mode="after")
+    def validate_delivery_state(self) -> "ApprovedExportIngestRequest":
+        if self.status == "approved" and self.sentAt is not None:
+            raise ValueError("sentAt is only allowed when status is 'sent'")
+        if self.status == "sent" and self.sentAt is None:
+            raise ValueError("sentAt is required when status is 'sent'")
+        return self
 
 
 class AuditLogEntryModel(BaseModel):

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.review_models import (
+    ApprovedExportIngestRequest,
     ApprovedExportModel,
     AuditLogEntryModel,
     EvidenceSpanModel,
@@ -34,6 +35,15 @@ _SESSION_BUNDLE_LOADERS = (
     selectinload(ReviewSessionRecord.approved_exports),
     selectinload(ReviewSessionRecord.audit_log_entries),
 )
+
+_APPROVED_EXPORT_OUTCOMES = {"accepted", "edited"}
+
+
+class ApprovedExportIngestError(Exception):
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
 
 def current_organization_id(token: dict) -> str:
@@ -542,14 +552,115 @@ async def get_approved_export(
     return _approved_export_model(record)
 
 
+def _validate_approved_export_payload(
+    session: ReviewSessionRecord,
+    payload: ApprovedExportIngestRequest,
+) -> None:
+    if not session.consent_export_allowed:
+        raise ApprovedExportIngestError(
+            status_code=400,
+            detail="session consent does not allow approved export ingestion",
+        )
+
+    if session.review_status != "completed":
+        raise ApprovedExportIngestError(
+            status_code=409,
+            detail="session review must be completed before ingesting an approved export",
+        )
+
+    findings_by_id = {item.id: item for item in session.findings}
+    decisions_by_id = {item.id: item for item in session.review_decisions}
+    seen_finding_ids: set[str] = set()
+
+    for exported_finding in payload.findings:
+        if exported_finding.findingId in seen_finding_ids:
+            raise ApprovedExportIngestError(
+                status_code=400,
+                detail=(
+                    "approved export findings must not include duplicate "
+                    f"finding ids: '{exported_finding.findingId}'"
+                ),
+            )
+        seen_finding_ids.add(exported_finding.findingId)
+
+        finding = findings_by_id.get(exported_finding.findingId)
+        if finding is None:
+            raise ApprovedExportIngestError(
+                status_code=400,
+                detail=(
+                    "approved export findings must reference findings from the "
+                    f"session: '{exported_finding.findingId}'"
+                ),
+            )
+
+        decision = decisions_by_id.get(exported_finding.reviewDecisionId)
+        if decision is None:
+            raise ApprovedExportIngestError(
+                status_code=400,
+                detail=(
+                    "approved export findings must reference stored review decisions: "
+                    f"'{exported_finding.reviewDecisionId}'"
+                ),
+            )
+
+        if decision.finding_id != finding.id:
+            raise ApprovedExportIngestError(
+                status_code=400,
+                detail=(
+                    "approved export review decisions must match their finding ids: "
+                    f"'{exported_finding.reviewDecisionId}'"
+                ),
+            )
+
+        if decision.outcome not in _APPROVED_EXPORT_OUTCOMES:
+            raise ApprovedExportIngestError(
+                status_code=400,
+                detail=(
+                    "approved export findings must reference accepted or edited "
+                    "review decisions"
+                ),
+            )
+
+        approved_spans = {
+            span.id: span
+            for span in _serialize_evidence_spans(decision.approved_evidence_spans)
+        }
+        for evidence_excerpt in exported_finding.evidenceExcerpts:
+            approved_span = approved_spans.get(evidence_excerpt.sourceEvidenceSpanId)
+            if approved_span is None:
+                raise ApprovedExportIngestError(
+                    status_code=400,
+                    detail=(
+                        "approved export evidence must reference approved evidence "
+                        f"spans: '{evidence_excerpt.sourceEvidenceSpanId}'"
+                    ),
+                )
+            if (
+                approved_span.transcriptSegmentId
+                != evidence_excerpt.sourceTranscriptSegmentId
+            ):
+                raise ApprovedExportIngestError(
+                    status_code=400,
+                    detail=(
+                        "approved export evidence excerpts must keep transcript "
+                        "segment references aligned with approved evidence spans"
+                    ),
+                )
+
+
 async def ingest_approved_export(
     db: AsyncSession,
     organization_id: str,
-    payload: ApprovedExportModel,
-) -> ApprovedExportModel | None:
+    payload: ApprovedExportIngestRequest,
+) -> ApprovedExportModel:
     session = await _session_record(db, organization_id, payload.sessionId)
     if session is None:
-        return None
+        raise ApprovedExportIngestError(
+            status_code=404,
+            detail=f"Session '{payload.sessionId}' was not found for the approved export",
+        )
+
+    _validate_approved_export_payload(session, payload)
 
     result = await db.execute(
         select(ApprovedExportRecord)
@@ -595,4 +706,6 @@ async def ingest_approved_export(
 
     await db.commit()
     refreshed = await get_approved_export(db, organization_id, payload.id)
+    if refreshed is None:
+        raise RuntimeError("approved export could not be reloaded after persistence")
     return refreshed

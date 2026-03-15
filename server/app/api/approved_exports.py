@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.review_models import ApprovedExportModel
+from app.api.review_models import ApprovedExportIngestRequest, ApprovedExportModel
 from app.auth.jwt import verify_token
 from app.models.database import get_db
 from app.services.review_repository import (
+    ApprovedExportIngestError,
     current_organization_id,
     get_approved_export as get_approved_export_model,
     ingest_approved_export as ingest_approved_export_record,
@@ -48,17 +49,15 @@ async def get_approved_export(
 
 @router.post("/", response_model=ApprovedExportModel, status_code=status.HTTP_201_CREATED)
 async def ingest_approved_export(
-    payload: ApprovedExportModel,
+    payload: ApprovedExportIngestRequest,
     db: AsyncSession = Depends(get_db),
     token: dict = Depends(verify_token),
 ):
     organization_id = current_organization_id(token)
-    export = await ingest_approved_export_record(db, organization_id, payload)
-    if export is None:
+    try:
+        return await ingest_approved_export_record(db, organization_id, payload)
+    except ApprovedExportIngestError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Session '{payload.sessionId}' was not found for the approved export"
-            ),
-        )
-    return export
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc

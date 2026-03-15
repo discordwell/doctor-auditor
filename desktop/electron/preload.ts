@@ -1,13 +1,20 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  DesktopSessionSummary,
   ImportSessionRequest,
   SessionImportProgress,
 } from "../src/types/electron";
 
 contextBridge.exposeInMainWorld("doctorAuditor", {
   audio: {
-    startRecording: () => ipcRenderer.invoke("audio:start-recording"),
-    stopRecording: () => ipcRenderer.invoke("audio:stop-recording"),
+    startRecording: (request: ImportSessionRequest) =>
+      ipcRenderer.invoke("audio:start-recording", request) as Promise<DesktopSessionSummary>,
+    stopRecording: () =>
+      ipcRenderer.invoke("audio:stop-recording") as Promise<{
+        filePath: string;
+        duration: number;
+        session: DesktopSessionSummary | null;
+      }>,
     getDevices: () => ipcRenderer.invoke("audio:get-devices"),
     onAudioLevel: (callback: (level: number) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, level: number) => {

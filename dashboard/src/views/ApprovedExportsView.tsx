@@ -1,62 +1,46 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api, ApprovedExport } from "../services/api";
+import {
+  formatDateTime,
+  getExportTone,
+  previewApprovedExports,
+  sortApprovedExports,
+} from "../services/reviewDashboard";
 
 type ExportFilter = "all" | ApprovedExport["status"];
 
 const FILTERS: ExportFilter[] = ["all", "draft", "approved", "sent"];
 
-function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function getExportTone(
-  status: ApprovedExport["status"]
-): "active" | "success" | "attention" {
-  if (status === "draft") {
-    return "active";
-  }
-
-  if (status === "approved") {
-    return "attention";
-  }
-
-  return "success";
-}
-
 export default function ApprovedExportsView() {
-  const [exportsList, setExportsList] = useState<ApprovedExport[]>([]);
+  const [exportsList, setExportsList] =
+    useState<ApprovedExport[]>(previewApprovedExports);
   const [selectedFilter, setSelectedFilter] = useState<ExportFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [sourceMode, setSourceMode] = useState<"live" | "preview">("preview");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
-    setError("");
+    setNotice("");
 
     api
-      .getApprovedExports(
-        selectedFilter === "all"
-          ? undefined
-          : { exportStatus: selectedFilter }
-      )
+      .getApprovedExports()
       .then((data) => {
         if (active) {
           setExportsList(data);
+          setSourceMode("live");
         }
       })
       .catch((fetchError) => {
         if (active) {
-          setError(
+          setExportsList(previewApprovedExports);
+          setSourceMode("preview");
+          setNotice(
             fetchError instanceof Error
-              ? fetchError.message
-              : "Unable to load approved exports."
+              ? `Live export lane unavailable. Showing preview data instead. ${fetchError.message}`
+              : "Live export lane unavailable. Showing preview data instead."
           );
         }
       })
@@ -69,7 +53,12 @@ export default function ApprovedExportsView() {
     return () => {
       active = false;
     };
-  }, [selectedFilter]);
+  }, []);
+
+  const visibleExports = useMemo(
+    () => sortApprovedExports(exportsList, selectedFilter),
+    [exportsList, selectedFilter]
+  );
 
   if (loading) {
     return <div className="empty-state">Loading approved exports...</div>;
@@ -101,15 +90,20 @@ export default function ApprovedExportsView() {
         </div>
       </div>
 
-      {error && <div className="empty-state">{error}</div>}
+      <div className="view-status">
+        <span className={`source-pill ${sourceMode}`}>
+          {sourceMode === "live" ? "Live exports" : "Preview fallback"}
+        </span>
+        {notice ? <span className="view-status-copy">{notice}</span> : null}
+      </div>
 
-      {!error && exportsList.length === 0 ? (
+      {visibleExports.length === 0 ? (
         <div className="empty-state">
           No approved exports matched the current delivery state.
         </div>
       ) : null}
 
-      {!error && exportsList.length > 0 ? (
+      {visibleExports.length > 0 ? (
         <table className="data-table">
           <thead>
             <tr>
@@ -123,7 +117,7 @@ export default function ApprovedExportsView() {
             </tr>
           </thead>
           <tbody>
-            {exportsList.map((item) => (
+            {visibleExports.map((item) => (
               <tr key={item.id}>
                 <td>{formatDateTime(item.approvedAt)}</td>
                 <td>

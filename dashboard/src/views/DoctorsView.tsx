@@ -1,70 +1,46 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api, ReviewSession } from "../services/api";
+import {
+  formatDateTime,
+  formatStatusLabel,
+  getSessionStatusTone,
+  previewSessions,
+  sortSessions,
+} from "../services/reviewDashboard";
 
 type SessionFilter = "all" | "ready" | "in_review" | "completed";
 
 const FILTERS: SessionFilter[] = ["all", "ready", "in_review", "completed"];
 
-function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatStatusLabel(value: string): string {
-  return value.replace(/_/g, " ");
-}
-
-function getStatusTone(
-  value: string
-): "attention" | "active" | "success" | "neutral" {
-  if (value === "ready") {
-    return "attention";
-  }
-
-  if (value === "in_review" || value === "draft") {
-    return "active";
-  }
-
-  if (value === "completed" || value === "approved" || value === "sent") {
-    return "success";
-  }
-
-  return "neutral";
-}
-
 export default function DoctorsView() {
-  const [sessions, setSessions] = useState<ReviewSession[]>([]);
+  const [sessions, setSessions] = useState<ReviewSession[]>(previewSessions);
   const [selectedFilter, setSelectedFilter] = useState<SessionFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [sourceMode, setSourceMode] = useState<"live" | "preview">("preview");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
-    setError("");
+    setNotice("");
 
     api
-      .getSessions(
-        selectedFilter === "all"
-          ? undefined
-          : { reviewStatus: selectedFilter }
-      )
+      .getSessions()
       .then((data) => {
         if (active) {
           setSessions(data);
+          setSourceMode("live");
         }
       })
       .catch((fetchError) => {
         if (active) {
-          setError(
+          setSessions(previewSessions);
+          setSourceMode("preview");
+          setNotice(
             fetchError instanceof Error
-              ? fetchError.message
-              : "Unable to load sessions."
+              ? `Live review sessions unavailable. Showing preview data instead. ${fetchError.message}`
+              : "Live review sessions unavailable. Showing preview data instead."
           );
         }
       })
@@ -77,7 +53,12 @@ export default function DoctorsView() {
     return () => {
       active = false;
     };
-  }, [selectedFilter]);
+  }, []);
+
+  const visibleSessions = useMemo(
+    () => sortSessions(sessions, selectedFilter),
+    [selectedFilter, sessions]
+  );
 
   if (loading) {
     return <div className="empty-state">Loading review sessions...</div>;
@@ -109,15 +90,20 @@ export default function DoctorsView() {
         </div>
       </div>
 
-      {error && <div className="empty-state">{error}</div>}
+      <div className="view-status">
+        <span className={`source-pill ${sourceMode}`}>
+          {sourceMode === "live" ? "Live sessions" : "Preview fallback"}
+        </span>
+        {notice ? <span className="view-status-copy">{notice}</span> : null}
+      </div>
 
-      {!error && sessions.length === 0 ? (
+      {visibleSessions.length === 0 ? (
         <div className="empty-state">
           No sessions matched the current review filter.
         </div>
       ) : null}
 
-      {!error && sessions.length > 0 ? (
+      {visibleSessions.length > 0 ? (
         <table className="data-table">
           <thead>
             <tr>
@@ -131,7 +117,7 @@ export default function DoctorsView() {
             </tr>
           </thead>
           <tbody>
-            {sessions.map((session) => (
+            {visibleSessions.map((session) => (
               <tr key={session.id}>
                 <td>
                   <div className="mono-code">{session.id}</div>
@@ -145,17 +131,23 @@ export default function DoctorsView() {
                 </td>
                 <td>{formatStatusLabel(session.captureMode)}</td>
                 <td>
-                  <span className={`status-badge ${getStatusTone(session.transcriptStatus)}`}>
+                  <span
+                    className={`status-badge ${getSessionStatusTone(session.transcriptStatus)}`}
+                  >
                     {formatStatusLabel(session.transcriptStatus)}
                   </span>
                 </td>
                 <td>
-                  <span className={`status-badge ${getStatusTone(session.reviewStatus)}`}>
+                  <span
+                    className={`status-badge ${getSessionStatusTone(session.reviewStatus)}`}
+                  >
                     {formatStatusLabel(session.reviewStatus)}
                   </span>
                 </td>
                 <td>
-                  <span className={`status-badge ${getStatusTone(session.exportStatus)}`}>
+                  <span
+                    className={`status-badge ${getSessionStatusTone(session.exportStatus)}`}
+                  >
                     {formatStatusLabel(session.exportStatus)}
                   </span>
                 </td>

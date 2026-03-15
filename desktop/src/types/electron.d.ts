@@ -25,8 +25,14 @@ export interface SessionImportProgress {
 
 export interface DoctorAuditorAPI {
   audio: {
-    startRecording: () => Promise<{ sessionPath: string }>;
-    stopRecording: () => Promise<{ filePath: string; duration: number }>;
+    startRecording: (
+      request: ImportSessionRequest
+    ) => Promise<DesktopSessionSummary>;
+    stopRecording: () => Promise<{
+      filePath: string;
+      duration: number;
+      session: DesktopSessionSummary | null;
+    }>;
     getDevices: () => Promise<
       Array<{ id: string; name: string; isDefault: boolean }>
     >;
