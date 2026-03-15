@@ -288,16 +288,32 @@ def test_demo_seed_creates_export_and_ops_only() -> None:
 
         response = client.post("/api/demo/seed", headers=headers)
         assert response.status_code == 200, response.text
-        assert response.json()["approvedExports"] >= 2
-        assert response.json()["opsEvents"] >= 5
+        assert response.json()["approvedExports"] == 6
+        assert response.json()["opsEvents"] == 21
 
         exports = client.get("/api/approved-exports/", headers=headers)
         events = client.get("/api/ops-events/", headers=headers)
+        summary = client.get("/api/ops-events/summary", headers=headers)
 
         assert exports.status_code == 200, exports.text
         assert events.status_code == 200, events.text
-        assert len(exports.json()) >= 2
-        assert len(events.json()) >= 5
+        assert summary.status_code == 200, summary.text
+        assert len(exports.json()) == 6
+        assert len(events.json()) == 21
+        assert {item["export"]["status"] for item in exports.json()} == {
+            "draft",
+            "approved",
+            "sent",
+        }
+        assert summary.json() == {
+            "totalExports": 6,
+            "approvedExports": 2,
+            "sentExports": 3,
+            "assistUsageCount": 5,
+            "assistOverrideCount": 1,
+            "redactionBlockCount": 2,
+            "averageSendLatencyMs": 1780000.0,
+        }
 
 
 def test_demo_seed_is_idempotent() -> None:
@@ -315,6 +331,8 @@ def test_demo_seed_is_idempotent() -> None:
         assert second.json()["seeded"] is False
         assert second.json()["approvedExports"] == first.json()["approvedExports"]
         assert second.json()["opsEvents"] == first.json()["opsEvents"]
+        assert second.json()["approvedExports"] == 6
+        assert second.json()["opsEvents"] == 21
 
 
 def test_ops_event_rejects_mismatched_organization() -> None:

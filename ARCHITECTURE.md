@@ -121,6 +121,14 @@ It owns:
 - demo seed
 - Remote assist gateway
 
+The hosted boundary is same-origin for the dashboard:
+
+- `https://docaudit.discordwell.com/` serves the dashboard build
+- `https://docaudit.discordwell.com/api/...` serves the FastAPI boundary behind a reverse proxy
+- browser dashboard traffic should stay on `/api`, not call a desktop-local host
+- desktop sync and Remote assist calls default to `https://docaudit.discordwell.com/api`
+- `DOCTOR_AUDITOR_API_URL` exists only as an explicit override when pointing the desktop app at a different boundary
+
 It does not own:
 
 - raw session uploads
@@ -152,7 +160,8 @@ That contract should remain review-first even if downstream insurer-safe feature
 | Local storage | SQLite | Durable local session and audit storage |
 | Cloud API | Python + FastAPI | Typed export and ops boundary |
 | Cloud DB | PostgreSQL | Storage for approved exports and ops activity |
-| Dashboard | React + TypeScript | Approved export and ops visibility |
+| Dashboard | React + TypeScript | Same-origin approved export and ops visibility |
+| TLS edge | Reverse proxy such as Caddy | Terminates TLS and routes `/` to dashboard and `/api` to FastAPI |
 | Auth | JWT + RBAC | Reviewer, quality lead, and admin separation |
 
 ## Directory structure

@@ -50,29 +50,29 @@ export class AudioCapture extends EventEmitter {
     const microphoneAccess = this.getMicrophoneAccessStatus();
     const issues: string[] = [];
     const notes: string[] = [
-      "Live capture is still experimental. Import audio remains the recommended intake path.",
-      "Only the system default microphone is supported in this build.",
+      "Live recording uses the system default microphone in this build.",
+      "Recordings stay local on this machine until you choose an approved export.",
     ];
 
     if (!recorder) {
       issues.push(
-        "Live capture requires a local SoX recorder binary (`sox` or `rec`). Install it before using the microphone path."
+        "Live recording requires a local SoX recorder binary (`sox` or `rec`). Install it before using the microphone."
       );
     } else {
-      notes.push(`Recorder backend detected: ${recorder}.`);
+      notes.push(`Recorder ready: ${recorder}.`);
     }
 
     if (microphoneAccess === "denied" || microphoneAccess === "restricted") {
       issues.push(
-        "Microphone access is blocked for the desktop app. Re-enable it in system privacy settings before trying live capture again."
+        "Microphone access is blocked for the desktop app. Re-enable it in system privacy settings before trying to record again."
       );
     } else if (microphoneAccess === "not-determined") {
       notes.push(
-        "The OS may still prompt for microphone access the first time live capture starts."
+        "The OS may still prompt for microphone access the first time you start recording."
       );
     } else if (microphoneAccess === "unsupported") {
       notes.push(
-        "Microphone permission status cannot be inspected on this platform, so failures must be validated manually."
+        "Microphone permission status cannot be inspected on this platform."
       );
     }
 
@@ -91,20 +91,19 @@ export class AudioCapture extends EventEmitter {
 
   async startRecording(deviceId = "default"): Promise<{ sessionPath: string }> {
     if (this.isRecording || this.recordingProcess) {
-      throw new Error("Live capture is already running.");
+      throw new Error("Recording is already in progress.");
     }
 
     if (deviceId !== "default") {
       throw new Error(
-        "This build only supports the system default microphone for live capture."
+        "This build only supports the system default microphone for recording."
       );
     }
 
     const status = await this.getCaptureStatus();
     if (!status.available || !status.recorder) {
       throw new Error(
-        status.issues[0] ??
-          "Live capture is unavailable on this machine. Import audio instead."
+        status.issues[0] ?? "Live recording is unavailable on this machine."
       );
     }
 
@@ -128,9 +127,7 @@ export class AudioCapture extends EventEmitter {
     try {
       recordingStream = recordingProcess.stream();
     } catch {
-      throw new Error(
-        "Live capture could not attach to the recorder stream. Import audio instead."
-      );
+      throw new Error("Live recording could not attach to the recorder stream.");
     }
 
     const outputStream = fs.createWriteStream(outputPath);
@@ -157,7 +154,7 @@ export class AudioCapture extends EventEmitter {
       await this.cleanupActiveCapture({ deleteOutput: true }).catch(
         () => undefined
       );
-      throw toError(error, "Live capture could not be started.");
+      throw toError(error, "Live recording could not be started.");
     }
   }
 
@@ -169,7 +166,7 @@ export class AudioCapture extends EventEmitter {
       !this.outputStream ||
       !this.outputPath
     ) {
-      throw new Error("No active live capture session.");
+      throw new Error("No active recording session.");
     }
 
     const filePath = this.outputPath;
@@ -207,7 +204,7 @@ export class AudioCapture extends EventEmitter {
           if (audioBytes === 0) {
             await this.removeOutputFile(filePath);
             throw new Error(
-              "Live capture ended before any audio was written. Check recorder setup and microphone access."
+              "Recording ended before any audio was written. Check the recorder setup and microphone access."
             );
           }
 
@@ -218,7 +215,7 @@ export class AudioCapture extends EventEmitter {
         } catch (error) {
           this.clearActiveCaptureState();
           this.emit("level", 0);
-          reject(toError(error, "Live capture could not be finalized."));
+          reject(toError(error, "Recording could not be finalized."));
         }
       };
 
@@ -232,7 +229,7 @@ export class AudioCapture extends EventEmitter {
         await this.cleanupActiveCapture({ deleteOutput: true }).catch(
           () => undefined
         );
-        reject(toError(error, "Live capture could not be finalized."));
+        reject(toError(error, "Recording could not be finalized."));
       };
 
       const onFinalizeSignal = () => {
@@ -292,10 +289,10 @@ export class AudioCapture extends EventEmitter {
           return;
         }
 
-        settled = true;
-        cleanup();
-        reject(toError(error, "Live capture could not be started."));
-      };
+      settled = true;
+      cleanup();
+      reject(toError(error, "Live recording could not be started."));
+    };
 
       const onFirstData = () => {
         succeed();
@@ -461,10 +458,10 @@ export class AudioCapture extends EventEmitter {
           : "Recorder process failed.";
 
     if (message.includes("ENOENT") || message.includes("spawn")) {
-      return "Live capture requires a local SoX recorder binary (`sox` or `rec`). Import audio remains available.";
+      return "Live recording requires a local SoX recorder binary (`sox` or `rec`).";
     }
 
-    return `Live capture failed while using ${
+    return `Live recording failed while using ${
       this.activeRecorder ?? "the local recorder"
     }: ${message}`;
   }
@@ -474,13 +471,13 @@ export class AudioCapture extends EventEmitter {
     signal: NodeJS.Signals | null
   ): string {
     if (code === null && signal === "SIGTERM" && this.stopRequested) {
-      return "Live capture stopped.";
+      return "Recording stopped.";
     }
 
     const exitDetail =
       code !== null ? `exit code ${code}` : signal ? `signal ${signal}` : "an unknown exit";
 
-    return `Live capture stopped unexpectedly (${exitDetail}). Import audio is still available while this path remains experimental.`;
+    return `Recording stopped unexpectedly (${exitDetail}).`;
   }
 
   private calculateAudioLevel(chunk: Buffer): number {

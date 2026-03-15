@@ -26,7 +26,7 @@ const IMPORT_STEPS: Array<{
 }> = [
   { key: "selected", label: "Audio selected" },
   { key: "copying", label: "Local copy created" },
-  { key: "creating-session", label: "Review session created" },
+  { key: "creating-session", label: "Session created" },
   { key: "completed", label: "Transcription queued" },
 ];
 
@@ -41,7 +41,7 @@ const IMPORT_STEP_ORDER = IMPORT_STEPS.reduce<Record<string, number>>(
 const DEFAULT_LIVE_CAPTURE_NOTICE: LiveCaptureNotice = {
   tone: "info",
   message:
-    "Import audio is the recommended demo path. Live capture remains experimental and uses the system default microphone only.",
+    "Use the default microphone to start a new recording. If you already have audio, load it below.",
 };
 
 export default function RecordingView() {
@@ -62,7 +62,7 @@ export default function RecordingView() {
   }>({
     stage: "idle",
     message:
-      "Choose a local audio file, confirm consent, and create a review session shell.",
+      "Choose a local audio file to create a review session.",
   });
   const [isImporting, setIsImporting] = useState(false);
   const [liveCaptureNotice, setLiveCaptureNotice] = useState<LiveCaptureNotice>(
@@ -82,7 +82,7 @@ export default function RecordingView() {
     if (!window.doctorAuditor) {
       setLiveCaptureStatus(
         createUnavailableLiveCaptureStatus(
-          "Live capture is only available inside the Electron shell."
+          "Live recording is only available inside the desktop app."
         )
       );
       setIsLoadingLiveCaptureStatus(false);
@@ -99,7 +99,7 @@ export default function RecordingView() {
         createUnavailableLiveCaptureStatus(
           error instanceof Error
             ? error.message
-            : "Unable to inspect live capture prerequisites."
+            : "Unable to inspect live recording prerequisites."
         )
       );
     } finally {
@@ -189,7 +189,7 @@ export default function RecordingView() {
       setLiveCaptureNotice({
         tone: "error",
         message:
-          "Live capture is only available inside the Electron shell. Use imported audio in the browser preview.",
+          "Live recording is only available inside the desktop app. You can still load audio in the browser preview.",
       });
       return;
     }
@@ -203,7 +203,7 @@ export default function RecordingView() {
       setLiveCaptureNotice({
         tone: "active",
         message:
-          "Stopping live capture. Waiting for the local recorder to flush audio and queue transcription.",
+          "Stopping recording and saving the audio locally.",
       });
 
       try {
@@ -216,8 +216,8 @@ export default function RecordingView() {
         setLiveCaptureNotice({
           tone: "success",
           message: result.session
-            ? "Live capture saved locally. Transcript processing started."
-            : "Live capture saved locally.",
+            ? "Recording saved locally. Transcript processing started."
+            : "Recording saved locally.",
         });
 
         if (result.session) {
@@ -233,8 +233,8 @@ export default function RecordingView() {
           tone: "error",
           message:
             error instanceof Error
-              ? error.message
-              : "Live capture could not be finalized.",
+            ? error.message
+            : "Recording could not be finalized.",
         });
         void refreshLiveCaptureStatus();
       }
@@ -262,7 +262,7 @@ export default function RecordingView() {
         tone: "error",
         message:
           liveCaptureStatus?.issues[0] ??
-          "Live capture is unavailable on this machine. Import audio instead.",
+          "Live recording is unavailable on this machine.",
       });
       return;
     }
@@ -271,8 +271,7 @@ export default function RecordingView() {
       setCaptureTransition("starting");
       setLiveCaptureNotice({
         tone: "active",
-        message:
-          "Starting live capture against the system default microphone. Import audio remains the safer demo path.",
+        message: "Starting live recording from the default microphone.",
       });
       const result = await window.doctorAuditor.audio.startRecording(intake);
       setCaptureTransition("idle");
@@ -280,11 +279,10 @@ export default function RecordingView() {
       setDuration(0);
       setAudioLevels(createEmptyAudioLevels());
       setRecentSession(result.session);
-      setLiveCaptureNotice({
-        tone: "active",
-        message:
-          "Live capture session created. Stop recording to queue local transcription.",
-      });
+        setLiveCaptureNotice({
+          tone: "active",
+          message: "Recording in progress. Stop when you're ready to transcribe.",
+        });
       stopRecordingTimer(timerRef);
       timerRef.current = setInterval(() => {
         setDuration((currentDuration) => currentDuration + 1);
@@ -300,7 +298,7 @@ export default function RecordingView() {
         message:
           error instanceof Error
             ? error.message
-            : "Live capture could not be started.",
+            : "Live recording could not be started.",
       });
       void refreshLiveCaptureStatus();
     }
@@ -320,7 +318,7 @@ export default function RecordingView() {
     if (!window.doctorAuditor) {
       setImportState({
         stage: "error",
-        message: "Desktop import is only available inside the Electron app.",
+        message: "Loading audio is only available inside the desktop app.",
       });
       return;
     }
@@ -344,7 +342,7 @@ export default function RecordingView() {
     setIsImporting(true);
     setImportState({
       stage: "idle",
-      message: "Waiting for you to select an audio file.",
+      message: "Waiting for you to choose an audio file.",
     });
     setLiveCaptureNotice(DEFAULT_LIVE_CAPTURE_NOTICE);
 
@@ -354,7 +352,7 @@ export default function RecordingView() {
       if (result.cancelled) {
         setImportState({
           stage: "cancelled",
-          message: "Import cancelled. No local session was created.",
+          message: "Load cancelled. No session was created.",
         });
         return;
       }
@@ -365,7 +363,7 @@ export default function RecordingView() {
         message:
           current.stage === "completed"
             ? current.message
-            : "Import complete. Review session created and transcription queued.",
+            : "Audio loaded. Review session created and transcription queued.",
         fileName: current.fileName ?? getFileName(result.session.audioPath),
         sessionId: current.sessionId ?? result.session.session.id,
       }));
@@ -375,7 +373,7 @@ export default function RecordingView() {
         message:
           error instanceof Error
             ? error.message
-            : "Import failed while preparing the encounter.",
+            : "Audio could not be loaded.",
       });
     } finally {
       setIsImporting(false);
@@ -401,41 +399,147 @@ export default function RecordingView() {
   const liveCaptureUnavailable = !liveCaptureAvailable;
   const captureStatusSummary =
     captureTransition === "starting"
-      ? "Recorder preflight is running against the default microphone."
+      ? "Getting the recorder ready on the default microphone."
       : captureTransition === "stopping"
-        ? "Finalizing the capture file before local transcription is queued."
+        ? "Saving the recording and preparing transcription."
         : isLoadingLiveCaptureStatus
-          ? "Checking local recorder prerequisites."
+          ? "Checking the recorder and microphone."
           : liveCaptureAvailable
-            ? "Recorder preflight passed. Default microphone only; import audio is still the safer demo path."
+            ? "Recorder is ready. Live recording uses the default microphone."
             : liveCaptureStatus?.issues[0] ??
-              "Live capture is unavailable on this machine. Import audio instead.";
+              "Live recording is unavailable on this machine.";
   const liveCaptureHeading =
     captureTransition === "starting"
-      ? "Starting Live Capture"
+      ? "Starting Recording"
       : captureTransition === "stopping"
-        ? "Finalizing Live Capture"
+        ? "Saving Recording"
         : isRecording
-          ? "Recording Session"
-          : "Live Capture";
+          ? "Recording In Progress"
+          : "Ready To Record";
   const liveCaptureDescription =
     captureTransition === "starting"
-      ? "Creating the local live-capture session shell before audio starts streaming."
+      ? "Opening the microphone and creating the session."
       : captureTransition === "stopping"
-        ? "Waiting for the recorder to stop cleanly so the audio file can move into transcription."
+        ? "Finishing the audio file before transcription starts."
         : isRecording
-          ? `Local capture in progress — ${formatDuration(duration)}`
-          : "Use live capture when you need a fresh recording. Imported and recorded sessions now queue the same local transcription path.";
+          ? `Recording from the default microphone - ${formatDuration(duration)}`
+          : "Start a new recording here. If you already have audio, load it in the next section.";
 
   return (
     <div className="recording-view">
       <div className="recording-hero">
         <div className="recording-status recording-status-primary">
-          <span className="section-kicker">Import-first intake</span>
-          <h2>Start from existing encounter audio</h2>
+          <span className="section-kicker">Live recording</span>
+          <h2>Start a new recording</h2>
           <p>
-            Imported audio creates a shared-contract review session shell with
-            explicit transcript, review, export, and consent state.
+            Record from the default microphone. If you already have session
+            audio, load it in the next section.
+          </p>
+        </div>
+
+        <div
+          className={`capture-status-card ${
+            liveCaptureUnavailable ? "error" : ""
+          }`}
+        >
+          <div className="capture-status-header">
+            <div>
+              <h3>
+                {liveCaptureAvailable
+                  ? "Live recording ready"
+                  : "Live recording unavailable"}
+              </h3>
+              <p>{captureStatusSummary}</p>
+            </div>
+            <button
+              type="button"
+              className="capture-status-button"
+              onClick={() => void refreshLiveCaptureStatus()}
+              disabled={
+                isLoadingLiveCaptureStatus || captureTransition !== "idle"
+              }
+            >
+              {isLoadingLiveCaptureStatus ? "Checking..." : "Refresh status"}
+            </button>
+          </div>
+
+          {liveCaptureStatus && (
+            <>
+              <div className="capture-status-meta">
+                <span className="status-chip">
+                  {liveCaptureStatus.recorder
+                    ? `Recorder ${liveCaptureStatus.recorder}`
+                    : "Recorder missing"}
+                </span>
+                <span className="status-chip">
+                  {formatMicrophoneAccess(liveCaptureStatus.microphoneAccess)}
+                </span>
+                <span className="status-chip">Default mic</span>
+              </div>
+
+              {liveCaptureStatus.issues.length > 0 && (
+                <ul className="capture-status-list capture-status-list--issues">
+                  {liveCaptureStatus.issues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              )}
+
+              {liveCaptureStatus.notes.length > 0 && (
+                <ul className="capture-status-list">
+                  {liveCaptureStatus.notes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="recording-status">
+        <h2>{liveCaptureHeading}</h2>
+        <p>{liveCaptureDescription}</p>
+        <div
+          className={`capture-notice ${
+            liveCaptureNotice.tone === "active"
+              ? "active"
+              : liveCaptureNotice.tone
+          }`}
+        >
+          {liveCaptureNotice.message}
+        </div>
+      </div>
+
+      <button
+        className={`record-button ${isRecording ? "recording" : ""}`}
+        onClick={toggleRecording}
+        disabled={
+          isImporting ||
+          captureTransition !== "idle" ||
+          (!isRecording && liveCaptureUnavailable)
+        }
+      >
+        <div className="record-button-inner" />
+      </button>
+
+      <div className="waveform">
+        {audioLevels.map((level, index) => (
+          <div
+            key={index}
+            className="waveform-bar"
+            style={{ height: `${Math.max(4, level * 70)}px` }}
+          />
+        ))}
+      </div>
+
+      <div className="recording-hero">
+        <div className="recording-status recording-status-primary">
+          <span className="section-kicker">Load session audio</span>
+          <h2>Use an existing recording</h2>
+          <p>
+            Choose a local audio file to create a review session and start
+            transcription.
           </p>
         </div>
 
@@ -510,11 +614,11 @@ export default function RecordingView() {
               onClick={importAudio}
               disabled={!canImport}
             >
-              {isImporting ? "Importing audio..." : "Import Audio File"}
+              {isImporting ? "Loading audio..." : "Load Audio File"}
             </button>
             <p className="intake-helper">
-              Supports common local audio formats. Imported audio is copied into
-              app storage and tracked as `audio_import`.
+              Supports common local audio formats. The file is copied into app
+              storage so the session stays available locally.
             </p>
           </div>
 
@@ -529,7 +633,7 @@ export default function RecordingView() {
           >
             <div className="import-status-header">
               <div>
-                <h3>Import status</h3>
+                <h3>Load status</h3>
                 <p>{importState.message}</p>
               </div>
               {importState.fileName && (
@@ -594,99 +698,6 @@ export default function RecordingView() {
           )}
         </div>
       </div>
-
-      <div className="recording-status">
-        <h2>{liveCaptureHeading}</h2>
-        <p>{liveCaptureDescription}</p>
-        <div
-          className={`capture-notice ${
-            liveCaptureNotice.tone === "active"
-              ? "active"
-              : liveCaptureNotice.tone
-          }`}
-        >
-          {liveCaptureNotice.message}
-        </div>
-      </div>
-
-      <div
-        className={`capture-status-card ${liveCaptureUnavailable ? "error" : ""}`}
-      >
-        <div className="capture-status-header">
-          <div>
-            <h3>
-              {liveCaptureAvailable
-                ? "Experimental live capture"
-                : "Live capture unavailable"}
-            </h3>
-            <p>{captureStatusSummary}</p>
-          </div>
-          <button
-            type="button"
-            className="capture-status-button"
-            onClick={() => void refreshLiveCaptureStatus()}
-            disabled={
-              isLoadingLiveCaptureStatus || captureTransition !== "idle"
-            }
-          >
-            {isLoadingLiveCaptureStatus ? "Checking..." : "Refresh status"}
-          </button>
-        </div>
-
-        {liveCaptureStatus && (
-          <>
-            <div className="capture-status-meta">
-              <span className="status-chip">
-                {liveCaptureStatus.recorder
-                  ? `Recorder ${liveCaptureStatus.recorder}`
-                  : "Recorder missing"}
-              </span>
-              <span className="status-chip">
-                {formatMicrophoneAccess(liveCaptureStatus.microphoneAccess)}
-              </span>
-              <span className="status-chip">Default mic only</span>
-            </div>
-
-            {liveCaptureStatus.issues.length > 0 && (
-              <ul className="capture-status-list capture-status-list--issues">
-                {liveCaptureStatus.issues.map((issue) => (
-                  <li key={issue}>{issue}</li>
-                ))}
-              </ul>
-            )}
-
-            {liveCaptureStatus.notes.length > 0 && (
-              <ul className="capture-status-list">
-                {liveCaptureStatus.notes.map((note) => (
-                  <li key={note}>{note}</li>
-                ))}
-              </ul>
-            )}
-          </>
-        )}
-      </div>
-
-      <button
-        className={`record-button ${isRecording ? "recording" : ""}`}
-        onClick={toggleRecording}
-        disabled={
-          isImporting ||
-          captureTransition !== "idle" ||
-          (!isRecording && liveCaptureUnavailable)
-        }
-      >
-        <div className="record-button-inner" />
-      </button>
-
-      <div className="waveform">
-        {audioLevels.map((level, index) => (
-          <div
-            key={index}
-            className="waveform-bar"
-            style={{ height: `${Math.max(4, level * 70)}px` }}
-          />
-        ))}
-      </div>
     </div>
   );
 }
@@ -733,8 +744,8 @@ function createUnavailableLiveCaptureStatus(message: string): LiveCaptureStatus 
     microphoneAccess: "unknown",
     issues: [message],
     notes: [
-      "Import audio remains available without the live microphone path.",
-      "Only the system default microphone is supported once live capture is enabled.",
+      "You can still load an audio file while live recording is unavailable.",
+      "Only the system default microphone is supported in this build.",
     ],
   };
 }
@@ -755,9 +766,9 @@ function formatClinicianLabel(value: string): string {
 function formatCaptureMode(value: CaptureMode): string {
   switch (value) {
     case "audio_import":
-      return "Imported audio";
+      return "Loaded audio";
     case "live_capture":
-      return "Live capture";
+      return "Live recording";
     case "manual_entry":
       return "Manual entry";
   }

@@ -10,11 +10,10 @@
     "dev:electron": "tsc -p electron/tsconfig.json && electron .",
     "setup:review-ml": "python3 -m pip install -r electron/requirements-review-ml.txt",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json --outDir .typecheck",
-    "build": "tsc -p electron/tsconfig.json && vite build && electron-builder",
+    "build": "node scripts/build-desktop.mjs",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@doctor-auditor/shared": "file:../shared",
     "@anthropic-ai/sdk": "^0.39.0",
     "better-sqlite3": "^11.7.0",
     "node-record-lpcm16": "^1.0.1",
@@ -23,6 +22,7 @@
     "whisper-node": "^1.1.0"
   },
   "devDependencies": {
+    "@doctor-auditor/shared": "file:../shared",
     "@types/better-sqlite3": "^7.6.12",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -36,5 +36,10 @@
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vitest": "^3.0.0"
+  },
+  "build": {
+    "artifactName": "doctor-auditor-${version}-${arch}.${ext}",
+    "electronVersion": "33.4.11",
+    "productName": "Doctor Auditor"
   }
 }

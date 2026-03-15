@@ -26,14 +26,24 @@ import type {
 
 const DESKTOP_ACTOR_ID = "desktop";
 
+interface LocalDatabaseOptions {
+  seedDemoData?: boolean;
+}
+
 export class LocalDatabase {
   private db: Database.Database;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: LocalDatabaseOptions = {}) {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.initializeSchema();
+
+    const shouldSeedDemoData =
+      options.seedDemoData ?? shouldAutoSeedDemoData();
+    if (shouldSeedDemoData) {
+      this.seedDemoDatasetIfEmpty();
+    }
   }
 
   createImportedSession(
@@ -623,6 +633,925 @@ export class LocalDatabase {
     this.db.close();
   }
 
+  private seedDemoDatasetIfEmpty(): void {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS session_count FROM sessions")
+      .get() as Record<string, unknown> | undefined;
+    const sessionCount = normalizeNumber(row?.session_count) ?? 0;
+
+    if (sessionCount > 0) {
+      return;
+    }
+
+    this.seedDemoDataset();
+  }
+
+  private seedDemoDataset(): void {
+    const policyVersion = "demo-policy-2026.03";
+
+    this.insertSeedSession(
+      {
+        id: "session-local-demo-001",
+        clinicianId: "Dr. Mira Patel",
+        encounterStartedAt: "2026-03-15T09:00:00Z",
+        encounterEndedAt: "2026-03-15T09:17:00Z",
+        captureMode: "audio_import",
+        transcriptStatus: "not_started",
+        reviewStatus: "not_started",
+        exportStatus: "not_requested",
+        createdAt: "2026-03-15T09:02:00Z",
+        updatedAt: "2026-03-15T09:21:30Z",
+        consent: {
+          recordedWithConsent: true,
+          exportAllowed: true,
+          remoteAssistAllowed: true,
+          policyVersion,
+          capturedAt: "2026-03-15T09:02:00Z",
+          capturedBy: DESKTOP_ACTOR_ID,
+        },
+      },
+      "/demo/mock-audio/inhaler-followup.wav"
+    );
+    this.replaceTranscriptSegments("session-local-demo-001", [
+      {
+        id: "segment-local-demo-001",
+        sessionId: "session-local-demo-001",
+        speakerLabel: "clinician",
+        text: "Walk me through how you've been using the inhaler since last week.",
+        startOffsetMs: 0,
+        endOffsetMs: 3500,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.92,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-002",
+        sessionId: "session-local-demo-001",
+        speakerLabel: "patient",
+        text: "I used it twice a day until I ran out on Tuesday.",
+        startOffsetMs: 3600,
+        endOffsetMs: 7100,
+        transcriptConfidence: 0.97,
+        speakerConfidence: 0.9,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-003",
+        sessionId: "session-local-demo-001",
+        speakerLabel: "clinician",
+        text: "What happened after it ran out?",
+        startOffsetMs: 7200,
+        endOffsetMs: 9100,
+        transcriptConfidence: 0.99,
+        speakerConfidence: 0.94,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-004",
+        sessionId: "session-local-demo-001",
+        speakerLabel: "patient",
+        text: "The pharmacy said the refill was delayed, and I got short of breath again.",
+        startOffsetMs: 9300,
+        endOffsetMs: 14300,
+        transcriptConfidence: 0.96,
+        speakerConfidence: 0.91,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-005",
+        sessionId: "session-local-demo-001",
+        speakerLabel: "clinician",
+        text: "Let's review when to call and how to restart it once the refill arrives.",
+        startOffsetMs: 14500,
+        endOffsetMs: 19000,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.93,
+        source: "audio_import",
+      },
+    ]);
+    this.updateSession("session-local-demo-001", {
+      transcriptStatus: "completed",
+    });
+    this.replaceFindings("session-local-demo-001", [
+      {
+        id: "finding-local-demo-001",
+        sessionId: "session-local-demo-001",
+        code: "medication-access-gap",
+        title: "Medication access barrier may need follow-up",
+        summary:
+          "The patient reported running out of the inhaler because the refill was delayed.",
+        status: "pending_review",
+        confidence: 0.86,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-001",
+            transcriptSegmentId: "segment-local-demo-002",
+            excerpt: "I used it twice a day until I ran out on Tuesday.",
+            startOffsetMs: 3600,
+            endOffsetMs: 7100,
+          },
+          {
+            id: "evidence-local-demo-002",
+            transcriptSegmentId: "segment-local-demo-004",
+            excerpt:
+              "The pharmacy said the refill was delayed, and I got short of breath again.",
+            startOffsetMs: 9300,
+            endOffsetMs: 14300,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: "2026-03-15T09:12:00Z",
+        updatedAt: "2026-03-15T09:12:00Z",
+      },
+      {
+        id: "finding-local-demo-002",
+        sessionId: "session-local-demo-001",
+        code: "return-precautions-check",
+        title: "Return precautions should be confirmed before export",
+        summary:
+          "The clinician began a callback plan, but reviewer confirmation is still pending.",
+        status: "pending_review",
+        confidence: 0.74,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-003",
+            transcriptSegmentId: "segment-local-demo-005",
+            excerpt:
+              "Let's review when to call and how to restart it once the refill arrives.",
+            startOffsetMs: 14500,
+            endOffsetMs: 19000,
+          },
+        ],
+        detectedBy: "local_llm",
+        createdAt: "2026-03-15T09:13:00Z",
+        updatedAt: "2026-03-15T09:13:00Z",
+      },
+    ]);
+    const sessionOneBundle = this.saveReviewDecision({
+      sessionId: "session-local-demo-001",
+      findingId: "finding-local-demo-001",
+      outcome: "accepted",
+      reviewedBy: "reviewer-maya",
+    });
+    if (!sessionOneBundle) {
+      throw new Error("Unable to seed session-local-demo-001 review decision.");
+    }
+    const sessionOneAssistRequest: ModelAssistRequest = {
+      id: "assist-request-local-demo-001",
+      sessionId: "session-local-demo-001",
+      findingId: "finding-local-demo-001",
+      requestedBy: "reviewer-maya",
+      requestedAt: "2026-03-15T09:17:30Z",
+      policyVersion,
+      policyMode: "minimized_no_raw_phi",
+      concern: {
+        findingCode: "medication-access-gap",
+        findingStatus: "accepted",
+        findingConfidence: 0.86,
+        evidenceSpanCount: 2,
+        speakerLabels: ["clinician", "patient"],
+        captureMode: "audio_import",
+        encounterDurationMs: 17 * 60 * 1000,
+      },
+    };
+    this.recordModelAssistRequested(sessionOneAssistRequest);
+    this.saveModelAssistReceipt({
+      request: sessionOneAssistRequest,
+      receipt: {
+        id: "assist-receipt-local-demo-001",
+        requestId: sessionOneAssistRequest.id,
+        sessionId: "session-local-demo-001",
+        findingId: "finding-local-demo-001",
+        status: "completed",
+        policyMode: "minimized_no_raw_phi",
+        requestedAt: "2026-03-15T09:17:30Z",
+        completedAt: "2026-03-15T09:17:31Z",
+        latencyMs: 684,
+        reviewerAction: "not_applied",
+        assessment: {
+          disposition: "expedited_human_review",
+          confidence: 0.81,
+          rationale:
+            "Medication access interruptions plus renewed shortness of breath should stay in the active reviewer lane.",
+          limitations: [
+            "Only minimized evidence spans were available.",
+            "No pharmacy fill history was attached.",
+          ],
+          provider: "doctor-auditor-assist-gateway",
+          model: "policy-heuristic-v1",
+          assessedAt: "2026-03-15T09:17:31Z",
+        },
+      },
+    });
+    this.setSessionTimestamps(
+      "session-local-demo-001",
+      "2026-03-15T09:02:00Z",
+      "2026-03-15T09:21:30Z"
+    );
+
+    this.insertSeedSession(
+      {
+        id: "session-local-demo-002",
+        clinicianId: "Dr. Ada Moreno",
+        encounterStartedAt: "2026-03-14T13:20:00Z",
+        encounterEndedAt: "2026-03-14T13:42:00Z",
+        captureMode: "live_capture",
+        transcriptStatus: "not_started",
+        reviewStatus: "not_started",
+        exportStatus: "not_requested",
+        createdAt: "2026-03-14T13:24:00Z",
+        updatedAt: "2026-03-14T14:05:00Z",
+        consent: {
+          recordedWithConsent: true,
+          exportAllowed: true,
+          remoteAssistAllowed: true,
+          policyVersion,
+          capturedAt: "2026-03-14T13:24:00Z",
+          capturedBy: DESKTOP_ACTOR_ID,
+        },
+      },
+      "/demo/mock-audio/discharge-handoff.wav"
+    );
+    this.replaceTranscriptSegments("session-local-demo-002", [
+      {
+        id: "segment-local-demo-006",
+        sessionId: "session-local-demo-002",
+        speakerLabel: "clinician",
+        text: "Before you leave, tell me what would make you call us tonight instead of waiting.",
+        startOffsetMs: 0,
+        endOffsetMs: 4100,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.95,
+        source: "live_capture",
+      },
+      {
+        id: "segment-local-demo-007",
+        sessionId: "session-local-demo-002",
+        speakerLabel: "patient",
+        text: "I would call if the dizziness comes back or if I cannot keep fluids down.",
+        startOffsetMs: 4300,
+        endOffsetMs: 8500,
+        transcriptConfidence: 0.97,
+        speakerConfidence: 0.92,
+        source: "live_capture",
+      },
+      {
+        id: "segment-local-demo-008",
+        sessionId: "session-local-demo-002",
+        speakerLabel: "clinician",
+        text: "Good. The cardiology handoff will mention the medication change and the two day callback.",
+        startOffsetMs: 8700,
+        endOffsetMs: 13200,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.95,
+        source: "live_capture",
+      },
+      {
+        id: "segment-local-demo-009",
+        sessionId: "session-local-demo-002",
+        speakerLabel: "patient",
+        text: "Please include that I already scheduled the lab draw for Monday morning.",
+        startOffsetMs: 13400,
+        endOffsetMs: 17100,
+        transcriptConfidence: 0.96,
+        speakerConfidence: 0.9,
+        source: "live_capture",
+      },
+    ]);
+    this.updateSession("session-local-demo-002", {
+      transcriptStatus: "completed",
+    });
+    this.replaceFindings("session-local-demo-002", [
+      {
+        id: "finding-local-demo-003",
+        sessionId: "session-local-demo-002",
+        code: "teach-back-confirmed",
+        title: "Teach-back for return precautions is present",
+        summary:
+          "The patient repeated back the callback triggers and escalation plan.",
+        status: "pending_review",
+        confidence: 0.88,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-004",
+            transcriptSegmentId: "segment-local-demo-007",
+            excerpt:
+              "I would call if the dizziness comes back or if I cannot keep fluids down.",
+            startOffsetMs: 4300,
+            endOffsetMs: 8500,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: "2026-03-14T13:46:00Z",
+        updatedAt: "2026-03-14T13:46:00Z",
+      },
+      {
+        id: "finding-local-demo-004",
+        sessionId: "session-local-demo-002",
+        code: "handoff-clarity",
+        title: "Downstream handoff summary was tightened during review",
+        summary:
+          "The reviewer wants the callback timing and medication change surfaced in the export packet.",
+        status: "pending_review",
+        confidence: 0.79,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-005",
+            transcriptSegmentId: "segment-local-demo-008",
+            excerpt:
+              "The cardiology handoff will mention the medication change and the two day callback.",
+            startOffsetMs: 8700,
+            endOffsetMs: 13200,
+          },
+          {
+            id: "evidence-local-demo-006",
+            transcriptSegmentId: "segment-local-demo-009",
+            excerpt:
+              "Please include that I already scheduled the lab draw for Monday morning.",
+            startOffsetMs: 13400,
+            endOffsetMs: 17100,
+          },
+        ],
+        detectedBy: "human",
+        createdAt: "2026-03-14T13:47:00Z",
+        updatedAt: "2026-03-14T13:47:00Z",
+      },
+    ]);
+    let sessionTwoBundle = this.saveReviewDecision({
+      sessionId: "session-local-demo-002",
+      findingId: "finding-local-demo-003",
+      outcome: "accepted",
+      reviewedBy: "quality-lead-jordan",
+    });
+    if (!sessionTwoBundle) {
+      throw new Error("Unable to seed session-local-demo-002 decision one.");
+    }
+    sessionTwoBundle = this.saveReviewDecision({
+      sessionId: "session-local-demo-002",
+      findingId: "finding-local-demo-004",
+      outcome: "accepted",
+      reviewedBy: "quality-lead-jordan",
+    });
+    if (!sessionTwoBundle) {
+      throw new Error("Unable to seed session-local-demo-002 decision two.");
+    }
+    const sessionTwoAssistRequest: ModelAssistRequest = {
+      id: "assist-request-local-demo-002",
+      sessionId: "session-local-demo-002",
+      findingId: "finding-local-demo-004",
+      requestedBy: "quality-lead-jordan",
+      requestedAt: "2026-03-14T13:55:00Z",
+      policyVersion,
+      policyMode: "minimized_no_raw_phi",
+      concern: {
+        findingCode: "handoff-clarity",
+        findingStatus: "accepted",
+        findingConfidence: 0.79,
+        evidenceSpanCount: 2,
+        speakerLabels: ["clinician", "patient"],
+        captureMode: "live_capture",
+        encounterDurationMs: 22 * 60 * 1000,
+      },
+    };
+    this.recordModelAssistRequested(sessionTwoAssistRequest);
+    this.saveModelAssistReceipt({
+      request: sessionTwoAssistRequest,
+      receipt: {
+        id: "assist-receipt-local-demo-002",
+        requestId: sessionTwoAssistRequest.id,
+        sessionId: "session-local-demo-002",
+        findingId: "finding-local-demo-004",
+        status: "completed",
+        policyMode: "minimized_no_raw_phi",
+        requestedAt: "2026-03-14T13:55:00Z",
+        completedAt: "2026-03-14T13:55:01Z",
+        latencyMs: 541,
+        reviewerAction: "not_applied",
+        assessment: {
+          disposition: "routine_review",
+          confidence: 0.77,
+          rationale:
+            "The handoff issue was already made explicit locally and can stay in the normal release lane.",
+          limitations: ["Remote assist did not inspect the final export wording."],
+          provider: "doctor-auditor-assist-gateway",
+          model: "policy-heuristic-v1",
+          assessedAt: "2026-03-14T13:55:01Z",
+        },
+      },
+    });
+    sessionTwoBundle = this.updateModelAssistReviewerAction({
+      sessionId: "session-local-demo-002",
+      receiptId: "assist-receipt-local-demo-002",
+      reviewerAction: "dismissed",
+    });
+    if (!sessionTwoBundle) {
+      throw new Error("Unable to seed session-local-demo-002 assist dismissal.");
+    }
+    sessionTwoBundle = this.saveApprovedExport({
+      id: "export-local-demo-001",
+      sessionId: "session-local-demo-002",
+      status: "approved",
+      summary:
+        "Approved discharge handoff packet with callback timing and return precautions clarified.",
+      findings: [
+        this.buildApprovedExportFinding(
+          sessionTwoBundle,
+          "finding-local-demo-003"
+        ),
+        this.buildApprovedExportFinding(
+          sessionTwoBundle,
+          "finding-local-demo-004"
+        ),
+      ],
+      approvedBy: "quality-lead-jordan",
+      approvedAt: "2026-03-14T14:03:00Z",
+      destination: "care-transition-hold",
+    });
+    if (!sessionTwoBundle) {
+      throw new Error("Unable to seed session-local-demo-002 export.");
+    }
+    this.setSessionTimestamps(
+      "session-local-demo-002",
+      "2026-03-14T13:24:00Z",
+      "2026-03-14T14:05:00Z"
+    );
+
+    this.insertSeedSession(
+      {
+        id: "session-local-demo-003",
+        clinicianId: "Dr. Noor Hassan",
+        encounterStartedAt: "2026-03-13T16:00:00Z",
+        encounterEndedAt: "2026-03-13T16:18:00Z",
+        captureMode: "audio_import",
+        transcriptStatus: "not_started",
+        reviewStatus: "not_started",
+        exportStatus: "not_requested",
+        createdAt: "2026-03-13T16:03:00Z",
+        updatedAt: "2026-03-13T16:16:00Z",
+        consent: {
+          recordedWithConsent: true,
+          exportAllowed: true,
+          remoteAssistAllowed: false,
+          policyVersion,
+          capturedAt: "2026-03-13T16:03:00Z",
+          capturedBy: DESKTOP_ACTOR_ID,
+        },
+      },
+      "/demo/mock-audio/followup-scheduling.wav"
+    );
+    this.replaceTranscriptSegments("session-local-demo-003", [
+      {
+        id: "segment-local-demo-010",
+        sessionId: "session-local-demo-003",
+        speakerLabel: "clinician",
+        text: "I want to make sure the imaging follow-up happens within the week.",
+        startOffsetMs: 0,
+        endOffsetMs: 3200,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.92,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-011",
+        sessionId: "session-local-demo-003",
+        speakerLabel: "patient",
+        text: "I can come Thursday morning, but I was not sure which number to call if it changes.",
+        startOffsetMs: 3400,
+        endOffsetMs: 7900,
+        transcriptConfidence: 0.97,
+        speakerConfidence: 0.89,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-012",
+        sessionId: "session-local-demo-003",
+        speakerLabel: "clinician",
+        text: "We'll add the scheduling line to the printed instructions before anything is exported.",
+        startOffsetMs: 8100,
+        endOffsetMs: 12300,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.93,
+        source: "audio_import",
+      },
+    ]);
+    this.updateSession("session-local-demo-003", {
+      transcriptStatus: "completed",
+    });
+    this.replaceFindings("session-local-demo-003", [
+      {
+        id: "finding-local-demo-005",
+        sessionId: "session-local-demo-003",
+        code: "followup-scheduling-clarity",
+        title: "Scheduling callback instructions need reviewer confirmation",
+        summary:
+          "The patient did not hear a clear callback number for rescheduling the follow-up imaging.",
+        status: "pending_review",
+        confidence: 0.75,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-007",
+            transcriptSegmentId: "segment-local-demo-011",
+            excerpt:
+              "I was not sure which number to call if it changes.",
+            startOffsetMs: 3400,
+            endOffsetMs: 7900,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: "2026-03-13T16:14:00Z",
+        updatedAt: "2026-03-13T16:14:00Z",
+      },
+    ]);
+    this.setSessionTimestamps(
+      "session-local-demo-003",
+      "2026-03-13T16:03:00Z",
+      "2026-03-13T16:16:00Z"
+    );
+
+    this.insertSeedSession(
+      {
+        id: "session-local-demo-004",
+        clinicianId: "Dr. Lin Reyes",
+        encounterStartedAt: "2026-03-13T09:00:00Z",
+        encounterEndedAt: "2026-03-13T09:14:00Z",
+        captureMode: "audio_import",
+        transcriptStatus: "in_progress",
+        reviewStatus: "not_started",
+        exportStatus: "not_requested",
+        createdAt: "2026-03-13T09:01:00Z",
+        updatedAt: "2026-03-13T09:08:00Z",
+        consent: {
+          recordedWithConsent: true,
+          exportAllowed: true,
+          remoteAssistAllowed: true,
+          policyVersion,
+          capturedAt: "2026-03-13T09:01:00Z",
+          capturedBy: DESKTOP_ACTOR_ID,
+        },
+      },
+      "/demo/mock-audio/awaiting-transcript.wav"
+    );
+
+    this.insertSeedSession(
+      {
+        id: "session-local-demo-005",
+        clinicianId: "Dr. Sofia Santos",
+        encounterStartedAt: "2026-03-12T17:40:00Z",
+        encounterEndedAt: "2026-03-12T17:52:00Z",
+        captureMode: "live_capture",
+        transcriptStatus: "failed",
+        reviewStatus: "not_started",
+        exportStatus: "not_requested",
+        createdAt: "2026-03-12T17:41:00Z",
+        updatedAt: "2026-03-12T17:53:00Z",
+        consent: {
+          recordedWithConsent: true,
+          exportAllowed: false,
+          remoteAssistAllowed: false,
+          policyVersion,
+          capturedAt: "2026-03-12T17:41:00Z",
+          capturedBy: DESKTOP_ACTOR_ID,
+        },
+      }
+    );
+
+    this.insertSeedSession(
+      {
+        id: "session-local-demo-006",
+        clinicianId: "Dr. Evan Kline",
+        encounterStartedAt: "2026-03-11T10:15:00Z",
+        encounterEndedAt: "2026-03-11T10:33:00Z",
+        captureMode: "audio_import",
+        transcriptStatus: "not_started",
+        reviewStatus: "not_started",
+        exportStatus: "not_requested",
+        createdAt: "2026-03-11T10:18:00Z",
+        updatedAt: "2026-03-11T11:05:00Z",
+        consent: {
+          recordedWithConsent: true,
+          exportAllowed: true,
+          remoteAssistAllowed: true,
+          policyVersion,
+          capturedAt: "2026-03-11T10:18:00Z",
+          capturedBy: DESKTOP_ACTOR_ID,
+        },
+      },
+      "/demo/mock-audio/cardiology-handoff.wav"
+    );
+    this.replaceTranscriptSegments("session-local-demo-006", [
+      {
+        id: "segment-local-demo-013",
+        sessionId: "session-local-demo-006",
+        speakerLabel: "patient",
+        text: "My weight went up three pounds, but I took the diuretic this morning.",
+        startOffsetMs: 0,
+        endOffsetMs: 3700,
+        transcriptConfidence: 0.97,
+        speakerConfidence: 0.9,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-014",
+        sessionId: "session-local-demo-006",
+        speakerLabel: "clinician",
+        text: "If the swelling gets worse tonight, call the on-call line and do not wait for clinic hours.",
+        startOffsetMs: 3900,
+        endOffsetMs: 8400,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.95,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-015",
+        sessionId: "session-local-demo-006",
+        speakerLabel: "clinician",
+        text: "The cardiology team will get a handoff that includes the dose increase and tomorrow's lab plan.",
+        startOffsetMs: 8600,
+        endOffsetMs: 13100,
+        transcriptConfidence: 0.98,
+        speakerConfidence: 0.94,
+        source: "audio_import",
+      },
+      {
+        id: "segment-local-demo-016",
+        sessionId: "session-local-demo-006",
+        speakerLabel: "patient",
+        text: "I heard the callback instructions, and I will weigh myself again in the morning.",
+        startOffsetMs: 13300,
+        endOffsetMs: 17200,
+        transcriptConfidence: 0.97,
+        speakerConfidence: 0.9,
+        source: "audio_import",
+      },
+    ]);
+    this.updateSession("session-local-demo-006", {
+      transcriptStatus: "completed",
+    });
+    this.replaceFindings("session-local-demo-006", [
+      {
+        id: "finding-local-demo-006",
+        sessionId: "session-local-demo-006",
+        code: "symptom-escalation-plan",
+        title: "Escalation instructions were documented clearly",
+        summary:
+          "Return precautions and the on-call path were stated clearly enough for export.",
+        status: "pending_review",
+        confidence: 0.83,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-008",
+            transcriptSegmentId: "segment-local-demo-014",
+            excerpt:
+              "If the swelling gets worse tonight, call the on-call line and do not wait for clinic hours.",
+            startOffsetMs: 3900,
+            endOffsetMs: 8400,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: "2026-03-11T10:37:00Z",
+        updatedAt: "2026-03-11T10:37:00Z",
+      },
+      {
+        id: "finding-local-demo-007",
+        sessionId: "session-local-demo-006",
+        code: "medication-risk",
+        title: "Diuretic dose change needed second review",
+        summary:
+          "The reviewer checked whether the dose change needed higher-acuity handling.",
+        status: "pending_review",
+        confidence: 0.7,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-009",
+            transcriptSegmentId: "segment-local-demo-013",
+            excerpt:
+              "My weight went up three pounds, but I took the diuretic this morning.",
+            startOffsetMs: 0,
+            endOffsetMs: 3700,
+          },
+        ],
+        detectedBy: "local_llm",
+        createdAt: "2026-03-11T10:38:00Z",
+        updatedAt: "2026-03-11T10:38:00Z",
+      },
+      {
+        id: "finding-local-demo-008",
+        sessionId: "session-local-demo-006",
+        code: "handoff-clarity",
+        title: "Cardiology handoff summary is ready for export",
+        summary:
+          "The local handoff summary includes the dose change and planned lab follow-up.",
+        status: "pending_review",
+        confidence: 0.85,
+        evidenceSpans: [
+          {
+            id: "evidence-local-demo-010",
+            transcriptSegmentId: "segment-local-demo-015",
+            excerpt:
+              "The cardiology team will get a handoff that includes the dose increase and tomorrow's lab plan.",
+            startOffsetMs: 8600,
+            endOffsetMs: 13100,
+          },
+        ],
+        detectedBy: "human",
+        createdAt: "2026-03-11T10:39:00Z",
+        updatedAt: "2026-03-11T10:39:00Z",
+      },
+    ]);
+    let sessionSixBundle = this.saveReviewDecision({
+      sessionId: "session-local-demo-006",
+      findingId: "finding-local-demo-006",
+      outcome: "accepted",
+      reviewedBy: "quality-lead-harper",
+    });
+    if (!sessionSixBundle) {
+      throw new Error("Unable to seed session-local-demo-006 decision one.");
+    }
+    const sessionSixAssistRequest: ModelAssistRequest = {
+      id: "assist-request-local-demo-003",
+      sessionId: "session-local-demo-006",
+      findingId: "finding-local-demo-007",
+      requestedBy: "quality-lead-harper",
+      requestedAt: "2026-03-11T10:42:00Z",
+      policyVersion,
+      policyMode: "minimized_no_raw_phi",
+      concern: {
+        findingCode: "medication-risk",
+        findingStatus: "pending_review",
+        findingConfidence: 0.7,
+        evidenceSpanCount: 1,
+        speakerLabels: ["patient"],
+        captureMode: "audio_import",
+        encounterDurationMs: 18 * 60 * 1000,
+      },
+    };
+    this.recordModelAssistRequested(sessionSixAssistRequest);
+    this.saveModelAssistReceipt({
+      request: sessionSixAssistRequest,
+      receipt: {
+        id: "assist-receipt-local-demo-003",
+        requestId: sessionSixAssistRequest.id,
+        sessionId: "session-local-demo-006",
+        findingId: "finding-local-demo-007",
+        status: "failed",
+        policyMode: "minimized_no_raw_phi",
+        requestedAt: "2026-03-11T10:42:00Z",
+        completedAt: "2026-03-11T10:42:02Z",
+        latencyMs: 1204,
+        errorCode: "gateway-timeout",
+      },
+    });
+    sessionSixBundle = this.saveReviewDecision({
+      sessionId: "session-local-demo-006",
+      findingId: "finding-local-demo-007",
+      outcome: "rejected",
+      reviewedBy: "quality-lead-harper",
+    });
+    if (!sessionSixBundle) {
+      throw new Error("Unable to seed session-local-demo-006 decision two.");
+    }
+    sessionSixBundle = this.saveReviewDecision({
+      sessionId: "session-local-demo-006",
+      findingId: "finding-local-demo-008",
+      outcome: "accepted",
+      reviewedBy: "quality-lead-harper",
+    });
+    if (!sessionSixBundle) {
+      throw new Error("Unable to seed session-local-demo-006 decision three.");
+    }
+    sessionSixBundle = this.saveApprovedExport({
+      id: "export-local-demo-002",
+      sessionId: "session-local-demo-006",
+      status: "sent",
+      summary:
+        "Sent cardiology handoff packet with escalation instructions and planned lab follow-up.",
+      findings: [
+        this.buildApprovedExportFinding(
+          sessionSixBundle,
+          "finding-local-demo-006"
+        ),
+        this.buildApprovedExportFinding(
+          sessionSixBundle,
+          "finding-local-demo-008"
+        ),
+      ],
+      approvedBy: "quality-lead-harper",
+      approvedAt: "2026-03-11T10:58:00Z",
+      destination: "compliance-archive",
+      sentAt: "2026-03-11T11:04:00Z",
+    });
+    if (!sessionSixBundle) {
+      throw new Error("Unable to seed session-local-demo-006 export.");
+    }
+    this.setSessionTimestamps(
+      "session-local-demo-006",
+      "2026-03-11T10:18:00Z",
+      "2026-03-11T11:05:00Z"
+    );
+  }
+
+  private insertSeedSession(
+    session: ReviewSession,
+    audioPath?: string
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO sessions (
+          id,
+          clinician_id,
+          organization_id,
+          encounter_started_at,
+          encounter_ended_at,
+          capture_mode,
+          transcript_status,
+          review_status,
+          export_status,
+          created_at,
+          updated_at,
+          consent_recorded,
+          consent_export_allowed,
+          consent_remote_assist_allowed,
+          consent_policy_version,
+          consent_captured_at,
+          consent_captured_by,
+          audio_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        session.id,
+        session.clinicianId,
+        session.organizationId ?? null,
+        session.encounterStartedAt,
+        session.encounterEndedAt ?? null,
+        session.captureMode,
+        session.transcriptStatus,
+        session.reviewStatus,
+        session.exportStatus,
+        session.createdAt,
+        session.updatedAt,
+        session.consent.recordedWithConsent ? 1 : 0,
+        session.consent.exportAllowed ? 1 : 0,
+        session.consent.remoteAssistAllowed ? 1 : 0,
+        session.consent.policyVersion,
+        session.consent.capturedAt ?? null,
+        session.consent.capturedBy ?? null,
+        audioPath ?? null
+      );
+
+    this.addAuditLog({
+      sessionId: session.id,
+      action: "session_created",
+      actorId: session.consent.capturedBy ?? DESKTOP_ACTOR_ID,
+      details: {
+        captureMode: session.captureMode,
+        transcriptStatus: session.transcriptStatus,
+        reviewStatus: session.reviewStatus,
+      },
+      timestamp: session.createdAt,
+    });
+  }
+
+  private setSessionTimestamps(
+    sessionId: string,
+    createdAt: string,
+    updatedAt: string
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE sessions
+         SET created_at = ?,
+             updated_at = ?,
+             consent_captured_at = COALESCE(consent_captured_at, ?)
+         WHERE id = ?`
+      )
+      .run(createdAt, updatedAt, createdAt, sessionId);
+  }
+
+  private buildApprovedExportFinding(
+    bundle: DesktopSessionBundle,
+    findingId: string
+  ): ApprovedExport["findings"][number] {
+    const finding = bundle.findings.find((item) => item.id === findingId);
+    if (!finding || !finding.reviewDecisionId) {
+      throw new Error(`Unable to build approved export finding for ${findingId}.`);
+    }
+
+    return {
+      findingId: finding.id,
+      code: finding.code,
+      title: finding.title,
+      summary: finding.summary,
+      reviewDecisionId: finding.reviewDecisionId,
+      evidenceExcerpts: finding.evidenceSpans.map((span) => ({
+        sourceEvidenceSpanId: span.id,
+        sourceTranscriptSegmentId: span.transcriptSegmentId,
+        excerpt: span.excerpt,
+        startOffsetMs: span.startOffsetMs,
+        endOffsetMs: span.endOffsetMs,
+      })),
+    };
+  }
+
   private createSessionShell(input: {
     captureMode: CaptureMode;
     clinicianId: string;
@@ -1199,6 +2128,15 @@ export class LocalDatabase {
       `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`
     );
   }
+}
+
+function shouldAutoSeedDemoData(): boolean {
+  const disabled = process.env.DOCTOR_AUDITOR_DISABLE_DEMO_SEED;
+  if (disabled === "1" || disabled === "true") {
+    return false;
+  }
+
+  return !process.env.VITEST && process.env.NODE_ENV !== "test";
 }
 
 function normalizeString(value: unknown): string | undefined {

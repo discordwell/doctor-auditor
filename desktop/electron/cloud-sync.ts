@@ -6,30 +6,26 @@ import type {
   ModelAssistRequest,
   SeriousnessAssessment,
 } from "@doctor-auditor/shared/local-review";
+import {
+  toCloudSyncDisplayConfig,
+  type CloudSyncConfig,
+  type CloudSyncDisplayConfig,
+} from "./cloud-config";
 
 interface AuthResponse {
   access_token: string;
 }
 
 export class CloudSyncClient {
-  private readonly apiBaseUrl: string;
-  private readonly email: string;
-  private readonly password: string;
-  private readonly role: string;
-  private readonly organizationId: string;
+  private readonly config: CloudSyncConfig;
   private authToken: string | null = null;
 
-  constructor() {
-    this.apiBaseUrl =
-      process.env.DOCTOR_AUDITOR_API_URL?.replace(/\/$/, "") ??
-      "http://127.0.0.1:8000/api";
-    this.email =
-      process.env.DOCTOR_AUDITOR_API_EMAIL ?? "reviewer@demo-health.local";
-    this.password =
-      process.env.DOCTOR_AUDITOR_API_PASSWORD ?? "demo-reviewer";
-    this.role = process.env.DOCTOR_AUDITOR_API_ROLE ?? "reviewer";
-    this.organizationId =
-      process.env.DOCTOR_AUDITOR_API_ORG ?? "demo-health";
+  constructor(config: CloudSyncConfig) {
+    this.config = config;
+  }
+
+  getConfiguration(): CloudSyncDisplayConfig {
+    return toCloudSyncDisplayConfig(this.config);
   }
 
   async requestSeriousnessAssessment(
@@ -86,7 +82,7 @@ export class CloudSyncClient {
       }
     }
 
-    const response = await fetch(`${this.apiBaseUrl}${path}`, {
+    const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
       ...options,
       headers,
     });
@@ -112,8 +108,8 @@ export class CloudSyncClient {
         {
           method: "POST",
           body: JSON.stringify({
-            email: this.email,
-            password: this.password,
+            email: this.config.email,
+            password: this.config.password,
           }),
         },
         false
@@ -126,10 +122,10 @@ export class CloudSyncClient {
         {
           method: "POST",
           body: JSON.stringify({
-            email: this.email,
-            password: this.password,
-            role: this.role,
-            organization_id: this.organizationId,
+            email: this.config.email,
+            password: this.config.password,
+            role: this.config.role,
+            organization_id: this.config.organizationId,
           }),
         },
         false

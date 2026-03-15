@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
-import type { AudioDevice, LiveCaptureStatus } from "../types/electron";
+import type {
+  AudioDevice,
+  CloudSyncDisplayConfig,
+  LiveCaptureStatus,
+} from "../types/electron";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -8,7 +12,11 @@ export default function SettingsView() {
   const [captureStatus, setCaptureStatus] = useState<LiveCaptureStatus | null>(
     null
   );
+  const [cloudConfig, setCloudConfig] = useState<CloudSyncDisplayConfig | null>(
+    null
+  );
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [cloudConfigError, setCloudConfigError] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
   const loadCaptureSettings = useCallback(async () => {
@@ -44,33 +52,93 @@ export default function SettingsView() {
     void loadCaptureSettings();
   }, [loadCaptureSettings]);
 
+  useEffect(() => {
+    if (!window.doctorAuditor) {
+      return;
+    }
+
+    void window.doctorAuditor.cloud
+      .getConfiguration()
+      .then((nextConfig) => {
+        setCloudConfig(nextConfig);
+        setCloudConfigError("");
+      })
+      .catch((error) => {
+        setCloudConfig(null);
+        setCloudConfigError(
+          error instanceof Error
+            ? error.message
+            : "Unable to inspect the remote boundary."
+        );
+      });
+  }, []);
+
   return (
     <div className="settings-view">
       <h2>Settings</h2>
 
       <div className="settings-section">
-        <h3>Workflow contract</h3>
+        <h3>Cloud connection</h3>
         <p>
-          Desktop intake now creates shared review sessions instead of the older
-          assessment-only records. Imported audio starts as `audio_import` with
-          a transcript state of `not_started` and a review state of
-          `not_started`.
+          Raw audio and transcripts stay on this machine. Approved exports and
+          Remote assist requests use the hosted API.
+        </p>
+
+        {cloudConfig && (
+          <>
+            <div className="capture-status-meta">
+              <span className="status-chip">
+                {formatCloudSyncSource(cloudConfig.apiBaseUrlSource)}
+              </span>
+              <span className="status-chip">Org {cloudConfig.organizationId}</span>
+              <span className="status-chip">Role {cloudConfig.role}</span>
+            </div>
+
+            <ul className="settings-device-list">
+              <li className="settings-device">
+                <span>API base</span>
+                <span>{cloudConfig.apiBaseUrl}</span>
+              </li>
+              <li className="settings-device">
+                <span>Auth email</span>
+                <span>{cloudConfig.email}</span>
+              </li>
+              <li className="settings-device">
+                <span>Organization</span>
+                <span>{cloudConfig.organizationId}</span>
+              </li>
+            </ul>
+          </>
+        )}
+
+        {!cloudConfig && (
+          <p className="settings-note">
+            {cloudConfigError || "Loading cloud connection..."}
+          </p>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <h3>Session workflow</h3>
+        <p>
+          Every recording or loaded audio file creates a review session. The
+          transcript, review progress, and export state are tracked together so
+          sessions are easy to resume later.
         </p>
         <ul className="settings-list">
-          <li>Consent is captured explicitly during import.</li>
+          <li>Consent is confirmed before a session is created.</li>
           <li>Audio stays local until a later approved export step exists.</li>
-          <li>Review, transcript, and export state all track the shared contract.</li>
+          <li>Transcript, review, and export progress stay in sync.</li>
         </ul>
       </div>
 
       <div className="settings-section">
         <div className="settings-section__header">
           <div>
-            <h3>Live capture diagnostics</h3>
+            <h3>Live recording</h3>
             <p>
-              Import audio is the current demo-path intake. Live capture remains
-              experimental even when recorder preflight passes, and the desktop
-              app intentionally stays on the system default microphone only.
+              Check whether the recorder and default microphone are ready for a
+              new recording.
             </p>
           </div>
           <button
@@ -96,8 +164,8 @@ export default function SettingsView() {
             <div className="capture-status-meta">
               <span className="status-chip">
                 {captureStatus.available
-                  ? "Experimental path available"
-                  : "Capture unavailable"}
+                  ? "Recording available"
+                  : "Recording unavailable"}
               </span>
               <span className="status-chip">
                 {captureStatus.recorder
@@ -129,10 +197,9 @@ export default function SettingsView() {
       </div>
 
       <div className="settings-section">
-        <h3>Default microphone path</h3>
+        <h3>Microphone</h3>
         <p>
-          Devices reported by the bounded live-capture layer. In-app device
-          selection is intentionally not exposed here.
+          The app records from the system default microphone.
         </p>
 
         {loadState === "loading" && (
@@ -145,8 +212,7 @@ export default function SettingsView() {
 
         {loadState === "ready" && devices.length === 0 && (
           <p className="settings-note">
-            No live-capture devices are exposed until the recorder prerequisites
-            pass. Import audio remains the recommended intake path.
+            No recording devices are available until the recorder checks pass.
           </p>
         )}
 
@@ -167,13 +233,12 @@ export default function SettingsView() {
       <div className="settings-section">
         <h3>Local storage</h3>
         <p>
-          Imported audio is copied into app-managed storage before the review
-          session shell is created. That keeps the local archive stable even if
-          the original file moves or is deleted.
+          Loaded audio is copied into app storage so sessions remain available
+          even if the original file moves or is deleted.
         </p>
         <p className="settings-note">
-          No cloud-analysis toggle is shown here because desktop no longer
-          exposes the retired assessment workflow.
+          Review data stays local unless you choose an approved export or use
+          Remote assist.
         </p>
       </div>
     </div>
@@ -194,5 +259,16 @@ function formatMicrophoneAccess(value: LiveCaptureStatus["microphoneAccess"]): s
       return "Permission status unavailable";
     case "unknown":
       return "Permission status unknown";
+  }
+}
+
+function formatCloudSyncSource(
+  value: CloudSyncDisplayConfig["apiBaseUrlSource"]
+): string {
+  switch (value) {
+    case "environment_override":
+      return "Environment override";
+    case "hosted_default":
+      return "Hosted default";
   }
 }

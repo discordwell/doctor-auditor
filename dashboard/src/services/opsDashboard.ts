@@ -28,6 +28,47 @@ export type FocusItem = {
   tone: "alert" | "watch" | "stable";
 };
 
+export type ReleaseQueueRow = {
+  id: string;
+  clinicianId: string;
+  sessionId: string;
+  status: ApprovedExportEnvelope["export"]["status"];
+  destination: string;
+  summary: string;
+  findingsCount: number;
+  owner: string;
+  updatedAt: string;
+  ageLabel: string;
+  tone: StatusTone;
+};
+
+export type ClinicianWorkload = {
+  clinicianId: string;
+  pendingCount: number;
+  draftCount: number;
+  approvedCount: number;
+  sentCount: number;
+  lastTouchedAt: string;
+};
+
+export type OpsIssueRow = {
+  id: string;
+  title: string;
+  detail: string;
+  sessionId: string;
+  timestamp: string;
+  tone: StatusTone;
+};
+
+export type ActivityFeedItem = {
+  id: string;
+  label: string;
+  title: string;
+  detail: string;
+  timestamp: string;
+  tone: StatusTone;
+};
+
 export type OperationsSnapshot = {
   approvedExports: ApprovedExportEnvelope[];
   opsEvents: OpsEvent[];
@@ -37,15 +78,22 @@ export type OverviewModel = {
   totalExports: number;
   approvedExports: number;
   sentExports: number;
+  draftExports: number;
   assistUsageCount: number;
   assistOverrideCount: number;
   redactionBlockCount: number;
   averageSendLatencyMs: number | null;
+  activeIssuesCount: number;
+  sentLast7Days: number;
   queueLanes: QueueLane[];
   focusItems: FocusItem[];
   weeklyActivity: WeeklyActivityPoint[];
   exportRows: ApprovedExportEnvelope[];
   recentOpsEvents: OpsEvent[];
+  releaseQueue: ReleaseQueueRow[];
+  clinicianWorkload: ClinicianWorkload[];
+  opsIssues: OpsIssueRow[];
+  activityFeed: ActivityFeedItem[];
 };
 
 export const EMPTY_OPERATIONS_SNAPSHOT: OperationsSnapshot = {
@@ -54,6 +102,17 @@ export const EMPTY_OPERATIONS_SNAPSHOT: OperationsSnapshot = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+const STATUS_LABELS: Record<string, string> = {
+  assist_requested: "Remote assist requested",
+  assist_completed: "Remote assist completed",
+  assist_failed: "Remote assist failed",
+  assist_overridden: "Remote assist overridden",
+  redaction_blocked: "Redaction blocked",
+  export_approved: "Export approved",
+  export_sent: "Export sent",
+};
 
 export function formatDateTime(value: string): string {
   return new Date(value).toLocaleString("en-US", {
@@ -64,24 +123,61 @@ export function formatDateTime(value: string): string {
   });
 }
 
+export function formatDuration(value: number | null): string {
+  if (value === null || Number.isNaN(value)) {
+    return "No data";
+  }
+
+  const totalMinutes = Math.max(Math.round(value / 60_000), 0);
+
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours < 24) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
+export function formatRelativeAge(
+  value: string,
+  now: Date = new Date()
+): string {
+  const timestamp = Date.parse(value);
+
+  if (Number.isNaN(timestamp)) {
+    return "Unknown age";
+  }
+
+  const elapsedMs = Math.max(now.getTime() - timestamp, 0);
+
+  if (elapsedMs < 60 * 60 * 1000) {
+    return `${Math.max(Math.round(elapsedMs / 60_000), 1)}m old`;
+  }
+
+  if (elapsedMs < DAY_MS) {
+    return `${Math.max(Math.round(elapsedMs / (60 * 60 * 1000)), 1)}h old`;
+  }
+
+  return `${Math.max(Math.round(elapsedMs / DAY_MS), 1)}d old`;
+}
+
 export function formatStatusLabel(value: string): string {
-  if (value === "assist_requested") {
-    return "Remote assist requested";
+  if (value in STATUS_LABELS) {
+    return STATUS_LABELS[value];
   }
 
-  if (value === "assist_completed") {
-    return "Remote assist completed";
-  }
-
-  if (value === "assist_failed") {
-    return "Remote assist failed";
-  }
-
-  if (value === "assist_overridden") {
-    return "Remote assist overridden";
-  }
-
-  return value.replace(/_/g, " ");
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 export function getExportTone(
@@ -168,6 +264,13 @@ function startOfUtcWeek(value: string | Date): Date {
   return copy;
 }
 
+function formatWeekLabel(value: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(value);
+}
+
 function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[] {
   const currentWeek = startOfUtcWeek(new Date());
   const weeks = Array.from({ length: 6 }, (_, index) => {
@@ -177,17 +280,20 @@ function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[
   });
 
   const points = weeks.map((week) => ({
-    period: week.toISOString(),
+    period: formatWeekLabel(week),
     exports: 0,
     assists: 0,
     blocks: 0,
   }));
-  const pointByWeek = new Map(points.map((point) => [point.period, point]));
+  const pointByWeek = new Map(
+    weeks.map((week, index) => [week.toISOString(), points[index]])
+  );
 
   snapshot.approvedExports.forEach((item) => {
     const point = pointByWeek.get(
       startOfUtcWeek(item.export.approvedAt).toISOString()
     );
+
     if (point) {
       point.exports += 1;
     }
@@ -195,6 +301,7 @@ function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[
 
   snapshot.opsEvents.forEach((item) => {
     const point = pointByWeek.get(startOfUtcWeek(item.recordedAt).toISOString());
+
     if (!point) {
       return;
     }
@@ -216,14 +323,17 @@ function averageSendLatencyMs(
 ): number | null {
   const latencies = approvedExports
     .filter(
-      (item) => item.export.status === "sent" && typeof item.export.sentAt === "string"
+      (item) =>
+        item.export.status === "sent" && typeof item.export.sentAt === "string"
     )
     .map((item) => {
       const sentAt = Date.parse(item.export.sentAt ?? "");
       const approvedAt = Date.parse(item.export.approvedAt);
+
       if (Number.isNaN(sentAt) || Number.isNaN(approvedAt)) {
         return null;
       }
+
       return Math.max(sentAt - approvedAt, 0);
     })
     .filter((item): item is number => item !== null);
@@ -233,6 +343,226 @@ function averageSendLatencyMs(
   }
 
   return latencies.reduce((sum, value) => sum + value, 0) / latencies.length;
+}
+
+function getExportUpdatedAt(item: ApprovedExportEnvelope): string {
+  if (item.export.status === "sent" && item.export.sentAt) {
+    return item.export.sentAt;
+  }
+
+  if (item.export.status === "draft") {
+    return item.attestation.reviewCompletedAt;
+  }
+
+  return item.export.approvedAt;
+}
+
+function getReleaseQueuePriority(
+  status: ApprovedExportEnvelope["export"]["status"]
+): number {
+  if (status === "approved") {
+    return 0;
+  }
+
+  if (status === "draft") {
+    return 1;
+  }
+
+  return 2;
+}
+
+function buildReleaseQueue(
+  snapshot: OperationsSnapshot,
+  now: Date
+): ReleaseQueueRow[] {
+  return snapshot.approvedExports
+    .filter((item) => item.export.status !== "sent")
+    .map((item) => {
+      const updatedAt = getExportUpdatedAt(item);
+      const approvedTimestamp = Date.parse(item.export.approvedAt);
+      const isAgingApproved =
+        item.export.status === "approved" &&
+        !Number.isNaN(approvedTimestamp) &&
+        now.getTime() - approvedTimestamp > DAY_MS;
+
+      return {
+        id: item.id,
+        clinicianId: item.session.clinicianId,
+        sessionId: item.session.localSessionId,
+        status: item.export.status,
+        destination: item.export.destination ?? "Destination not set",
+        summary: item.export.summary,
+        findingsCount: item.export.findings.length,
+        owner: item.attestation.reviewedBy,
+        updatedAt,
+        ageLabel: formatRelativeAge(updatedAt, now),
+        tone: isAgingApproved ? "attention" : getExportTone(item.export.status),
+      };
+    })
+    .sort((left, right) => {
+      const priorityDelta =
+        getReleaseQueuePriority(left.status) - getReleaseQueuePriority(right.status);
+
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return Date.parse(left.updatedAt) - Date.parse(right.updatedAt);
+    })
+    .slice(0, 6);
+}
+
+function buildClinicianWorkload(
+  snapshot: OperationsSnapshot
+): ClinicianWorkload[] {
+  const byClinician = new Map<string, ClinicianWorkload>();
+
+  snapshot.approvedExports.forEach((item) => {
+    const clinicianId = item.session.clinicianId;
+    const existing = byClinician.get(clinicianId) ?? {
+      clinicianId,
+      pendingCount: 0,
+      draftCount: 0,
+      approvedCount: 0,
+      sentCount: 0,
+      lastTouchedAt: getExportUpdatedAt(item),
+    };
+
+    if (item.export.status === "draft") {
+      existing.pendingCount += 1;
+      existing.draftCount += 1;
+    }
+
+    if (item.export.status === "approved") {
+      existing.pendingCount += 1;
+      existing.approvedCount += 1;
+    }
+
+    if (item.export.status === "sent") {
+      existing.sentCount += 1;
+    }
+
+    if (
+      Date.parse(getExportUpdatedAt(item)) > Date.parse(existing.lastTouchedAt)
+    ) {
+      existing.lastTouchedAt = getExportUpdatedAt(item);
+    }
+
+    byClinician.set(clinicianId, existing);
+  });
+
+  return Array.from(byClinician.values())
+    .sort((left, right) => {
+      if (right.pendingCount !== left.pendingCount) {
+        return right.pendingCount - left.pendingCount;
+      }
+
+      return Date.parse(right.lastTouchedAt) - Date.parse(left.lastTouchedAt);
+    })
+    .slice(0, 5);
+}
+
+function buildOpsIssues(
+  snapshot: OperationsSnapshot,
+  now: Date
+): OpsIssueRow[] {
+  const issues: OpsIssueRow[] = snapshot.opsEvents
+    .filter(
+      (item) => item.type === "assist_failed" || item.type === "redaction_blocked"
+    )
+    .map((item) => ({
+      id: item.id,
+      title: formatStatusLabel(item.type),
+      detail:
+        [
+          item.errorCode ? `Reason: ${item.errorCode}` : null,
+          item.actorId ? `Owner: ${item.actorId}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || "Needs follow-up",
+      sessionId: item.localSessionId,
+      timestamp: item.recordedAt,
+      tone: "attention",
+    }));
+
+  snapshot.approvedExports.forEach((item) => {
+    if (item.export.status !== "approved") {
+      return;
+    }
+
+    const approvedTimestamp = Date.parse(item.export.approvedAt);
+
+    if (Number.isNaN(approvedTimestamp)) {
+      return;
+    }
+
+    if (now.getTime() - approvedTimestamp <= 2 * DAY_MS) {
+      return;
+    }
+
+    issues.push({
+      id: `${item.id}-release-overdue`,
+      title: "Release overdue",
+      detail: `${item.export.destination ?? "Destination not set"} · ${formatRelativeAge(
+        item.export.approvedAt,
+        now
+      )}`,
+      sessionId: item.session.localSessionId,
+      timestamp: item.export.approvedAt,
+      tone: "attention",
+    });
+  });
+
+  return issues
+    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    .slice(0, 5);
+}
+
+function buildActivityFeed(snapshot: OperationsSnapshot): ActivityFeedItem[] {
+  const exportItems = snapshot.approvedExports.map((item) => {
+    const updatedAt = getExportUpdatedAt(item);
+
+    return {
+      id: `export-${item.id}`,
+      label:
+        item.export.status === "sent"
+          ? "Export sent"
+          : item.export.status === "approved"
+            ? "Ready to send"
+            : "In review",
+      title: item.export.summary,
+      detail: [
+        item.session.clinicianId,
+        item.session.localSessionId,
+        item.export.destination,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      timestamp: updatedAt,
+      tone: getExportTone(item.export.status),
+    };
+  });
+
+  const opsItems = snapshot.opsEvents.map((item) => ({
+    id: `ops-${item.id}`,
+    label: formatStatusLabel(item.type),
+    title: item.localSessionId,
+    detail:
+      [
+        item.actorId,
+        item.errorCode,
+        item.provider,
+        item.reviewerAction,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "System event",
+    timestamp: item.recordedAt,
+    tone: getOpsTone(item.type),
+  }));
+
+  return [...exportItems, ...opsItems]
+    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    .slice(0, 8);
 }
 
 export function buildOverviewModel(
@@ -264,67 +594,75 @@ export function buildOverviewModel(
     const approvedAt = Date.parse(item.export.approvedAt);
     return !Number.isNaN(approvedAt) && now.getTime() - approvedAt > 2 * DAY_MS;
   });
+  const sentLast7Days = sentExports.filter((item) => {
+    const sentAt = Date.parse(item.export.sentAt ?? item.export.approvedAt);
+    return !Number.isNaN(sentAt) && now.getTime() - sentAt <= WEEK_MS;
+  });
 
   return {
     totalExports: snapshot.approvedExports.length,
     approvedExports: approvedExports.length,
     sentExports: sentExports.length,
+    draftExports: draftExports.length,
     assistUsageCount: assistUsageEvents.length,
     assistOverrideCount: assistOverrides.length,
     redactionBlockCount: redactionBlocks.length,
     averageSendLatencyMs: averageSendLatencyMs(snapshot.approvedExports),
+    activeIssuesCount:
+      redactionBlocks.length + assistFailures.length + stuckApprovedExports.length,
+    sentLast7Days: sentLast7Days.length,
     queueLanes: [
       {
-        title: "Draft envelopes",
+        title: "In review",
         count: draftExports.length,
-        detail:
-          "Desktop-reviewed packets that have not been approved for downstream delivery yet.",
+        detail: "Reviewed sessions that still need approval before release.",
         tone: "active",
       },
       {
-        title: "Approved awaiting release",
+        title: "Ready to send",
         count: approvedExports.length,
-        detail:
-          "Approved envelopes waiting on manual downstream delivery or compliance release.",
+        detail: "Approved export packets waiting on downstream delivery.",
         tone: "attention",
       },
       {
-        title: "Privacy blocks",
+        title: "Blocked",
         count: redactionBlocks.length,
-        detail:
-          "Redaction or minimization issues blocked export or Remote assist work and require local review.",
+        detail: "Sessions blocked by privacy or redaction issues.",
         tone: "attention",
       },
     ],
     focusItems: [
       {
-        title: "Remote assist requests",
+        title: "Assist requests",
         count: assistUsageEvents.length,
-        detail:
-          "Reviewer-invoked Remote assist calls are logged as safe ops receipts without raw PHI.",
-        owner: "Desktop reviewers",
+        detail: "Sessions where reviewers explicitly asked for remote assist.",
+        owner: "Review team",
         tone: assistUsageEvents.length > 0 ? "watch" : "stable",
       },
       {
-        title: "Remote assist overrides",
+        title: "Assist overrides",
         count: assistOverrides.length,
-        detail:
-          "Human reviewers overruled a Remote assist recommendation while keeping the local decision authoritative.",
+        detail: "Calls where a reviewer overrode the assist outcome.",
         owner: "Quality leads",
         tone: assistOverrides.length > 0 ? "watch" : "stable",
       },
       {
-        title: "Remote assist or delivery follow-up",
+        title: "Ops follow-up",
         count: assistFailures.length + stuckApprovedExports.length,
-        detail:
-          "Failed Remote assist calls and aging approved exports are the only centralized follow-up queue.",
-        owner: "Ops and compliance",
+        detail: "Failures and aging releases that still need operator attention.",
+        owner: "Operations",
         tone:
-          assistFailures.length + stuckApprovedExports.length > 0 ? "alert" : "stable",
+          assistFailures.length + stuckApprovedExports.length > 0
+            ? "alert"
+            : "stable",
       },
     ],
     weeklyActivity: buildWeeklyActivity(snapshot),
     exportRows: sortApprovedExports(snapshot.approvedExports).slice(0, 5),
     recentOpsEvents: sortOpsEvents(snapshot.opsEvents).slice(0, 6),
+    releaseQueue: buildReleaseQueue(snapshot, now),
+    clinicianWorkload: buildClinicianWorkload(snapshot),
+    opsIssues: buildOpsIssues(snapshot, now),
+    activityFeed: buildActivityFeed(snapshot),
   };
 }

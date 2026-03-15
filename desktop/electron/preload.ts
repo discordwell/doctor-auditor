@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  CloudSyncDisplayConfig,
   CreateApprovedExportRequest,
   CreateApprovedExportResult,
   DesktopSessionSummary,
@@ -50,6 +51,10 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
         ipcRenderer.removeListener("audio:capture-error", listener);
       };
     },
+  },
+  cloud: {
+    getConfiguration: () =>
+      ipcRenderer.invoke("cloud:get-config") as Promise<CloudSyncDisplayConfig>,
   },
   session: {
     getAll: () => ipcRenderer.invoke("session:get-all"),

@@ -15,6 +15,7 @@ import type {
   OpsEvent,
 } from "@doctor-auditor/shared/cloud";
 import { AudioCapture } from "./audio-capture";
+import { resolveCloudSyncConfig } from "./cloud-config";
 import { CloudSyncClient } from "./cloud-sync";
 import { LocalDatabase } from "./database";
 import { PythonReviewMlClient } from "./review-ml";
@@ -95,10 +96,13 @@ async function loadWindowContent(window: BrowserWindow): Promise<void> {
 
 async function initializeServices(): Promise<void> {
   const userDataPath = app.getPath("userData");
+  const cloudSyncConfig = resolveCloudSyncConfig({
+    env: process.env,
+  });
 
   db = new LocalDatabase(path.join(userDataPath, "doctor-auditor.db"));
   audioCapture = new AudioCapture();
-  cloudSync = new CloudSyncClient();
+  cloudSync = new CloudSyncClient(cloudSyncConfig);
   reviewRuntime = new ReviewRuntimeService(new PythonReviewMlClient());
 
   // Keep Electron main limited to IPC and persistence. STT, diarization,
@@ -586,7 +590,7 @@ function registerIpcHandlers(): void {
     if (!audioCapture) throw new Error("Audio capture not initialized");
     if (!db) throw new Error("Database not initialized");
     if (!activeRecordingSessionId) {
-      throw new Error("No active live capture session.");
+      throw new Error("No active recording session.");
     }
 
     const sessionId = activeRecordingSessionId;
@@ -619,7 +623,7 @@ function registerIpcHandlers(): void {
         failActiveRecordingSession(
           error instanceof Error
             ? error.message
-            : "Live capture could not be finalized."
+            : "Recording could not be finalized."
         );
       }
 
@@ -635,6 +639,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("audio:get-capture-status", async () => {
     if (!audioCapture) throw new Error("Audio capture not initialized");
     return audioCapture.getCaptureStatus();
+  });
+
+  ipcMain.handle("cloud:get-config", async () => {
+    if (!cloudSync) throw new Error("Cloud sync client unavailable");
+    return cloudSync.getConfiguration();
   });
 
   ipcMain.handle("session:get-all", async () => {

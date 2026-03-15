@@ -21,6 +21,34 @@ afterEach(() => {
 });
 
 describe("LocalDatabase review artifacts", () => {
+  it("can bootstrap a local demo dataset for mocked desktop flows", () => {
+    const db = createDatabase(true);
+
+    const sessions = db.getAllSessions();
+    expect(sessions).toHaveLength(6);
+    expect(sessions[0]?.session.id).toBe("session-local-demo-001");
+    expect(sessions[0]?.session.reviewStatus).toBe("in_review");
+
+    const activeReview = db.getSession("session-local-demo-001");
+    expect(activeReview?.transcriptSegments).toHaveLength(5);
+    expect(activeReview?.findings).toHaveLength(2);
+    expect(activeReview?.modelAssistReceipts[0]?.status).toBe("completed");
+
+    const approvedExport = db.getSession("session-local-demo-002");
+    expect(approvedExport?.session.exportStatus).toBe("approved");
+    expect(approvedExport?.approvedExports).toHaveLength(1);
+    expect(approvedExport?.modelAssistReceipts[0]?.reviewerAction).toBe(
+      "dismissed"
+    );
+
+    const sentExport = db.getSession("session-local-demo-006");
+    expect(sentExport?.session.exportStatus).toBe("sent");
+    expect(sentExport?.approvedExports[0]?.status).toBe("sent");
+    expect(sentExport?.modelAssistReceipts[0]?.status).toBe("failed");
+
+    db.close();
+  });
+
   it("keeps review and export gated until findings are persisted", () => {
     const db = createDatabase();
     const session = db.createImportedSession({
@@ -535,10 +563,12 @@ describe("LocalDatabase review artifacts", () => {
   });
 });
 
-function createDatabase(): LocalDatabase {
+function createDatabase(seedDemoData = false): LocalDatabase {
   const directory = mkdtempSync(
     path.join(tmpdir(), "doctor-auditor-database-test-")
   );
   cleanupPaths.push(directory);
-  return new LocalDatabase(path.join(directory, "doctor-auditor.sqlite"));
+  return new LocalDatabase(path.join(directory, "doctor-auditor.sqlite"), {
+    seedDemoData,
+  });
 }

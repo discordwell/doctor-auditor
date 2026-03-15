@@ -496,9 +496,9 @@ function formatClinicianLabel(clinicianId: string): string {
 function formatCaptureMode(value: CaptureMode): string {
   switch (value) {
     case "audio_import":
-      return "Imported audio";
+      return "Loaded audio";
     case "live_capture":
-      return "Live capture";
+      return "Live recording";
     case "manual_entry":
       return "Manual entry";
   }
@@ -571,7 +571,7 @@ function getSessionState(sessionSummary: DesktopSessionSummary): SessionState {
       label: "Needs follow-up",
       tone: "warning",
       detail:
-        "Live capture or transcription failed for this encounter. Validate the local audio asset or fall back to the import-first path before relying on it downstream.",
+        "Recording or transcription failed for this encounter. Check the local audio file before continuing review.",
     };
   }
 

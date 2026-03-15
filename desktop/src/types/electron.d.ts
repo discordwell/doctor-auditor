@@ -91,6 +91,16 @@ export interface LiveCaptureStatus {
   notes: string[];
 }
 
+export type CloudSyncConfigSource = "environment_override" | "hosted_default";
+
+export interface CloudSyncDisplayConfig {
+  apiBaseUrl: string;
+  apiBaseUrlSource: CloudSyncConfigSource;
+  email: string;
+  role: string;
+  organizationId: string;
+}
+
 export interface LiveCaptureError {
   message: string;
   session: DesktopSessionSummary | null;
@@ -124,6 +134,9 @@ export interface DoctorAuditorAPI {
     getCaptureStatus: () => Promise<LiveCaptureStatus>;
     onAudioLevel: (callback: (level: number) => void) => () => void;
     onCaptureError: (callback: (error: LiveCaptureError) => void) => () => void;
+  };
+  cloud: {
+    getConfiguration: () => Promise<CloudSyncDisplayConfig>;
   };
   session: {
     getAll: () => Promise<DesktopSessionSummary[]>;
