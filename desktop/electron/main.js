@@ -90,10 +90,32 @@ async function initializeServices() {
         db.replaceTranscriptSegments(job.sessionId, segments);
         const completedSummary = db.updateSession(job.sessionId, {
             transcriptStatus: segments.length > 0 ? "completed" : "failed",
-            reviewStatus: segments.length > 0 ? "ready" : "not_started",
+            reviewStatus: "not_started",
         });
         if (completedSummary) {
             emitSessionChanged(completedSummary);
+        }
+    });
+    reviewRuntime.on("analysis-completed", ({ findings, job }) => {
+        if (!db) {
+            return;
+        }
+        db.replaceFindings(job.sessionId, findings);
+        const sessionSummary = db.getSessionSummary(job.sessionId);
+        if (sessionSummary) {
+            emitSessionChanged(sessionSummary);
+        }
+    });
+    reviewRuntime.on("analysis-failed", ({ error, job }) => {
+        console.error("Transcript analysis pipeline failed:", error);
+        if (!db) {
+            return;
+        }
+        const sessionSummary = db.updateSession(job.sessionId, {
+            reviewStatus: "not_started",
+        });
+        if (sessionSummary) {
+            emitSessionChanged(sessionSummary);
         }
     });
     reviewRuntime.on("transcription-failed", ({ error, job }) => {
@@ -201,7 +223,7 @@ function getFindingOrThrow(bundle, findingId) {
 }
 function buildMinimizedConcernPacket(bundle, finding) {
     if (finding.evidenceSpans.length === 0) {
-        throw new Error("Remote second opinion requires at least one linked evidence span.");
+        throw new Error("Remote assist requires at least one linked evidence span.");
     }
     const speakerLabels = Array.from(new Set(finding.evidenceSpans
         .map((span) => bundle.transcriptSegments.find((segment) => segment.id === span.transcriptSegmentId)?.speakerLabel)
@@ -484,7 +506,7 @@ function registerIpcHandlers() {
             throw new Error("Cloud sync client unavailable");
         const bundle = getSessionBundleOrThrow(request.sessionId);
         if (!bundle.session.consent.remoteAssistAllowed) {
-            throw new Error("Remote second opinion is not permitted for this session.");
+            throw new Error("Remote assist is not permitted for this session.");
         }
         const finding = getFindingOrThrow(bundle, request.findingId);
         const assistRequest = buildModelAssistRequest(bundle, finding);

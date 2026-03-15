@@ -4,7 +4,7 @@
 
 This is the repo's ready-to-run launchboard for parallel Codex agents.
 
-Run agents in waves, not all-at-once chaos. Within a wave, packets are designed to avoid file overlap. Do not start the next wave until the gate for the current wave is green.
+Run agents in waves, not ad hoc. Within a wave, packets are designed to avoid file overlap. Do not start the next wave until the gate for the current wave is green.
 
 For named launch prompts, use [NAMED_AGENTS.md](/Users/discordwell/Projects/doctor-auditor/docs/NAMED_AGENTS.md).
 
@@ -12,14 +12,16 @@ This is a live repo, not a blank scaffold exercise. Every agent should inspect t
 
 ## Current repo reality
 
-The scaffold currently has:
+The merged repo already has:
 
-- `desktop/` for Electron + React
-- `server/` for FastAPI
-- `dashboard/` for React
-- `shared/` for shared TypeScript types
+- `desktop/` with Electron, React, local SQLite persistence, import flow, session history, and review UI
+- an embedded Python review worker under `desktop/electron/` instead of a top-level `worker/` service
+- `server/` with FastAPI routes for auth, approved exports, ops events, demo seed, and assist gateway only
+- `dashboard/` with approved-export and ops-boundary views
+- `shared/` with review-centric TypeScript contracts
+- npm workspaces at the repo root, not `pnpm`
 
-It does not yet have a Python worker service or stable evaluation fixtures. The first packets below are shaped around the current scaffold, not the ideal future architecture.
+The first wave below is a setup reset. Do not launch feature agents until it is merged.
 
 ## Live repo workflow
 
@@ -35,41 +37,40 @@ If two agents share one checkout, you are manufacturing conflicts for no gain.
 
 ## Global gates
 
-### Gate A: contracts stable
+### Gate A: setup stable
 
 Required:
 
-- contract packet merged
-- `npm run check:shared`
-- `npm run check:contracts`
+- `Surveyor` merged
+- `Foundry` merged
+- `npm run check:all`
+- `docker compose build dashboard server`
 
 ### Gate B: feature lanes stable
 
 Required:
 
-- all active wave packets merged
-- `npm run check:desktop`
-- `npm run check:dashboard`
-- `npm run check:server`
+- `Miner`, `Pulse`, `Relay`, and `Harbor` merged
+- `npm run check:all`
 
 ### Gate C: integration stable
 
 Required:
 
-- integration packet merged
+- `Stitch` merged
 - `npm run check:all`
 
 Do not merge a wave just because each branch "mostly works" in isolation.
 
 ## Wave 0
 
-This wave is serialized. Only one contracts-oriented agent should run here.
+This wave is serialized. Launch `Surveyor` first, then `Foundry`.
 
-### Packet C0: shared domain reset
+### Packet C0: repo docs and board reset
 
 Branch:
 
-- `codex/contracts-shared-domain-reset`
+- `codex/contracts-rebaseline-board`
 
 Lane:
 
@@ -77,457 +78,18 @@ Lane:
 
 Goal:
 
-- replace the current score-heavy shared model with an auditable review model that future desktop, server, and dashboard agents can build against
+- rewrite repo docs to current reality and publish the new wave layout
 
 Allowed files:
 
-- `shared/**`
-- `ARCHITECTURE.md`
+- `AGENTS.md`
+- `docs/**`
 - `PLAN.md`
+- `ARCHITECTURE.md`
 
 Forbidden files:
 
-- `desktop/**`
-- `server/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:shared`
-- `npm run check:contracts`
-
-Acceptance:
-
-- shared types support sessions, transcript segments, findings, evidence spans, review decisions, and approved export payloads
-- risky terms like malpractice ranking or impairment inference are removed from shared contracts
-- docs reflect the new contract surface
-
-Prompt:
-
-```text
-Lane: contracts
-Goal: Replace the current score-centric shared model with an auditable review model for sessions, transcript segments, findings, evidence, review decisions, and approved exports.
-Allowed files: shared/**, ARCHITECTURE.md, PLAN.md
-Forbidden files: desktop/**, server/**, dashboard/**, package.json
-Required checks: npm run check:shared && npm run check:contracts
-Acceptance: shared types are aligned to evidence-backed review workflows and no longer force malpractice-risk ranking semantics into downstream lanes.
-Handoff: summarize changed contracts, docs updated, checks run, and any migration impacts on desktop/server/dashboard.
-```
-
-## Wave 1
-
-Start Wave 1 only after Wave 0 is merged.
-
-### Packet S1: server review API skeleton
-
-Branch:
-
-- `codex/server-review-api-skeleton`
-
-Lane:
-
-- `server`
-
-Goal:
-
-- replace or supplement the current risk-oriented API with review-oriented endpoints and schemas that match the new shared contract
-
-Allowed files:
-
-- `server/**`
-
-Forbidden files:
-
-- `shared/**`
-- `desktop/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:server`
-
-Acceptance:
-
-- server exposes health plus clear placeholder endpoints for sessions, findings, and approved exports
-- Pydantic schemas match the new contract direction
-- routes are internally consistent even if persistence is still mocked
-
-Prompt:
-
-```text
-Lane: server
-Goal: Refactor the FastAPI surface toward review-oriented endpoints for sessions, findings, and approved exports using the new shared contract.
-Allowed files: server/**
-Forbidden files: shared/**, desktop/**, dashboard/**, package.json
-Required checks: npm run check:server
-Acceptance: FastAPI routes and server schemas are coherent, compile cleanly, and no longer assume malpractice ranking as the only output.
-Handoff: summarize endpoints added or changed, schemas used, checks run, and any contract gaps discovered.
-```
-
-### Packet D1: desktop import-first recording flow
-
-Branch:
-
-- `codex/desktop-import-first-flow`
-
-Lane:
-
-- `desktop`
-
-Goal:
-
-- make the desktop app useful without live capture by supporting upload-first encounter ingestion and basic session creation UI
-
-Allowed files:
-
-- `desktop/**`
-
-Forbidden files:
-
-- `shared/**`
-- `server/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:desktop`
-
-Acceptance:
-
-- user can choose a local audio file from the desktop app
-- UI shows import status and creates a local session shell
-- feature works without any server dependency
-
-Prompt:
-
-```text
-Lane: desktop
-Goal: Add an upload-first encounter import flow so the desktop app is useful even before live capture is production-ready.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: a user can select a local audio file, see import progress or status, and create a local session shell from the desktop UI.
-Handoff: summarize files changed, checks run, and any schema assumptions that need contract review.
-```
-
-### Packet D2: desktop session history shell
-
-Branch:
-
-- `codex/desktop-session-history-shell`
-
-Lane:
-
-- `desktop`
-
-Goal:
-
-- make the history view useful with local session cards, filter state, and a clean empty state
-
-Allowed files:
-
-- `desktop/**`
-
-Forbidden files:
-
-- `shared/**`
-- `server/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:desktop`
-
-Acceptance:
-
-- history view renders a local session list with stable mock or local-db-backed data
-- empty/loading/error states exist
-- no overlap with import flow files if possible
-
-Prompt:
-
-```text
-Lane: desktop
-Goal: Build out the local session history view with useful states and session cards for encounter review.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: history view shows a local session list with clean empty/loading/error states and is ready for later transcript drill-down.
-Handoff: summarize files changed, checks run, and any dependencies on session contract fields.
-```
-
-### Packet DB1: dashboard review overview shell
-
-Branch:
-
-- `codex/dashboard-review-overview-shell`
-
-Lane:
-
-- `dashboard`
-
-Goal:
-
-- reshape the dashboard away from raw risk ranking and toward review/export activity, flagged findings, and session throughput
-
-Allowed files:
-
-- `dashboard/**`
-
-Forbidden files:
-
-- `shared/**`
-- `server/**`
-- `desktop/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:dashboard`
-
-Acceptance:
-
-- overview page uses placeholder review-oriented metrics
-- UI does not hard-code malpractice ranking language everywhere
-- page structure is ready for later API wiring
-
-Prompt:
-
-```text
-Lane: dashboard
-Goal: Reframe the overview dashboard around review activity, flagged findings, and approved exports instead of pure malpractice scoring.
-Allowed files: dashboard/**
-Forbidden files: shared/**, server/**, desktop/**, package.json
-Required checks: npm run check:dashboard
-Acceptance: the overview view is coherent with a review-tool story and is ready to consume API data later.
-Handoff: summarize files changed, checks run, and any hard-coded assumptions that still need contract cleanup.
-```
-
-## Wave 2
-
-Start Wave 2 only after Wave 1 is merged and Gate B is green.
-
-### Packet D3: desktop transcript and evidence viewer
-
-Branch:
-
-- `codex/desktop-transcript-evidence-viewer`
-
-Lane:
-
-- `desktop`
-
-Goal:
-
-- add a transcript drill-down UI with evidence-linked findings and reviewer actions
-
-Allowed files:
-
-- `desktop/**`
-
-Forbidden files:
-
-- `shared/**`
-- `server/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:desktop`
-
-Acceptance:
-
-- transcript segments render with timestamps
-- findings can highlight linked evidence spans
-- reviewer can accept, reject, or mark uncertain in UI state
-
-Prompt:
-
-```text
-Lane: desktop
-Goal: Build a transcript drill-down view with evidence-linked findings and reviewer actions.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: transcript segments, evidence links, and accept/reject/uncertain review controls all exist in the desktop UI.
-Handoff: summarize files changed, checks run, and any assumptions about finding or evidence data shapes.
-```
-
-### Packet S2: server approved-export flow
-
-Branch:
-
-- `codex/server-approved-export-flow`
-
-Lane:
-
-- `server`
-
-Goal:
-
-- implement the reviewed export path and keep the server surface clearly limited to approved export payloads
-
-Allowed files:
-
-- `server/**`
-
-Forbidden files:
-
-- `shared/**`
-- `desktop/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:server`
-
-Acceptance:
-
-- server has an explicit approved-export ingestion path
-- raw transcript or raw audio fields are not accepted by those schemas
-- persistence may remain simple, but the boundary is explicit
-
-Prompt:
-
-```text
-Lane: server
-Goal: Add the approved-export ingestion path and keep the server boundary explicitly limited to reviewed export payloads.
-Allowed files: server/**
-Forbidden files: shared/**, desktop/**, dashboard/**, package.json
-Required checks: npm run check:server
-Acceptance: the server accepts approved export payloads only and rejects shapes that imply raw transcript or audio upload.
-Handoff: summarize endpoint behavior, schema boundaries, checks run, and any contract risks discovered.
-```
-
-### Packet DB2: dashboard API integration
-
-Branch:
-
-- `codex/dashboard-api-integration`
-
-Lane:
-
-- `dashboard`
-
-Goal:
-
-- wire the overview and assessments views to the server API shape, with local fallback fixtures if the API is incomplete
-
-Allowed files:
-
-- `dashboard/**`
-
-Forbidden files:
-
-- `shared/**`
-- `server/**`
-- `desktop/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:dashboard`
-
-Acceptance:
-
-- dashboard API client matches the current server contract
-- views can render fetched or mocked review-oriented data
-- loading and failure states exist
-
-Prompt:
-
-```text
-Lane: dashboard
-Goal: Wire dashboard views to the current server API shape, using local fixtures only as a fallback for incomplete endpoints.
-Allowed files: dashboard/**
-Forbidden files: shared/**, server/**, desktop/**, package.json
-Required checks: npm run check:dashboard
-Acceptance: dashboard API integration is coherent, views handle loading and failure states, and the UI reflects review-oriented data instead of hard-coded scores.
-Handoff: summarize files changed, checks run, and any contract mismatches found.
-```
-
-### Packet D4: desktop live-capture stabilization spike
-
-Branch:
-
-- `codex/desktop-live-capture-spike`
-
-Lane:
-
-- `desktop`
-
-Goal:
-
-- isolate live microphone capture problems without blocking the import-first path
-
-Allowed files:
-
-- `desktop/**`
-
-Forbidden files:
-
-- `shared/**`
-- `server/**`
-- `dashboard/**`
-- `package.json`
-
-Required checks:
-
-- `npm run check:desktop`
-
-Acceptance:
-
-- document current live-capture behavior and failure modes
-- improve device selection, start/stop handling, or recorder stability if possible
-- if stability is still weak, leave the feature clearly marked as experimental
-
-Prompt:
-
-```text
-Lane: desktop
-Goal: Stabilize or clearly bound the live microphone capture path without blocking the upload-first workflow.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: live capture behavior is either improved or explicitly bounded as experimental with visible failure handling.
-Handoff: summarize what improved, what still fails, checks run, and whether the feature is demo-path ready or experimental only.
-```
-
-## Wave 3
-
-Start Wave 3 only after Wave 2 is merged and Gate B is green again.
-
-### Packet I1: integration and drift cleanup
-
-Branch:
-
-- `codex/integration-wave-cleanup`
-
-Lane:
-
-- `contracts`
-
-Goal:
-
-- clean up drift across lanes, normalize terminology, and ensure the repo passes full validation
-
-Allowed files:
-
-- `desktop/**`
-- `server/**`
-- `dashboard/**`
-- `shared/**`
-- root workflow docs
-
-Forbidden files:
-
-- `package-lock.json` unless dependency changes are intentional
+- feature code outside the files above
 
 Required checks:
 
@@ -535,30 +97,366 @@ Required checks:
 
 Acceptance:
 
-- cross-lane terminology is consistent
-- stale score-centric naming is reduced where practical
-- aggregate validation passes
+- repo docs describe npm workspaces instead of `pnpm`
+- docs describe the embedded Python worker under `desktop/electron/`
+- docs describe that desktop import/history/review UI already exists
+- docs describe that server owns approved exports, ops events, auth, demo seed, and assist gateway only
+- docs make explicit that review-first contracts stay, insurer scoring is downstream, and the server ingests approved exports plus insurer-safe derived features instead of raw session bundles
+- the launchboard and named-agent prompts below replace the old wave packets
 
 Prompt:
 
 ```text
 Lane: contracts
-Goal: Perform cross-lane integration cleanup after the feature waves land, resolve terminology drift, and make the repo coherent.
-Allowed files: desktop/**, server/**, dashboard/**, shared/**, AGENTS.md, docs/**, ARCHITECTURE.md, PLAN.md
+Branch: codex/contracts-rebaseline-board
+Goal: Rewrite repo docs to current reality, replace the launchboard, and publish the new parallel work packets.
+Allowed files: AGENTS.md, docs/**, PLAN.md, ARCHITECTURE.md
+Forbidden files: desktop/**, server/**, dashboard/**, shared/**, package.json, package-lock.json, docker-compose.yml
+Required checks: npm run check:all
+Acceptance: docs describe npm workspaces, the embedded Python worker, the existing desktop/server/dashboard surfaces, and the new Surveyor/Foundry/Miner/Pulse/Relay/Harbor/Stitch board. Make the architectural decision explicit that review-first contracts stay, insurer scoring is a separate downstream layer, and the cloud server ingests approved exports plus insurer-safe derived features instead of raw session bundles.
+Handoff: summarize docs changed, checks run, and any repo facts that still need code changes to match the new board.
+```
+
+### Packet C1: build and validation reset
+
+Branch:
+
+- `codex/contracts-build-gates-reset`
+
+Lane:
+
+- `contracts`
+
+Goal:
+
+- repair workspace packaging, server validation gates, and container assumptions so later agents build against the right root contract
+
+Allowed files:
+
+- `package.json`
+- `package-lock.json`
+- `desktop/package.json`
+- `dashboard/package.json`
+- `docker-compose.yml`
+- `dashboard/Dockerfile`
+- `dashboard/nginx.conf`
+
+Forbidden files:
+
+- `desktop/**`
+- `server/**`
+- `dashboard/src/**`
+- `shared/**`
+- docs outside comments or tiny build clarifications
+
+Required checks:
+
+- `npm run check:all`
+- `docker compose build dashboard server`
+
+Acceptance:
+
+- `desktop/package.json` and `dashboard/package.json` declare `@doctor-auditor/shared`
+- dashboard Docker build works from a repo-root-aware context
+- `check:server` runs compile plus pytest, not compile-only
+- root package metadata uses review-first language
+- dead dashboard env/config assumptions are removed from compose/build wiring
+
+Prompt:
+
+```text
+Lane: contracts
+Branch: codex/contracts-build-gates-reset
+Goal: Reset packaging and validation gates so workspace builds, dashboard container builds, and server checks match the current repo architecture.
+Allowed files: package.json, package-lock.json, desktop/package.json, dashboard/package.json, docker-compose.yml, dashboard/Dockerfile, dashboard/nginx.conf
+Forbidden files: desktop/**, server/**, dashboard/src/**, shared/**, PLAN.md, ARCHITECTURE.md, docs/**
+Required checks: npm run check:all && docker compose build dashboard server
+Acceptance: shared workspace dependencies are explicit, check:server includes pytest, dashboard builds from a repo-root-aware Docker context, and stale env assumptions are removed.
+Handoff: summarize files changed, checks run, and any remaining packaging/build risks.
+```
+
+## Wave 1
+
+Start Wave 1 only after Gate A is green.
+
+These four can run in parallel.
+
+### Packet D3: desktop local analysis pipeline
+
+Branch:
+
+- `codex/desktop-local-analysis-pipeline`
+
+Lane:
+
+- `desktop`
+
+Goal:
+
+- add a distinct local transcript-analysis step after transcription and persist findings before review/export can proceed
+
+Allowed files:
+
+- `desktop/electron/**`
+
+Forbidden files:
+
+- `desktop/electron/audio-capture.*`
+- `desktop/src/**`
+- `server/**`
+- `dashboard/**`
+- `shared/**`
+- `package.json`
+
+Required checks:
+
+- `npm run check:desktop`
+
+Acceptance:
+
+- `transcribe-file` stays focused on transcript segments
+- a second local analysis request returns persisted findings backed by the existing shared review contract
+- import and live-capture flows persist transcript first and findings second
+- session updates fire when findings land
+- review/export stays unavailable until findings are persisted
+- tests cover import or capture completion through findings persistence and export gating
+
+Prompt:
+
+```text
+Lane: desktop
+Branch: codex/desktop-local-analysis-pipeline
+Goal: Add a distinct local transcript-analysis step after transcription, persist findings after transcript segments land, and keep review/export gated on persisted findings.
+Allowed files: desktop/electron/**
+Forbidden files: desktop/electron/audio-capture.*, desktop/src/**, server/**, dashboard/**, shared/**, package.json
+Required checks: npm run check:desktop
+Acceptance: transcribe-file returns transcript segments only, a second local analysis request returns findings, findings are persisted after transcript completion, session updates fire when findings land, and tests cover the gating path.
+Handoff: summarize files changed, checks run, and any gaps in the existing shared review contract.
+```
+
+### Packet D4: desktop live-capture bounds
+
+Branch:
+
+- `codex/desktop-live-capture-bounds`
+
+Lane:
+
+- `desktop`
+
+Goal:
+
+- make live-capture status, failure handling, and stop behavior deterministic without expanding the feature beyond what the backend supports
+
+Allowed files:
+
+- `desktop/electron/audio-capture.*`
+- `desktop/electron/preload.*`
+- `desktop/src/views/RecordingView.tsx`
+- `desktop/src/views/SettingsView.tsx`
+- `desktop/src/types/electron.d.ts`
+
+Forbidden files:
+
+- `desktop/electron/main.*`
+- `desktop/electron/database.*`
+- `server/**`
+- `dashboard/**`
+- `shared/**`
+- `package.json`
+
+Required checks:
+
+- `npm run check:desktop`
+
+Acceptance:
+
+- live-capture status is deterministic
+- failed capture always finalizes local session state cleanly
+- import remains the recommended path unless capture is truly stable
+- no half-built device-selection UI is added
+- tests cover start/stop or failure behavior where practical
+
+Prompt:
+
+```text
+Lane: desktop
+Branch: codex/desktop-live-capture-bounds
+Goal: Make live-capture status, start/stop behavior, and failure handling deterministic while keeping import as the recommended path.
+Allowed files: desktop/electron/audio-capture.*, desktop/electron/preload.*, desktop/src/views/RecordingView.tsx, desktop/src/views/SettingsView.tsx, desktop/src/types/electron.d.ts
+Forbidden files: desktop/electron/main.*, desktop/electron/database.*, server/**, dashboard/**, shared/**, package.json
+Required checks: npm run check:desktop
+Acceptance: live capture fails cleanly, start/stop behavior is deterministic, import remains the recommended path unless stability materially improves, and no unsupported device-selection UX is introduced.
+Handoff: summarize files changed, checks run, what improved, and what still remains experimental.
+```
+
+### Packet S1: server boundary hardening
+
+Branch:
+
+- `codex/server-boundary-hardening`
+
+Lane:
+
+- `server`
+
+Goal:
+
+- harden the approved-export, ops-event, auth, demo-seed, and assist-gateway surfaces against current desktop and dashboard usage
+
+Allowed files:
+
+- `server/**`
+
+Forbidden files:
+
+- `desktop/**`
+- `dashboard/**`
+- `shared/**`
+- `package.json`
+
+Required checks:
+
+- `cd server && pytest -q`
+- `npm run check:server`
+
+Acceptance:
+
+- pytest coverage expands around export ingestion, summary math, demo seed idempotence, auth bootstrap, and assist gateway edge cases
+- stale generated artifacts are removed or ignored
+- raw transcript or audio upload remains rejected
+- `sessions` and `findings` routes are not reintroduced
+- the cloud boundary remains limited to approved exports plus insurer-safe derived features instead of raw session bundles
+
+Prompt:
+
+```text
+Lane: server
+Branch: codex/server-boundary-hardening
+Goal: Harden the current FastAPI boundary around approved exports, ops events, auth, demo seed, and assist gateway without reopening raw transcript or session APIs.
+Allowed files: server/**
+Forbidden files: desktop/**, dashboard/**, shared/**, package.json
+Required checks: cd server && pytest -q && npm run check:server
+Acceptance: server tests cover current desktop/dashboard usage, stale generated artifacts are cleaned up, raw transcript/audio upload remains rejected, removed sessions/findings routes stay removed, and the cloud boundary is limited to approved exports plus insurer-safe derived features instead of raw session bundles.
+Handoff: summarize files changed, checks run, boundary behaviors verified, and any remaining server-side risks.
+```
+
+### Packet DB1: dashboard ops-boundary polish
+
+Branch:
+
+- `codex/dashboard-ops-boundary-polish`
+
+Lane:
+
+- `dashboard`
+
+Goal:
+
+- remove residual score/risk framing and make dashboard bootstrap failures visible while preserving the cloud-boundary contract
+
+Allowed files:
+
+- `dashboard/**`
+
+Forbidden files:
+
+- `server/**`
+- `desktop/**`
+- `shared/**`
+- `package.json`
+
+Required checks:
+
+- `npm run check:dashboard`
+
+Acceptance:
+
+- residual score/risk framing is removed from dashboard copy and styles
+- dead score-centric CSS or status names are deleted or renamed
+- demo-auth/bootstrap failures are visible in the UI
+- dashboard continues to import only `@doctor-auditor/shared/cloud`
+- views stay focused on approved exports, assist ops, redaction blocks, and delivery follow-up
+
+Prompt:
+
+```text
+Lane: dashboard
+Branch: codex/dashboard-ops-boundary-polish
+Goal: Remove residual score/risk framing from the dashboard, surface bootstrap/auth failures clearly, and keep the UI focused on approved exports and safe ops only.
+Allowed files: dashboard/**
+Forbidden files: server/**, desktop/**, shared/**, package.json
+Required checks: npm run check:dashboard
+Acceptance: dashboard copy and styling are ops-boundary-first, demo bootstrap failures are visible, dead score-centric names are removed, and the codebase still imports only @doctor-auditor/shared/cloud.
+Handoff: summarize files changed, checks run, and any remaining dashboard contract assumptions.
+```
+
+## Wave 2
+
+Launch `Stitch` only after Gate B is green.
+
+### Packet I1: integration rebaseline stitch
+
+Branch:
+
+- `codex/integration-rebaseline-stitch`
+
+Lane:
+
+- `contracts`
+
+Goal:
+
+- merge the landed packets, normalize terminology drift, clean remaining generated artifacts, and make the repo coherent again
+
+Allowed files:
+
+- `desktop/**`
+- `server/**`
+- `dashboard/**`
+- `shared/**`
+- `AGENTS.md`
+- `docs/**`
+- `PLAN.md`
+- `ARCHITECTURE.md`
+- root config files touched by prior packets
+
+Forbidden files:
+
+- `package-lock.json` unless a dependency change is required by the merged work
+
+Required checks:
+
+- `npm run check:all`
+
+Acceptance:
+
+- remaining terminology drift across desktop/server/dashboard/docs is normalized
+- the preferred user-facing term is `Remote assist`
+- generated artifacts left in tracked paths are cleaned up
+- the final launchboard matches what actually landed
+- the cloud server remains limited to approved exports plus insurer-safe derived features instead of raw session bundles
+
+Prompt:
+
+```text
+Lane: contracts
+Branch: codex/integration-rebaseline-stitch
+Goal: Merge the landed packets, normalize remaining terminology drift, clean tracked generated artifacts, and make the repo coherent after the rebaseline.
+Allowed files: desktop/**, server/**, dashboard/**, shared/**, AGENTS.md, docs/**, PLAN.md, ARCHITECTURE.md, root config files touched by prior packets
 Forbidden files: package-lock.json unless a dependency change is required
 Required checks: npm run check:all
-Acceptance: the merged repo is coherent, naming drift is reduced, and aggregate validation is green.
-Handoff: summarize cross-lane fixes, checks run, remaining risks, and any follow-up packets still needed.
+Acceptance: remaining terminology drift is normalized, Remote assist is the preferred user-facing term, tracked generated artifacts are cleaned up, the final launchboard matches the landed implementation, and the cloud server remains limited to approved exports plus insurer-safe derived features instead of raw session bundles.
+Handoff: summarize cross-lane fixes, checks run, and any follow-up packets still needed.
 ```
 
 ## Suggested concurrency
 
 Good parallel set:
 
-- Wave 0: 1 agent
-- Wave 1: 4 agents
-- Wave 2: 4 agents
-- Wave 3: 1 agent
+- Wave 0: 1 active agent at a time
+- Wave 1: 4 active agents
+- Wave 2: 1 active agent
 
 That gives you up to 4 active feature agents at once without heavy overlap.
 
@@ -566,16 +464,22 @@ That gives you up to 4 active feature agents at once without heavy overlap.
 
 Pause the board if any of these happen:
 
-- more than one active branch needs `shared/**` changes
-- lane checks are green but `npm run check:all` fails on merge
-- two desktop packets are fighting over the same view files
-- agents start making speculative contract edits instead of requesting them
+- more than one active branch needs shared contract changes
+- a feature agent starts editing repo docs or root build files before Gate A is green
+- the two desktop packets start reaching into each other's owned files
+- dashboard code starts importing `@doctor-auditor/shared/local-review`
+- `npm run check:all` passes locally but `docker compose build dashboard server` fails
 
-## Recommended merge order inside each wave
+## Recommended merge order
 
-1. server packets
-2. desktop packets
-3. dashboard packets
-4. integration cleanup if needed
+Use this order unless there is a strong reason not to:
 
-If a dashboard packet depends on server shapes, merge the server branch first and rebase the dashboard branch before landing it.
+1. `Surveyor`
+2. `Foundry`
+3. `Relay`
+4. `Miner`
+5. `Pulse`
+6. `Harbor`
+7. `Stitch`
+
+If a later packet needs root-contract changes, stop and spawn a new setup packet instead of folding the change into a feature lane.

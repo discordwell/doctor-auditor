@@ -107,6 +107,7 @@ export class LocalDatabase {
       transcriptStatus: "failed",
       reviewStatus: "not_started",
       encounterEndedAt: failedAt,
+      audioPath: null,
     });
   }
 
@@ -117,7 +118,7 @@ export class LocalDatabase {
       reviewStatus?: ReviewStatus;
       exportStatus?: ExportStatus;
       encounterEndedAt?: string;
-      audioPath?: string;
+      audioPath?: string | null;
     }
   ): DesktopSessionSummary | null {
     const currentSummary = this.getSessionSummary(sessionId);
@@ -135,7 +136,8 @@ export class LocalDatabase {
         updates.encounterEndedAt ?? currentSummary.session.encounterEndedAt,
       updatedAt: new Date().toISOString(),
     };
-    const nextAudioPath = updates.audioPath ?? currentSummary.audioPath;
+    const nextAudioPath =
+      updates.audioPath === undefined ? currentSummary.audioPath : updates.audioPath;
 
     this.db
       .prepare(
@@ -233,6 +235,7 @@ export class LocalDatabase {
 
     this.updateSession(sessionId, {
       exportStatus: "not_requested",
+      reviewStatus: findings.length > 0 ? undefined : "not_started",
     });
     this.syncSessionReviewStatus(sessionId);
   }

@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@doctor-auditor/shared": "file:../shared",
     "@anthropic-ai/sdk": "^0.39.0",
     "better-sqlite3": "^11.7.0",
     "node-record-lpcm16": "^1.0.1",

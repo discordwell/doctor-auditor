@@ -1,4 +1,8 @@
-import type { TranscriptSegment } from "@doctor-auditor/shared/local-review";
+import type {
+  EvidenceSpan,
+  Finding,
+  TranscriptSegment,
+} from "@doctor-auditor/shared/local-review";
 
 interface ReviewMlRequestBase {
   requestId: string;
@@ -18,9 +22,21 @@ export interface ReviewMlTranscribeFileRequest extends ReviewMlRequestBase {
   language: string;
 }
 
+export interface ReviewMlAnalyzeTranscriptRequest extends ReviewMlRequestBase {
+  kind: "analyze-transcript";
+  sessionId: string;
+  transcriptSegments: TranscriptSegment[];
+}
+
+export interface ReviewMlAnalysisResult {
+  findings: Finding[];
+  evidenceSpans: EvidenceSpan[];
+}
+
 export type ReviewMlRequest =
   | ReviewMlModelAvailabilityRequest
-  | ReviewMlTranscribeFileRequest;
+  | ReviewMlTranscribeFileRequest
+  | ReviewMlAnalyzeTranscriptRequest;
 
 export interface ReviewMlSuccess<T> {
   requestId: string;

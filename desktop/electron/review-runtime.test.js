@@ -15,6 +15,43 @@ const review_runtime_1 = require("./review-runtime");
             throw new Error("Second transcription resolver was not initialized.");
         };
         const transcription = {
+            analyzeTranscript: vitest_1.vi.fn(async (sessionId, transcriptSegments) => {
+                order.push(`analyze:${sessionId}`);
+                return {
+                    evidenceSpans: [
+                        {
+                            id: `evidence-${sessionId}`,
+                            transcriptSegmentId: transcriptSegments[0]?.id ?? "missing-segment",
+                            excerpt: transcriptSegments[0]?.text ?? "",
+                            startOffsetMs: 0,
+                            endOffsetMs: 1000,
+                        },
+                    ],
+                    findings: [
+                        {
+                            id: `finding-${sessionId}`,
+                            sessionId,
+                            code: "follow-up-needed",
+                            title: "Follow-up instructions need review",
+                            summary: "A stub local finding was generated after transcription.",
+                            status: "pending_review",
+                            confidence: 0.61,
+                            evidenceSpans: [
+                                {
+                                    id: `evidence-${sessionId}`,
+                                    transcriptSegmentId: transcriptSegments[0]?.id ?? "missing-segment",
+                                    excerpt: transcriptSegments[0]?.text ?? "",
+                                    startOffsetMs: 0,
+                                    endOffsetMs: 1000,
+                                },
+                            ],
+                            detectedBy: "rules",
+                            createdAt: "2026-03-15T00:00:00Z",
+                            updatedAt: "2026-03-15T00:00:00Z",
+                        },
+                    ],
+                };
+            }),
             dispose: vitest_1.vi.fn().mockResolvedValue(undefined),
             isModelAvailable: vitest_1.vi.fn().mockResolvedValue(true),
             transcribeFile: vitest_1.vi.fn((audioPath, sessionId, source) => {
@@ -45,6 +82,7 @@ const review_runtime_1 = require("./review-runtime");
         };
         const runtime = new review_runtime_1.ReviewRuntimeService(transcription);
         const firstCompleted = waitForEvent(runtime, "transcription-completed", (payload) => payload.job.sessionId === "session-1");
+        const firstAnalysisCompleted = waitForEvent(runtime, "analysis-completed", (payload) => payload.job.sessionId === "session-1");
         const secondCompleted = waitForEvent(runtime, "transcription-completed", (payload) => payload.job.sessionId === "session-2");
         runtime.enqueueTranscription({
             audioPath: "audio-1.wav",
@@ -64,9 +102,23 @@ const review_runtime_1 = require("./review-runtime");
             job: { sessionId: "session-1" },
         });
         await vitest_1.vi.waitFor(() => {
+            (0, vitest_1.expect)(order).toEqual(["start:session-1", "finish:session-1", "analyze:session-1"]);
+        });
+        await (0, vitest_1.expect)(firstAnalysisCompleted).resolves.toMatchObject({
+            analysis: {
+                findings: [
+                    {
+                        id: "finding-session-1",
+                    },
+                ],
+            },
+            job: { sessionId: "session-1" },
+        });
+        await vitest_1.vi.waitFor(() => {
             (0, vitest_1.expect)(order).toEqual([
                 "start:session-1",
                 "finish:session-1",
+                "analyze:session-1",
                 "start:session-2",
             ]);
         });
@@ -77,6 +129,7 @@ const review_runtime_1 = require("./review-runtime");
     });
     (0, vitest_1.it)("surfaces runtime failures through a single failure channel", async () => {
         const transcription = {
+            analyzeTranscript: vitest_1.vi.fn(),
             dispose: vitest_1.vi.fn().mockResolvedValue(undefined),
             isModelAvailable: vitest_1.vi.fn().mockResolvedValue(false),
             transcribeFile: vitest_1.vi.fn(),
@@ -95,6 +148,48 @@ const review_runtime_1 = require("./review-runtime");
             job: { sessionId: "session-1" },
         });
         (0, vitest_1.expect)(transcription.transcribeFile).not.toHaveBeenCalled();
+    });
+    (0, vitest_1.it)("surfaces transcript-analysis failures after transcript completion", async () => {
+        const transcription = {
+            analyzeTranscript: vitest_1.vi
+                .fn()
+                .mockRejectedValue(new Error("Local transcript analysis failed.")),
+            dispose: vitest_1.vi.fn().mockResolvedValue(undefined),
+            isModelAvailable: vitest_1.vi.fn().mockResolvedValue(true),
+            transcribeFile: vitest_1.vi.fn().mockResolvedValue([
+                {
+                    id: "segment-1",
+                    sessionId: "session-1",
+                    speakerLabel: "unknown",
+                    text: "Please call if the dizziness returns.",
+                    startOffsetMs: 0,
+                    endOffsetMs: 1200,
+                    source: "audio_import",
+                },
+            ]),
+        };
+        const runtime = new review_runtime_1.ReviewRuntimeService(transcription);
+        const completed = waitForEvent(runtime, "transcription-completed");
+        const failed = waitForEvent(runtime, "analysis-failed");
+        runtime.enqueueTranscription({
+            audioPath: "audio.wav",
+            sessionId: "session-1",
+            source: "audio_import",
+        });
+        await (0, vitest_1.expect)(completed).resolves.toMatchObject({
+            job: { sessionId: "session-1" },
+        });
+        await (0, vitest_1.expect)(failed).resolves.toMatchObject({
+            error: vitest_1.expect.objectContaining({
+                message: "Local transcript analysis failed.",
+            }),
+            job: { sessionId: "session-1" },
+            segments: [
+                {
+                    id: "segment-1",
+                },
+            ],
+        });
     });
 });
 function waitForEvent(runtime, eventName, predicate) {

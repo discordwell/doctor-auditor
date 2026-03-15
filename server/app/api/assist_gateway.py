@@ -25,19 +25,22 @@ async def create_seriousness_assessment(
         "No raw audio, full transcript, or free-text evidence was available.",
     ]
 
-    if payload.concern.findingCode in {"medication-risk", "abrupt-session-termination"}:
-        disposition = "expedited_human_review"
-        confidence = 0.79
-        rationale = (
-            "The finding code maps to a higher-acuity review lane and should be "
-            "triaged by a human reviewer."
-        )
-    elif payload.concern.evidenceSpanCount == 0:
+    if payload.concern.evidenceSpanCount == 0:
         disposition = "insufficient_context"
         confidence = 0.18
         rationale = (
             "The minimized packet does not include enough evidence structure to "
             "support a stronger seriousness recommendation."
+        )
+    elif payload.concern.findingCode in {
+        "medication-risk",
+        "abrupt-session-termination",
+    }:
+        disposition = "expedited_human_review"
+        confidence = 0.79
+        rationale = (
+            "The finding code maps to a higher-acuity review lane and should be "
+            "triaged by a human reviewer."
         )
 
     return SeriousnessAssessmentModel(

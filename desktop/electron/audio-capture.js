@@ -102,6 +102,9 @@ class AudioCapture extends events_1.EventEmitter {
         if (this.isRecording || this.recordingProcess) {
             throw new Error("Live capture is already running.");
         }
+        if (deviceId !== "default") {
+            throw new Error("This build only supports the system default microphone for live capture.");
+        }
         const status = await this.getCaptureStatus();
         if (!status.available || !status.recorder) {
             throw new Error(status.issues[0] ??
@@ -183,6 +186,7 @@ class AudioCapture extends events_1.EventEmitter {
                     this.clearActiveCaptureState();
                     this.emit("level", 0);
                     if (audioBytes === 0) {
+                        await fs.promises.rm(filePath, { force: true });
                         throw new Error("Live capture ended before any audio was written. Check recorder setup and microphone access.");
                     }
                     resolve({
@@ -202,7 +206,7 @@ class AudioCapture extends events_1.EventEmitter {
                 }
                 settled = true;
                 cleanupListeners();
-                await this.cleanupActiveCapture({ deleteOutput: false });
+                await this.cleanupActiveCapture({ deleteOutput: true });
                 reject(toError(error, "Live capture could not be finalized."));
             };
             const onFinalizeSignal = () => {
@@ -300,7 +304,7 @@ class AudioCapture extends events_1.EventEmitter {
         void this.failActiveRecording(message);
     };
     async failActiveRecording(message) {
-        await this.cleanupActiveCapture({ deleteOutput: false });
+        await this.cleanupActiveCapture({ deleteOutput: true });
         this.emit("capture-error", message);
     }
     async cleanupActiveCapture(options) {

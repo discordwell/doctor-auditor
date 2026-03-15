@@ -19,6 +19,79 @@ const cleanupPaths = [];
     }
 });
 (0, vitest_1.describe)("LocalDatabase review artifacts", () => {
+    (0, vitest_1.it)("keeps review and export gated until findings are persisted", () => {
+        const db = createDatabase();
+        const session = db.createImportedSession({
+            clinicianId: "clinician-11",
+            recordedWithConsent: true,
+            exportAllowed: true,
+            remoteAssistAllowed: false,
+            policyVersion: "policy-v1",
+            audioPath: "/tmp/gated.wav",
+            capturedAt: "2026-03-15T09:00:00Z",
+            sourceFileName: "gated.wav",
+        });
+        const sessionId = session.session.id;
+        db.replaceTranscriptSegments(sessionId, [
+            {
+                id: "segment-gated-001",
+                sessionId,
+                speakerLabel: "unknown",
+                text: "Please schedule the procedure and let us know if the dizziness returns.",
+                startOffsetMs: 0,
+                endOffsetMs: 2800,
+                source: "audio_import",
+            },
+        ]);
+        const withoutFindings = db.getSession(sessionId);
+        (0, vitest_1.expect)(withoutFindings?.session.reviewStatus).toBe("not_started");
+        (0, vitest_1.expect)(withoutFindings?.session.exportStatus).toBe("not_requested");
+        (0, vitest_1.expect)(withoutFindings?.findings).toEqual([]);
+        db.replaceFindings(sessionId, [
+            {
+                id: "finding-gated-001",
+                sessionId,
+                code: "missing-risk-discussion",
+                title: "Treatment risks were not discussed",
+                summary: "The transcript references a procedure without risk language.",
+                status: "pending_review",
+                confidence: 0.68,
+                evidenceSpans: [
+                    {
+                        id: "evidence-gated-001",
+                        transcriptSegmentId: "segment-gated-001",
+                        excerpt: "Please schedule the procedure and let us know if the dizziness returns.",
+                        startOffsetMs: 0,
+                        endOffsetMs: 2800,
+                    },
+                ],
+                detectedBy: "rules",
+                createdAt: "2026-03-15T09:00:00Z",
+                updatedAt: "2026-03-15T09:00:00Z",
+            },
+        ]);
+        const withFindings = db.getSession(sessionId);
+        (0, vitest_1.expect)(withFindings?.session.reviewStatus).toBe("ready");
+        (0, vitest_1.expect)(withFindings?.findings).toHaveLength(1);
+        db.close();
+    });
+    (0, vitest_1.it)("clears the stored audio path when live capture fails", () => {
+        const db = createDatabase();
+        const startedSession = db.createLiveCaptureSession({
+            clinicianId: "clinician-live",
+            recordedWithConsent: true,
+            exportAllowed: false,
+            remoteAssistAllowed: false,
+            policyVersion: "policy-v1",
+            startedAt: "2026-03-15T09:30:00Z",
+            audioPath: "/tmp/live-capture.wav",
+        });
+        const failed = db.failLiveCaptureSession(startedSession.session.id, "2026-03-15T09:32:00Z");
+        (0, vitest_1.expect)(failed?.audioPath).toBeUndefined();
+        (0, vitest_1.expect)(failed?.session.transcriptStatus).toBe("failed");
+        (0, vitest_1.expect)(failed?.session.reviewStatus).toBe("not_started");
+        db.close();
+    });
     (0, vitest_1.it)("persists findings, review decisions, and approved exports locally", () => {
         vitest_1.vi.useFakeTimers();
         vitest_1.vi.setSystemTime(new Date("2026-03-15T10:05:00Z"));
@@ -213,7 +286,7 @@ const cleanupPaths = [];
         });
         (0, vitest_1.expect)(bundle?.modelAssistReceipts).toHaveLength(1);
         (0, vitest_1.expect)(bundle?.session.exportStatus).toBe("not_requested");
-        (0, vitest_1.expect)(bundle?.auditLogEntries.at(-1)?.action).toBe("assist_completed");
+        (0, vitest_1.expect)(bundle?.auditLogEntries.some((entry) => entry.action === "assist_completed")).toBe(true);
         db.close();
     });
 });

@@ -266,6 +266,81 @@ def test_demo_seed_creates_export_and_ops_only() -> None:
         assert len(events.json()) >= 5
 
 
+def test_demo_seed_is_idempotent() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        first = client.post("/api/demo/seed", headers=headers)
+        second = client.post("/api/demo/seed", headers=headers)
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert first.json()["seeded"] is True
+        assert second.json()["seeded"] is False
+        assert second.json()["approvedExports"] == first.json()["approvedExports"]
+        assert second.json()["opsEvents"] == first.json()["opsEvents"]
+
+
+def test_approved_export_rejects_mismatched_organization() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = approved_export_envelope_payload()
+        payload["organizationId"] = "other-health"
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 400, response.text
+        assert (
+            response.json()["detail"]
+            == "export organization does not match authenticated organization"
+        )
+
+
+def test_ops_summary_includes_sent_export_latency_and_assist_usage() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = approved_export_envelope_payload()
+        payload["export"]["status"] = "sent"
+        payload["export"]["sentAt"] = "2026-03-15T10:40:00Z"
+
+        created_export = client.post(
+            "/api/approved-exports/",
+            json=payload,
+            headers=headers,
+        )
+        assert created_export.status_code == 201, created_export.text
+
+        requested_event = ops_event_payload()
+        requested_event["id"] = "ops-event-requested-001"
+        requested_event["type"] = "assist_requested"
+        requested_event["latencyMs"] = None
+
+        created_event = client.post(
+            "/api/ops-events/",
+            json=requested_event,
+            headers=headers,
+        )
+        assert created_event.status_code == 200, created_event.text
+
+        summary = client.get("/api/ops-events/summary", headers=headers)
+        assert summary.status_code == 200, summary.text
+        body = summary.json()
+        assert body["totalExports"] == 1
+        assert body["sentExports"] == 1
+        assert body["assistUsageCount"] == 1
+        assert body["averageSendLatencyMs"] == 600000.0
+
+
 def test_assist_gateway_returns_structured_assessment() -> None:
     reset_database()
 
@@ -278,4 +353,22 @@ def test_assist_gateway_returns_structured_assessment() -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["disposition"] == "expedited_human_review"
+        assert body["provider"] == "doctor-auditor-assist-gateway"
+
+
+def test_assist_gateway_handles_insufficient_context() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        payload = assist_gateway_payload()
+        payload["concern"]["evidenceSpanCount"] = 0
+
+        response = client.post(
+            "/api/assist-gateway/seriousness-assessments",
+            json=payload,
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["disposition"] == "insufficient_context"
         assert body["provider"] == "doctor-auditor-assist-gateway"

@@ -12,7 +12,7 @@ Copy one prompt block below into a new Codex agent and send it as the first mess
 
 Use the agent's name exactly. That makes it easier to track handoffs and merge order.
 
-This is a live repo with an existing scaffold. Each agent prompt below tells the agent to inspect current code first and avoid rebuilding from scratch.
+This is a live repo with an existing implementation. Each agent prompt below tells the agent to inspect current code first and avoid rebuilding from scratch.
 
 ## Live repo setup
 
@@ -27,18 +27,18 @@ Example pattern:
 ```bash
 git fetch origin
 mkdir -p ../doctor-auditor-worktrees
-git worktree add ../doctor-auditor-worktrees/cartographer -b codex/contracts-shared-domain-reset origin/main
-git worktree add ../doctor-auditor-worktrees/relay -b codex/server-review-api-skeleton origin/main
-git worktree add ../doctor-auditor-worktrees/intake -b codex/desktop-import-first-flow origin/main
+git worktree add ../doctor-auditor-worktrees/surveyor -b codex/contracts-rebaseline-board origin/main
+git worktree add ../doctor-auditor-worktrees/foundry -b codex/contracts-build-gates-reset origin/main
+git worktree add ../doctor-auditor-worktrees/miner -b codex/desktop-local-analysis-pipeline origin/main
 ```
 
 Adjust branch names by wave. Do not stack multiple active agents in the same checkout.
 
 ## Wave 0
 
-Launch only one agent in this wave.
+Launch `Surveyor` first. Launch `Foundry` only after `Surveyor` merges.
 
-### Cartographer
+### Surveyor
 
 Role:
 
@@ -46,27 +46,63 @@ Role:
 
 Owns:
 
-- shared domain reset
+- repo docs and board reset
 
 Branch:
 
-- `codex/contracts-shared-domain-reset`
+- `codex/contracts-rebaseline-board`
 
 Launch prompt:
 
 ```text
-You are the "Cartographer" agent. Go.
+You are the "Surveyor" agent. Go.
 
-This is a live repo with existing code. Inspect the current contracts and docs first. Do not rebuild the scaffold from scratch.
+This is a live repo with existing code. Inspect the merged implementation first. Do not rebuild the scaffold from scratch.
 
 Lane: contracts
-Branch: codex/contracts-shared-domain-reset
-Goal: Replace the current score-centric shared model with an auditable review model for sessions, transcript segments, findings, evidence, review decisions, and approved exports.
-Allowed files: shared/**, ARCHITECTURE.md, PLAN.md
-Forbidden files: desktop/**, server/**, dashboard/**, package.json
-Required checks: npm run check:shared && npm run check:contracts
-Acceptance: shared types are aligned to evidence-backed review workflows and no longer force malpractice-risk ranking semantics into downstream lanes.
-Handoff: summarize changed contracts, docs updated, checks run, and any migration impacts on desktop/server/dashboard.
+Branch: codex/contracts-rebaseline-board
+Goal: Rewrite repo docs to current reality, replace the launchboard, and publish the new parallel work packets.
+Allowed files: AGENTS.md, docs/**, PLAN.md, ARCHITECTURE.md
+Forbidden files: desktop/**, server/**, dashboard/**, shared/**, package.json, package-lock.json, docker-compose.yml
+Required checks: npm run check:all
+Acceptance: docs describe npm workspaces, the embedded Python worker, the existing desktop/server/dashboard surfaces, and the new Surveyor/Foundry/Miner/Pulse/Relay/Harbor/Stitch board. Make the architectural decision explicit that review-first contracts stay, insurer scoring is a separate downstream layer, and the cloud server ingests approved exports plus insurer-safe derived features instead of raw session bundles.
+Handoff: summarize docs changed, checks run, and any repo facts that still need code changes to match the new board.
+
+Read these first:
+- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
+- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
+- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
+```
+
+### Foundry
+
+Role:
+
+- contracts agent
+
+Owns:
+
+- build and validation reset
+
+Branch:
+
+- `codex/contracts-build-gates-reset`
+
+Launch prompt:
+
+```text
+You are the "Foundry" agent. Go.
+
+This is a live repo with existing code. Inspect the merged implementation first. Do not rebuild the scaffold from scratch.
+
+Lane: contracts
+Branch: codex/contracts-build-gates-reset
+Goal: Reset packaging and validation gates so workspace builds, dashboard container builds, and server checks match the current repo architecture.
+Allowed files: package.json, package-lock.json, desktop/package.json, dashboard/package.json, docker-compose.yml, dashboard/Dockerfile, dashboard/nginx.conf
+Forbidden files: desktop/**, server/**, dashboard/src/**, shared/**, PLAN.md, ARCHITECTURE.md, docs/**
+Required checks: npm run check:all && docker compose build dashboard server
+Acceptance: shared workspace dependencies are explicit, check:server includes pytest, dashboard builds from a repo-root-aware Docker context, and stale env assumptions are removed.
+Handoff: summarize files changed, checks run, and any remaining packaging/build risks.
 
 Read these first:
 - /Users/discordwell/Projects/doctor-auditor/AGENTS.md
@@ -76,9 +112,81 @@ Read these first:
 
 ## Wave 1
 
-Launch these after Cartographer merges.
+Launch these only after Gate A is green.
 
 These four can run in parallel.
+
+### Miner
+
+Role:
+
+- desktop agent
+
+Owns:
+
+- local transcript-analysis pipeline
+
+Branch:
+
+- `codex/desktop-local-analysis-pipeline`
+
+Launch prompt:
+
+```text
+You are the "Miner" agent. Go.
+
+This is a live repo with existing code. Inspect the current desktop implementation first. Do not rebuild the scaffold from scratch.
+
+Lane: desktop
+Branch: codex/desktop-local-analysis-pipeline
+Goal: Add a distinct local transcript-analysis step after transcription, persist findings after transcript segments land, and keep review/export gated on persisted findings.
+Allowed files: desktop/electron/**
+Forbidden files: desktop/electron/audio-capture.*, desktop/src/**, server/**, dashboard/**, shared/**, package.json
+Required checks: npm run check:desktop
+Acceptance: transcribe-file returns transcript segments only, a second local analysis request returns findings, findings are persisted after transcript completion, session updates fire when findings land, and tests cover the gating path.
+Handoff: summarize files changed, checks run, and any gaps in the existing shared review contract.
+
+Read these first:
+- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
+- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
+- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
+```
+
+### Pulse
+
+Role:
+
+- desktop agent
+
+Owns:
+
+- live-capture bounds
+
+Branch:
+
+- `codex/desktop-live-capture-bounds`
+
+Launch prompt:
+
+```text
+You are the "Pulse" agent. Go.
+
+This is a live repo with existing code. Inspect the current desktop implementation first. Do not rebuild the scaffold from scratch.
+
+Lane: desktop
+Branch: codex/desktop-live-capture-bounds
+Goal: Make live-capture status, start/stop behavior, and failure handling deterministic while keeping import as the recommended path.
+Allowed files: desktop/electron/audio-capture.*, desktop/electron/preload.*, desktop/src/views/RecordingView.tsx, desktop/src/views/SettingsView.tsx, desktop/src/types/electron.d.ts
+Forbidden files: desktop/electron/main.*, desktop/electron/database.*, server/**, dashboard/**, shared/**, package.json
+Required checks: npm run check:desktop
+Acceptance: live capture fails cleanly, start/stop behavior is deterministic, import remains the recommended path unless stability materially improves, and no unsupported device-selection UX is introduced.
+Handoff: summarize files changed, checks run, what improved, and what still remains experimental.
+
+Read these first:
+- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
+- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
+- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
+```
 
 ### Relay
 
@@ -88,11 +196,11 @@ Role:
 
 Owns:
 
-- review API skeleton
+- server boundary hardening
 
 Branch:
 
-- `codex/server-review-api-skeleton`
+- `codex/server-boundary-hardening`
 
 Launch prompt:
 
@@ -102,201 +210,13 @@ You are the "Relay" agent. Go.
 This is a live repo with existing code. Inspect the current server implementation first. Do not rebuild the scaffold from scratch.
 
 Lane: server
-Branch: codex/server-review-api-skeleton
-Goal: Refactor the FastAPI surface toward review-oriented endpoints for sessions, findings, and approved exports using the new shared contract.
+Branch: codex/server-boundary-hardening
+Goal: Harden the current FastAPI boundary around approved exports, ops events, auth, demo seed, and assist gateway without reopening raw transcript or session APIs.
 Allowed files: server/**
-Forbidden files: shared/**, desktop/**, dashboard/**, package.json
-Required checks: npm run check:server
-Acceptance: FastAPI routes and server schemas are coherent, compile cleanly, and no longer assume malpractice ranking as the only output.
-Handoff: summarize endpoints added or changed, schemas used, checks run, and any contract gaps discovered.
-
-Read these first:
-- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
-- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
-- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
-```
-
-### Intake
-
-Role:
-
-- desktop agent
-
-Owns:
-
-- import-first encounter flow
-
-Branch:
-
-- `codex/desktop-import-first-flow`
-
-Launch prompt:
-
-```text
-You are the "Intake" agent. Go.
-
-This is a live repo with existing code. Inspect the current desktop implementation first. Do not rebuild the scaffold from scratch.
-
-Lane: desktop
-Branch: codex/desktop-import-first-flow
-Goal: Add an upload-first encounter import flow so the desktop app is useful even before live capture is production-ready.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: a user can select a local audio file, see import progress or status, and create a local session shell from the desktop UI.
-Handoff: summarize files changed, checks run, and any schema assumptions that need contract review.
-
-Read these first:
-- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
-- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
-- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
-```
-
-### Archive
-
-Role:
-
-- desktop agent
-
-Owns:
-
-- session history shell
-
-Branch:
-
-- `codex/desktop-session-history-shell`
-
-Launch prompt:
-
-```text
-You are the "Archive" agent. Go.
-
-This is a live repo with existing code. Inspect the current desktop implementation first. Do not rebuild the scaffold from scratch.
-
-Lane: desktop
-Branch: codex/desktop-session-history-shell
-Goal: Build out the local session history view with useful states and session cards for encounter review.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: history view shows a local session list with clean empty/loading/error states and is ready for later transcript drill-down.
-Handoff: summarize files changed, checks run, and any dependencies on session contract fields.
-
-Avoid overlap with the import-first flow files when possible.
-
-Read these first:
-- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
-- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
-- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
-```
-
-### Beacon
-
-Role:
-
-- dashboard agent
-
-Owns:
-
-- review-oriented overview dashboard
-
-Branch:
-
-- `codex/dashboard-review-overview-shell`
-
-Launch prompt:
-
-```text
-You are the "Beacon" agent. Go.
-
-This is a live repo with existing code. Inspect the current dashboard implementation first. Do not rebuild the scaffold from scratch.
-
-Lane: dashboard
-Branch: codex/dashboard-review-overview-shell
-Goal: Reframe the overview dashboard around review activity, flagged findings, and approved exports instead of pure malpractice scoring.
-Allowed files: dashboard/**
-Forbidden files: shared/**, server/**, desktop/**, package.json
-Required checks: npm run check:dashboard
-Acceptance: the overview view is coherent with a review-tool story and is ready to consume API data later.
-Handoff: summarize files changed, checks run, and any hard-coded assumptions that still need contract cleanup.
-
-Read these first:
-- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
-- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
-- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
-```
-
-## Wave 2
-
-Launch these only after Wave 1 merges and the wave gate is green.
-
-These four can run in parallel.
-
-### Lens
-
-Role:
-
-- desktop agent
-
-Owns:
-
-- transcript and evidence viewer
-
-Branch:
-
-- `codex/desktop-transcript-evidence-viewer`
-
-Launch prompt:
-
-```text
-You are the "Lens" agent. Go.
-
-This is a live repo with existing code. Inspect the current desktop implementation first. Do not rebuild the scaffold from scratch.
-
-Lane: desktop
-Branch: codex/desktop-transcript-evidence-viewer
-Goal: Build a transcript drill-down view with evidence-linked findings and reviewer actions.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: transcript segments, evidence links, and accept/reject/uncertain review controls all exist in the desktop UI.
-Handoff: summarize files changed, checks run, and any assumptions about finding or evidence data shapes.
-
-Read these first:
-- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
-- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
-- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
-```
-
-### Courier
-
-Role:
-
-- server agent
-
-Owns:
-
-- approved export flow
-
-Branch:
-
-- `codex/server-approved-export-flow`
-
-Launch prompt:
-
-```text
-You are the "Courier" agent. Go.
-
-This is a live repo with existing code. Inspect the current server implementation first. Do not rebuild the scaffold from scratch.
-
-Lane: server
-Branch: codex/server-approved-export-flow
-Goal: Add the approved-export ingestion path and keep the server boundary explicitly limited to reviewed export payloads.
-Allowed files: server/**
-Forbidden files: shared/**, desktop/**, dashboard/**, package.json
-Required checks: npm run check:server
-Acceptance: the server accepts approved export payloads only and rejects shapes that imply raw transcript or audio upload.
-Handoff: summarize endpoint behavior, schema boundaries, checks run, and any contract risks discovered.
+Forbidden files: desktop/**, dashboard/**, shared/**, package.json
+Required checks: cd server && pytest -q && npm run check:server
+Acceptance: server tests cover current desktop/dashboard usage, stale generated artifacts are cleaned up, raw transcript/audio upload remains rejected, removed sessions/findings routes stay removed, and the cloud boundary is limited to approved exports plus insurer-safe derived features instead of raw session bundles.
+Handoff: summarize files changed, checks run, boundary behaviors verified, and any remaining server-side risks.
 
 Read these first:
 - /Users/discordwell/Projects/doctor-auditor/AGENTS.md
@@ -312,11 +232,11 @@ Role:
 
 Owns:
 
-- dashboard API integration
+- ops-boundary polish
 
 Branch:
 
-- `codex/dashboard-api-integration`
+- `codex/dashboard-ops-boundary-polish`
 
 Launch prompt:
 
@@ -326,13 +246,13 @@ You are the "Harbor" agent. Go.
 This is a live repo with existing code. Inspect the current dashboard implementation first. Do not rebuild the scaffold from scratch.
 
 Lane: dashboard
-Branch: codex/dashboard-api-integration
-Goal: Wire dashboard views to the current server API shape, using local fixtures only as a fallback for incomplete endpoints.
+Branch: codex/dashboard-ops-boundary-polish
+Goal: Remove residual score/risk framing from the dashboard, surface bootstrap/auth failures clearly, and keep the UI focused on approved exports and safe ops only.
 Allowed files: dashboard/**
-Forbidden files: shared/**, server/**, desktop/**, package.json
+Forbidden files: server/**, desktop/**, shared/**, package.json
 Required checks: npm run check:dashboard
-Acceptance: dashboard API integration is coherent, views handle loading and failure states, and the UI reflects review-oriented data instead of hard-coded scores.
-Handoff: summarize files changed, checks run, and any contract mismatches found.
+Acceptance: dashboard copy and styling are ops-boundary-first, demo bootstrap failures are visible, dead score-centric names are removed, and the codebase still imports only @doctor-auditor/shared/cloud.
+Handoff: summarize files changed, checks run, and any remaining dashboard contract assumptions.
 
 Read these first:
 - /Users/discordwell/Projects/doctor-auditor/AGENTS.md
@@ -340,45 +260,9 @@ Read these first:
 - /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
 ```
 
-### Tuner
+## Wave 2
 
-Role:
-
-- desktop agent
-
-Owns:
-
-- live-capture stabilization spike
-
-Branch:
-
-- `codex/desktop-live-capture-spike`
-
-Launch prompt:
-
-```text
-You are the "Tuner" agent. Go.
-
-This is a live repo with existing code. Inspect the current desktop implementation first. Do not rebuild the scaffold from scratch.
-
-Lane: desktop
-Branch: codex/desktop-live-capture-spike
-Goal: Stabilize or clearly bound the live microphone capture path without blocking the upload-first workflow.
-Allowed files: desktop/**
-Forbidden files: shared/**, server/**, dashboard/**, package.json
-Required checks: npm run check:desktop
-Acceptance: live capture behavior is either improved or explicitly bounded as experimental with visible failure handling.
-Handoff: summarize what improved, what still fails, checks run, and whether the feature is demo-path ready or experimental only.
-
-Read these first:
-- /Users/discordwell/Projects/doctor-auditor/AGENTS.md
-- /Users/discordwell/Projects/doctor-auditor/docs/MULTI_AGENT_WORKFLOW.md
-- /Users/discordwell/Projects/doctor-auditor/docs/AGENT_LAUNCHBOARD.md
-```
-
-## Wave 3
-
-Launch one agent only after Wave 2 merges.
+Launch `Stitch` only after Gate B is green.
 
 ### Stitch
 
@@ -388,11 +272,11 @@ Role:
 
 Owns:
 
-- cross-lane cleanup and coherence
+- cross-lane integration cleanup and coherence
 
 Branch:
 
-- `codex/integration-wave-cleanup`
+- `codex/integration-rebaseline-stitch`
 
 Launch prompt:
 
@@ -402,13 +286,13 @@ You are the "Stitch" agent. Go.
 This is a live repo with existing code. Inspect the merged implementation first. Do not rebuild the scaffold from scratch.
 
 Lane: contracts
-Branch: codex/integration-wave-cleanup
-Goal: Perform cross-lane integration cleanup after the feature waves land, resolve terminology drift, and make the repo coherent.
-Allowed files: desktop/**, server/**, dashboard/**, shared/**, AGENTS.md, docs/**, ARCHITECTURE.md, PLAN.md
+Branch: codex/integration-rebaseline-stitch
+Goal: Merge the landed packets, normalize remaining terminology drift, clean tracked generated artifacts, and make the repo coherent after the rebaseline.
+Allowed files: desktop/**, server/**, dashboard/**, shared/**, AGENTS.md, docs/**, PLAN.md, ARCHITECTURE.md, root config files touched by prior packets
 Forbidden files: package-lock.json unless a dependency change is required
 Required checks: npm run check:all
-Acceptance: the merged repo is coherent, naming drift is reduced, and aggregate validation is green.
-Handoff: summarize cross-lane fixes, checks run, remaining risks, and any follow-up packets still needed.
+Acceptance: remaining terminology drift is normalized, Remote assist is the preferred user-facing term, tracked generated artifacts are cleaned up, the final launchboard matches the landed implementation, and the cloud server remains limited to approved exports plus insurer-safe derived features instead of raw session bundles.
+Handoff: summarize cross-lane fixes, checks run, and any follow-up packets still needed.
 
 Read these first:
 - /Users/discordwell/Projects/doctor-auditor/AGENTS.md
@@ -420,31 +304,28 @@ Read these first:
 
 Use these names when launching or tracking branches:
 
-- `Cartographer`
+- `Surveyor`
+- `Foundry`
+- `Miner`
+- `Pulse`
 - `Relay`
-- `Intake`
-- `Archive`
-- `Beacon`
-- `Lens`
-- `Courier`
 - `Harbor`
-- `Tuner`
 - `Stitch`
 
 ## Safe launch sets
 
 Start here:
 
-- Wave 0: `Cartographer`
+- Wave 0: `Surveyor`
 
 Then:
 
-- Wave 1: `Relay`, `Intake`, `Archive`, `Beacon`
+- Wave 0: `Foundry`
 
 Then:
 
-- Wave 2: `Lens`, `Courier`, `Harbor`, `Tuner`
+- Wave 1: `Miner`, `Pulse`, `Relay`, `Harbor`
 
 Finish with:
 
-- Wave 3: `Stitch`
+- Wave 2: `Stitch`

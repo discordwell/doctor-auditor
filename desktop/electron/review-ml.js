@@ -72,24 +72,24 @@ class PythonReviewMlClient {
         });
     }
     async transcribeFile(audioPath, sessionId, source) {
-        if (this.isProcessing) {
-            throw new Error("Already processing a transcription");
-        }
-        this.isProcessing = true;
-        try {
-            return await this.sendRequest({
-                kind: "transcribe-file",
-                audioPath,
-                language: this.language,
-                modelRef: this.modelRef,
-                modelPath: this.modelPath,
-                sessionId,
-                source,
-            });
-        }
-        finally {
-            this.isProcessing = false;
-        }
+        return this.runExclusiveRequest(() => this.sendRequest({
+            kind: "transcribe-file",
+            audioPath,
+            language: this.language,
+            modelRef: this.modelRef,
+            modelPath: this.modelPath,
+            sessionId,
+            source,
+        }));
+    }
+    async analyzeTranscript(sessionId, transcriptSegments) {
+        return this.runExclusiveRequest(() => this.sendRequest({
+            kind: "analyze-transcript",
+            modelRef: this.modelRef,
+            modelPath: this.modelPath,
+            sessionId,
+            transcriptSegments,
+        }));
     }
     async dispose() {
         const worker = this.worker;
@@ -101,6 +101,18 @@ class PythonReviewMlClient {
         this.stdoutReader = null;
         this.rejectPendingRequests(new Error("Python review ML worker shut down."));
         worker.kill();
+    }
+    async runExclusiveRequest(run) {
+        if (this.isProcessing) {
+            throw new Error("Already processing a local review ML request.");
+        }
+        this.isProcessing = true;
+        try {
+            return await run();
+        }
+        finally {
+            this.isProcessing = false;
+        }
     }
     getOrCreateWorker() {
         if (this.worker) {

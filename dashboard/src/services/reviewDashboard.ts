@@ -281,14 +281,14 @@ export function buildOverviewModel(
       {
         title: "Assist requests",
         count: assistUsageEvents.length,
-        detail: "Reviewer-invoked second-opinion calls recorded without raw PHI.",
+        detail: "Reviewer-invoked remote assist calls recorded without raw PHI.",
         owner: "Desktop reviewers",
         tone: assistUsageEvents.length > 0 ? "watch" : "stable",
       },
       {
         title: "Assist overrides",
         count: assistOverrides.length,
-        detail: "Human reviewers overruled an assist recommendation and preserved the local decision.",
+        detail: "Human reviewers overruled a remote assist recommendation and preserved the local decision.",
         owner: "Quality leads",
         tone: assistOverrides.length > 0 ? "watch" : "stable",
       },

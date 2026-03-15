@@ -36,6 +36,7 @@ let authToken: string | null = null;
 let demoBootstrapPromise: Promise<string | null> | null = null;
 let demoSeedPromise: Promise<void> | null = null;
 let lastBootstrapFailureAt = 0;
+let lastBootstrapFailureMessage: string | null = null;
 let currentOrganizationId: string | null = null;
 let currentEmail: string | null = null;
 let demoDatasetReady = false;
@@ -118,6 +119,7 @@ async function ensureDemoSession(): Promise<string | null> {
           email: DEMO_CREDENTIALS.email,
         });
         lastBootstrapFailureAt = 0;
+        lastBootstrapFailureMessage = null;
         return loginResponse.access_token;
       } catch {
         const registerResponse = await request<AuthResponse>(
@@ -134,11 +136,16 @@ async function ensureDemoSession(): Promise<string | null> {
           email: DEMO_CREDENTIALS.email,
         });
         lastBootstrapFailureAt = 0;
+        lastBootstrapFailureMessage = null;
         return registerResponse.access_token;
       }
-    } catch {
+    } catch (error) {
       lastBootstrapFailureAt = Date.now();
       persistSession(null);
+      lastBootstrapFailureMessage =
+        error instanceof Error
+          ? error.message
+          : "Dashboard could not bootstrap the demo session.";
       return null;
     } finally {
       demoBootstrapPromise = null;
@@ -155,6 +162,7 @@ export function setToken(token: string) {
   currentOrganizationId = null;
   currentEmail = null;
   demoDatasetReady = false;
+  lastBootstrapFailureMessage = null;
 }
 
 function shouldSeedDemoDataset(): boolean {
@@ -200,6 +208,12 @@ async function request<T>(
 ): Promise<T> {
   if (!path.startsWith("/auth/") && !authToken) {
     await ensureDemoSession();
+    if (!authToken) {
+      throw new Error(
+        lastBootstrapFailureMessage ??
+          "Dashboard could not bootstrap the demo organization session."
+      );
+    }
   }
 
   if (!path.startsWith("/auth/") && ensureSeed && path !== "/demo/seed") {
@@ -227,6 +241,10 @@ async function request<T>(
       if (authToken) {
         return request<T>(path, options, false, ensureSeed);
       }
+      throw new Error(
+        lastBootstrapFailureMessage ??
+          "Dashboard could not refresh the demo organization session."
+      );
     }
 
     const error = await response.json().catch(() => ({ detail: "Request failed" }));

@@ -30,6 +30,22 @@ class ReviewRuntimeService extends events_1.EventEmitter {
                 job,
                 segments,
             });
+            try {
+                const analysis = await this.reviewMl.analyzeTranscript(job.sessionId, segments);
+                this.emit("analysis-completed", {
+                    analysis,
+                    findings: analysis.findings,
+                    job,
+                    segments,
+                });
+            }
+            catch (error) {
+                this.emit("analysis-failed", {
+                    error: normalizeError(error),
+                    job,
+                    segments,
+                });
+            }
         })
             .catch((error) => {
             this.emit("transcription-failed", {

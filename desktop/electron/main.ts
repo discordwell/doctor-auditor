@@ -20,6 +20,8 @@ import { LocalDatabase } from "./database";
 import { PythonReviewMlClient } from "./review-ml";
 import {
   ReviewRuntimeService,
+  type ReviewRuntimeAnalysisCompleted,
+  type ReviewRuntimeAnalysisFailed,
   type ReviewRuntimeTranscriptionCompleted,
   type ReviewRuntimeTranscriptionFailed,
 } from "./review-runtime";
@@ -112,11 +114,41 @@ async function initializeServices(): Promise<void> {
 
       const completedSummary = db.updateSession(job.sessionId, {
         transcriptStatus: segments.length > 0 ? "completed" : "failed",
-        reviewStatus: segments.length > 0 ? "ready" : "not_started",
+        reviewStatus: "not_started",
       });
 
       if (completedSummary) {
         emitSessionChanged(completedSummary);
+      }
+    }
+  );
+  reviewRuntime.on(
+    "analysis-completed",
+    ({ findings, job }: ReviewRuntimeAnalysisCompleted) => {
+      if (!db) {
+        return;
+      }
+
+      db.replaceFindings(job.sessionId, findings);
+      const sessionSummary = db.getSessionSummary(job.sessionId);
+      if (sessionSummary) {
+        emitSessionChanged(sessionSummary);
+      }
+    }
+  );
+  reviewRuntime.on(
+    "analysis-failed",
+    ({ error, job }: ReviewRuntimeAnalysisFailed) => {
+      console.error("Transcript analysis pipeline failed:", error);
+      if (!db) {
+        return;
+      }
+
+      const sessionSummary = db.updateSession(job.sessionId, {
+        reviewStatus: "not_started",
+      });
+      if (sessionSummary) {
+        emitSessionChanged(sessionSummary);
       }
     }
   );
@@ -272,7 +304,7 @@ function buildMinimizedConcernPacket(
 ): ModelAssistRequest["concern"] {
   if (finding.evidenceSpans.length === 0) {
     throw new Error(
-      "Remote second opinion requires at least one linked evidence span."
+      "Remote assist requires at least one linked evidence span."
     );
   }
 
@@ -643,7 +675,7 @@ function registerIpcHandlers(): void {
       const bundle = getSessionBundleOrThrow(request.sessionId);
       if (!bundle.session.consent.remoteAssistAllowed) {
         throw new Error(
-          "Remote second opinion is not permitted for this session."
+          "Remote assist is not permitted for this session."
         );
       }
 

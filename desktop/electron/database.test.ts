@@ -18,6 +18,93 @@ afterEach(() => {
 });
 
 describe("LocalDatabase review artifacts", () => {
+  it("keeps review and export gated until findings are persisted", () => {
+    const db = createDatabase();
+    const session = db.createImportedSession({
+      clinicianId: "clinician-11",
+      recordedWithConsent: true,
+      exportAllowed: true,
+      remoteAssistAllowed: false,
+      policyVersion: "policy-v1",
+      audioPath: "/tmp/gated.wav",
+      capturedAt: "2026-03-15T09:00:00Z",
+      sourceFileName: "gated.wav",
+    });
+    const sessionId = session.session.id;
+
+    db.replaceTranscriptSegments(sessionId, [
+      {
+        id: "segment-gated-001",
+        sessionId,
+        speakerLabel: "unknown",
+        text: "Please schedule the procedure and let us know if the dizziness returns.",
+        startOffsetMs: 0,
+        endOffsetMs: 2800,
+        source: "audio_import",
+      },
+    ]);
+
+    const withoutFindings = db.getSession(sessionId);
+    expect(withoutFindings?.session.reviewStatus).toBe("not_started");
+    expect(withoutFindings?.session.exportStatus).toBe("not_requested");
+    expect(withoutFindings?.findings).toEqual([]);
+
+    db.replaceFindings(sessionId, [
+      {
+        id: "finding-gated-001",
+        sessionId,
+        code: "missing-risk-discussion",
+        title: "Treatment risks were not discussed",
+        summary: "The transcript references a procedure without risk language.",
+        status: "pending_review",
+        confidence: 0.68,
+        evidenceSpans: [
+          {
+            id: "evidence-gated-001",
+            transcriptSegmentId: "segment-gated-001",
+            excerpt:
+              "Please schedule the procedure and let us know if the dizziness returns.",
+            startOffsetMs: 0,
+            endOffsetMs: 2800,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: "2026-03-15T09:00:00Z",
+        updatedAt: "2026-03-15T09:00:00Z",
+      },
+    ]);
+
+    const withFindings = db.getSession(sessionId);
+    expect(withFindings?.session.reviewStatus).toBe("ready");
+    expect(withFindings?.findings).toHaveLength(1);
+
+    db.close();
+  });
+
+  it("clears the stored audio path when live capture fails", () => {
+    const db = createDatabase();
+    const startedSession = db.createLiveCaptureSession({
+      clinicianId: "clinician-live",
+      recordedWithConsent: true,
+      exportAllowed: false,
+      remoteAssistAllowed: false,
+      policyVersion: "policy-v1",
+      startedAt: "2026-03-15T09:30:00Z",
+      audioPath: "/tmp/live-capture.wav",
+    });
+
+    const failed = db.failLiveCaptureSession(
+      startedSession.session.id,
+      "2026-03-15T09:32:00Z"
+    );
+
+    expect(failed?.audioPath).toBeUndefined();
+    expect(failed?.session.transcriptStatus).toBe("failed");
+    expect(failed?.session.reviewStatus).toBe("not_started");
+
+    db.close();
+  });
+
   it("persists findings, review decisions, and approved exports locally", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-15T10:05:00Z"));

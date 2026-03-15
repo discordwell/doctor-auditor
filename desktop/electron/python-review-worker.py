@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
@@ -31,6 +32,8 @@ def handle_request(request: Dict[str, Any]) -> None:
             result = is_model_available(request)
         elif kind == "transcribe-file":
             result = transcribe_file(request)
+        elif kind == "analyze-transcript":
+            result = analyze_transcript(request)
         else:
             raise RuntimeError(f"Unsupported review ML request: {kind}")
 
@@ -63,6 +66,149 @@ def transcribe_file(request: Dict[str, Any]) -> Any:
         return transcribe_with_openai_whisper(request)
 
     raise RuntimeError(f"Unsupported review ML provider: {provider}")
+
+
+def analyze_transcript(request: Dict[str, Any]) -> Dict[str, Any]:
+    session_id = request["sessionId"]
+    transcript_segments = request.get("transcriptSegments") or []
+    findings: list[Dict[str, Any]] = []
+    evidence_spans: list[Dict[str, Any]] = []
+    timestamp = _utc_timestamp()
+
+    def add_finding(
+        code: str,
+        title: str,
+        summary: str,
+        segment: Dict[str, Any] | None,
+        confidence: float,
+    ) -> None:
+        if segment is None:
+            return
+
+        excerpt = str(segment.get("text") or "").strip()
+        if not excerpt:
+            return
+
+        evidence_id = f"evidence-{len(evidence_spans) + 1}"
+        finding_id = f"finding-{len(findings) + 1}"
+        evidence = {
+            "id": evidence_id,
+            "transcriptSegmentId": str(segment.get("id") or "missing-segment"),
+            "excerpt": excerpt,
+            "startOffsetMs": int(segment.get("startOffsetMs") or 0),
+            "endOffsetMs": int(segment.get("endOffsetMs") or 0),
+        }
+        evidence_spans.append(evidence)
+        findings.append(
+            {
+                "id": finding_id,
+                "sessionId": session_id,
+                "code": code,
+                "title": title,
+                "summary": summary,
+                "status": "pending_review",
+                "confidence": confidence,
+                "evidenceSpans": [evidence],
+                "detectedBy": "rules",
+                "createdAt": timestamp,
+                "updatedAt": timestamp,
+            }
+        )
+
+    joined_text = " ".join(
+        str(segment.get("text") or "").strip() for segment in transcript_segments
+    ).lower()
+    closing_segments = transcript_segments[-3:]
+    closing_text = " ".join(
+        str(segment.get("text") or "").strip() for segment in closing_segments
+    ).lower()
+
+    procedure_segment = find_matching_segment(
+        transcript_segments,
+        ["procedure", "surgery", "operation", "biopsy", "injection", "sedation"],
+    )
+    mentions_risk_language = contains_any(
+        joined_text,
+        ["risk", "side effect", "complication", "bleeding", "infection"],
+    )
+    if procedure_segment is not None and not mentions_risk_language:
+        add_finding(
+            code="missing-risk-discussion",
+            title="Treatment risks were not discussed",
+            summary=(
+                "The transcript references a procedure or intervention without a "
+                "nearby discussion of risks, side effects, or complications."
+            ),
+            segment=procedure_segment,
+            confidence=0.68,
+        )
+
+    if transcript_segments and not contains_any(
+        closing_text,
+        [
+            "follow up",
+            "follow-up",
+            "next step",
+            "next steps",
+            "call us",
+            "call if",
+            "return if",
+            "come back",
+            "see you",
+            "reach out",
+        ],
+    ):
+        add_finding(
+            code="missing-follow-up-instructions",
+            title="Follow-up instructions were not clear",
+            summary=(
+                "The closing portion of the transcript does not contain a clear "
+                "follow-up or return-if-needed instruction."
+            ),
+            segment=closing_segments[-1],
+            confidence=0.64,
+        )
+
+    concern_segment = find_matching_segment(
+        transcript_segments,
+        ["worried", "concerned", "pain", "dizzy", "dizziness", "scared", "exhausted"],
+    )
+    empathy_present = contains_any(
+        joined_text,
+        ["i hear", "i understand", "that sounds", "i'm sorry", "we'll make a plan"],
+    )
+    if concern_segment is not None and not empathy_present:
+        add_finding(
+            code="concern-acknowledgement-missing",
+            title="Patient concern acknowledgement needs review",
+            summary=(
+                "The transcript includes a patient concern without a clear "
+                "acknowledgement or restatement from the clinician."
+            ),
+            segment=concern_segment,
+            confidence=0.59,
+        )
+
+    medication_segment = find_matching_segment(
+        transcript_segments,
+        ["missed dose", "missed doses", "refill delayed", "refill delay", "ran out"],
+    )
+    if medication_segment is not None:
+        add_finding(
+            code="medication-adherence",
+            title="Medication adherence needs review",
+            summary=(
+                "The transcript describes a refill or missed-dose issue that should "
+                "be reviewed before export."
+            ),
+            segment=medication_segment,
+            confidence=0.74,
+        )
+
+    return {
+        "findings": findings,
+        "evidenceSpans": evidence_spans,
+    }
 
 
 def is_model_available(request: Dict[str, Any]) -> bool:
@@ -161,6 +307,25 @@ def build_provider_unavailable_message(provider: str) -> str:
 
 def module_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def contains_any(text: str, candidates: list[str]) -> bool:
+    return any(candidate in text for candidate in candidates)
+
+
+def find_matching_segment(
+    transcript_segments: list[Dict[str, Any]],
+    keywords: list[str],
+) -> Dict[str, Any] | None:
+    for segment in transcript_segments:
+        text = str(segment.get("text") or "").strip().lower()
+        if text and contains_any(text, keywords):
+            return segment
+    return None
 
 
 def resolve_python_model_reference(

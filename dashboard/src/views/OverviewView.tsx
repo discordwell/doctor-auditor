@@ -49,7 +49,7 @@ export default function OverviewView() {
           setError(
             fetchError instanceof Error
               ? fetchError.message
-              : "Unable to load export and ops overview."
+              : "Unable to load the approved export and ops surface."
           );
         }
       })
@@ -67,7 +67,7 @@ export default function OverviewView() {
   const overview = useMemo(() => buildOverviewModel(snapshot), [snapshot]);
 
   if (loading) {
-    return <div className="empty-state">Loading export and ops surface...</div>;
+    return <div className="empty-state">Loading the approved export and ops surface...</div>;
   }
 
   if (error) {
@@ -128,7 +128,7 @@ export default function OverviewView() {
         <div className="stat-card kpi-card">
           <div className="stat-label">Assist overrides</div>
           <div className="stat-value accent">{overview.assistOverrideCount}</div>
-          <p>Human reviewers explicitly overrode a second-opinion assist result.</p>
+          <p>Human reviewers explicitly overrode a remote-assist result.</p>
         </div>
         <div className="stat-card kpi-card">
           <div className="stat-label">Redaction blocks</div>

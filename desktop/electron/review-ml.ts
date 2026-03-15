@@ -9,6 +9,8 @@ import {
 import { createInterface, type Interface } from "readline";
 import type { TranscriptSegment } from "@doctor-auditor/shared/local-review";
 import type {
+  ReviewMlAnalysisResult,
+  ReviewMlAnalyzeTranscriptRequest,
   ReviewMlModelAvailabilityRequest,
   ReviewMlRequest,
   ReviewMlResponse,
@@ -31,7 +33,8 @@ interface PendingRequest {
 
 type ReviewMlRequestPayload =
   | Omit<ReviewMlModelAvailabilityRequest, "requestId">
-  | Omit<ReviewMlTranscribeFileRequest, "requestId">;
+  | Omit<ReviewMlTranscribeFileRequest, "requestId">
+  | Omit<ReviewMlAnalyzeTranscriptRequest, "requestId">;
 
 export class PythonReviewMlClient {
   private readonly language: string;
@@ -74,14 +77,8 @@ export class PythonReviewMlClient {
     sessionId: string,
     source: TranscriptSegment["source"]
   ): Promise<TranscriptSegment[]> {
-    if (this.isProcessing) {
-      throw new Error("Already processing a transcription");
-    }
-
-    this.isProcessing = true;
-
-    try {
-      return await this.sendRequest<TranscriptSegment[]>({
+    return this.runExclusiveRequest(() =>
+      this.sendRequest<TranscriptSegment[]>({
         kind: "transcribe-file",
         audioPath,
         language: this.language,
@@ -89,10 +86,23 @@ export class PythonReviewMlClient {
         modelPath: this.modelPath,
         sessionId,
         source,
-      });
-    } finally {
-      this.isProcessing = false;
-    }
+      })
+    );
+  }
+
+  async analyzeTranscript(
+    sessionId: string,
+    transcriptSegments: TranscriptSegment[]
+  ): Promise<ReviewMlAnalysisResult> {
+    return this.runExclusiveRequest(() =>
+      this.sendRequest<ReviewMlAnalysisResult>({
+        kind: "analyze-transcript",
+        modelRef: this.modelRef,
+        modelPath: this.modelPath,
+        sessionId,
+        transcriptSegments,
+      })
+    );
   }
 
   async dispose(): Promise<void> {
@@ -107,6 +117,22 @@ export class PythonReviewMlClient {
     this.stdoutReader = null;
     this.rejectPendingRequests(new Error("Python review ML worker shut down."));
     worker.kill();
+  }
+
+  private async runExclusiveRequest<T>(
+    run: () => Promise<T>
+  ): Promise<T> {
+    if (this.isProcessing) {
+      throw new Error("Already processing a local review ML request.");
+    }
+
+    this.isProcessing = true;
+
+    try {
+      return await run();
+    } finally {
+      this.isProcessing = false;
+    }
   }
 
   private getOrCreateWorker(): ChildProcessWithoutNullStreams {

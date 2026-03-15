@@ -16,9 +16,9 @@
   --attention: #ff8a5b;
   --success: #ffd166;
   --support: #8cc9ff;
-  --risk-high: #ff8a5b;
-  --risk-medium: #ffd166;
-  --risk-low: #50d890;
+  --signal-alert: #ff8a5b;
+  --signal-attention: #ffd166;
+  --signal-ok: #50d890;
   --border: rgba(121, 170, 194, 0.18);
   --shadow: 0 28px 60px rgba(3, 12, 18, 0.35);
 }
@@ -139,17 +139,14 @@ body {
   font-weight: 700;
 }
 
-.stat-value.high,
 .stat-value.attention {
-  color: var(--risk-high);
+  color: var(--signal-alert);
 }
 
-.stat-value.medium,
 .stat-value.success {
-  color: var(--risk-medium);
+  color: var(--signal-attention);
 }
 
-.stat-value.low,
 .stat-value.accent {
   color: var(--accent);
 }
@@ -297,28 +294,6 @@ body {
   font-size: 12px;
   line-height: 1.45;
 }
-
-/* Score bar */
-.score-bar {
-  width: 60px;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-  display: inline-block;
-  vertical-align: middle;
-  margin-left: 8px;
-}
-
-.score-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.3s;
-}
-
-.score-bar-fill.high { background: var(--risk-high); }
-.score-bar-fill.medium { background: var(--risk-medium); }
-.score-bar-fill.low { background: var(--risk-low); }
 
 .empty-state {
   text-align: center;

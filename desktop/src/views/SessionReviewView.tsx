@@ -168,21 +168,21 @@ export default function SessionReviewView({
         setActionErrorMessage(
           result.syncError
             ? `Assist failed locally, and ops sync also failed: ${result.syncError}`
-            : "Remote second opinion request failed. The failure was recorded locally."
+            : "Remote assist request failed. The failure was recorded locally."
         );
         return;
       }
 
       setActionInfoMessage(
         result.syncError
-          ? `Second opinion saved locally, but cloud ops sync failed: ${result.syncError}`
-          : "Second opinion received and stored locally."
+          ? `Remote assist result saved locally, but cloud ops sync failed: ${result.syncError}`
+          : "Remote assist result received and stored locally."
       );
     } catch (error) {
       setActionErrorMessage(
         error instanceof Error
           ? error.message
-          : "Unable to request a remote second opinion."
+          : "Unable to request remote assist."
       );
     } finally {
       setRequestingAssistFindingId(null);
@@ -683,7 +683,7 @@ export default function SessionReviewView({
 
                 <div className="session-review__detail-block">
                   <div className="session-review__detail-row">
-                    <span>Second opinion</span>
+                    <span>Remote assist</span>
                     <strong>
                       {latestAssistReceipt
                         ? formatAssistStatus(latestAssistReceipt)
@@ -727,8 +727,8 @@ export default function SessionReviewView({
                     </div>
                   ) : (
                     <p>
-                      Request a second opinion to log a minimized, non-raw assist
-                      result without moving transcript or findings into the cloud.
+                      Request remote assist to log a minimized, non-raw result
+                      without moving transcript or findings into the cloud.
                     </p>
                   )}
                 </div>

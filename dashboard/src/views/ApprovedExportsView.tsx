@@ -33,7 +33,7 @@ export default function ApprovedExportsView() {
           setError(
             fetchError instanceof Error
               ? fetchError.message
-              : "Unable to load approved exports."
+              : "Unable to load approved exports from the cloud boundary."
           );
         }
       })

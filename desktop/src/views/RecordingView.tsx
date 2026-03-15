@@ -443,7 +443,7 @@ export default function RecordingView() {
                 disabled={inputsLocked}
               />
               <span className="checkbox-copy">
-                <strong>Remote second opinion permitted</strong>
+                <strong>Remote assist permitted</strong>
                 <span>
                   Allows minimized finding metadata to be sent to the assist
                   gateway from the review screen.

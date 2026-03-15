@@ -2,11 +2,21 @@
 
 ## Overview
 
-Doctor Auditor is a local-first encounter review system. It captures or imports consented clinician-patient encounters, keeps raw audio and full transcripts on the desktop, generates evidence-backed findings for human review, and only crosses the cloud boundary with approved, redacted exports.
+Doctor Auditor is a local-first encounter review system. It captures or imports consented clinician-patient encounters, keeps raw audio and full transcripts on the desktop, generates evidence-backed findings for human review, and only crosses the cloud boundary with approved outputs.
 
-The shared contract is intentionally review-centric. It does not define malpractice scores, overall risk buckets, or impairment rankings as first-class outputs.
+The shared contract is intentionally review-first. It does not define clinician scoring, malpractice buckets, or impairment rankings as first-class outputs.
 
-## System Components
+## Architectural decisions
+
+These decisions are intentional and should remain explicit:
+
+- review-first contracts stay
+- insurer scoring is a separate downstream layer
+- the cloud server ingests approved exports and insurer-safe derived features, not raw session bundles
+- raw audio, full transcripts, draft findings, and reviewer notes stay local
+- remote assist is an optional minimized workflow, not a raw-PHI analysis channel
+
+## System components
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -17,68 +27,110 @@ The shared contract is intentionally review-centric. It does not define malpract
 │  │                                                        │  │
 │  │  Audio import / live capture                           │  │
 │  │         ↓                                              │  │
-│  │  Transcript generation + speaker attribution           │  │
+│  │  Local transcription via embedded Python worker        │  │
+│  │         ↓                                              │  │
+│  │  Local transcript analysis and findings                │  │
 │  │         ↓                                              │  │
 │  │  Review session + transcript segments                  │  │
-│  │         ↓                                              │  │
-│  │  Findings + evidence spans                             │  │
 │  │         ↓                                              │  │
 │  │  Human review decisions                                │  │
 │  │         ↓                                              │  │
 │  │  Approved redacted export                              │  │
 │  └──────────────┬─────────────────────────────────────────┘  │
-│                 │ Approved exports only                      │
+│                 │ Approved exports and safe ops only        │
 └─────────────────┼────────────────────────────────────────────┘
                   │ HTTPS
                   ↓
 ┌──────────────────────────────────────────────────────────────┐
-│                        Cloud Server                           │
+│                        Cloud Server                          │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │                 FastAPI Backend                       │  │
 │  │                                                        │  │
+│  │  Auth                                                  │  │
 │  │  Approved export ingestion                             │  │
-│  │  Authentication and audit metadata                     │  │
-│  │  Storage for approved summaries only                   │  │
+│  │  Ops event ingestion                                   │  │
+│  │  Demo seed                                             │  │
+│  │  Remote assist gateway                                 │  │
 │  └──────────────┬─────────────────────────────────────────┘  │
 │                 │                                            │
 │  ┌──────────────┴─────────────────────────────────────────┐  │
 │  │               Review Dashboard                         │  │
 │  │                                                        │  │
-│  │  Review queues, finding activity, export status        │  │
-│  │  Throughput and approved summary visibility            │  │
+│  │  Approved exports                                      │  │
+│  │  Assist and delivery ops                               │  │
+│  │  Redaction and delivery follow-up                      │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow and Privacy Boundary
+## Data flow and privacy boundary
 
 ### What stays local
 
-- Raw audio recordings
-- Full transcripts and speaker labels
-- Draft findings and confidence values
-- Reviewer notes before export approval
-- Local audit history and file-system pointers
+- raw audio recordings
+- full transcripts and speaker labels
+- draft findings and confidence values
+- reviewer notes before export approval
+- local audit history and file-system pointers
 
 ### What can leave the workstation
 
-- Session metadata needed for an approved export
-- Reviewed findings that a human explicitly approved
-- Redacted evidence excerpts tied to those approved findings
-- Export approval metadata and delivery status
+- approved export envelopes
+- approved, redacted evidence excerpts
+- ops events for approved export and remote-assist workflows
+- insurer-safe derived features that are intentionally generated from approved outputs
 
-### Export pipeline
+### What must not leave the workstation
 
-1. Create a `ReviewSession` from imported audio or live capture.
-2. Produce `TranscriptSegment` records with timing and confidence.
-3. Generate `Finding` records with linked `EvidenceSpan` references.
-4. Capture human `ReviewDecision` records for accept, reject, uncertain, or edited outcomes.
-5. Build an `ApprovedExport` that contains only approved summaries and redacted evidence excerpts.
+- raw session bundles
+- full transcript payloads
+- raw audio payloads
+- unreviewed findings
+- reviewer drafts and local notes
 
-## Shared Contract Surface
+## Desktop runtime
 
-The shared TypeScript package now centers on auditable review artifacts:
+The desktop app uses:
+
+- Electron for shell and IPC
+- React for import, history, review, and settings UI
+- SQLite for local session persistence
+- an embedded Python worker under `desktop/electron/` for local transcription and transcript analysis
+
+The local processing sequence is:
+
+1. create a `ReviewSession`
+2. persist local audio metadata and consent
+3. run transcription locally
+4. persist `TranscriptSegment` records
+5. run local transcript analysis
+6. persist `Finding` and `EvidenceSpan` records
+7. collect `ReviewDecision` records
+8. build an `ApprovedExport`
+
+## Cloud runtime
+
+The cloud server is intentionally narrow.
+
+It owns:
+
+- auth
+- approved export ingestion
+- ops event ingestion
+- demo seed
+- remote assist gateway
+
+It does not own:
+
+- raw session uploads
+- full transcript storage
+- desktop review-state mirroring
+- scoring as part of the shared contract
+
+## Shared contract surface
+
+The shared TypeScript package centers on auditable review artifacts:
 
 - `ReviewSession`
 - `TranscriptSegment`
@@ -88,30 +140,28 @@ The shared TypeScript package now centers on auditable review artifacts:
 - `ApprovedExport`
 - `SessionBundle`
 
-That contract deliberately avoids score-heavy language. Downstream lanes should model review queues and approved exports, not assume a required malpractice ranking step.
+That contract should remain review-first even if downstream insurer-safe feature generation is added later.
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
 | Desktop shell | Electron | Cross-platform shell with local device access |
 | Desktop UI | React + TypeScript | Fast local review workflows and shared UI patterns |
-| Speech-to-text | Whisper.cpp or equivalent local runtime | Privacy-preserving transcript generation |
-| Speaker attribution | Local diarization tooling | Useful review context without a cloud dependency |
-| Findings engine | Rules plus optional local/cloud LLM extraction | Evidence-backed findings instead of opaque scoring |
+| Local processing | Embedded Python worker | Separate local transcription and transcript-analysis steps from Electron main |
 | Local storage | SQLite | Durable local session and audit storage |
-| Cloud API | Python + FastAPI | Typed export boundary and straightforward service surface |
-| Cloud DB | PostgreSQL | Storage for approved summaries and export activity |
-| Dashboard | React + TypeScript | Review queue and export visibility |
+| Cloud API | Python + FastAPI | Typed export and ops boundary |
+| Cloud DB | PostgreSQL | Storage for approved exports and ops activity |
+| Dashboard | React + TypeScript | Approved export and ops visibility |
 | Auth | JWT + RBAC | Reviewer, quality lead, and admin separation |
 
-## Directory Structure
+## Directory structure
 
 ```
 doctor-auditor/
-├── desktop/          # Electron desktop app
-├── server/           # FastAPI backend for approved exports
-├── dashboard/        # Review dashboard
+├── desktop/          # Electron app and embedded Python worker
+├── server/           # FastAPI boundary for approved exports and ops
+├── dashboard/        # Approved export and ops dashboard
 ├── shared/           # Shared TypeScript contracts
 ├── docker-compose.yml
 └── ARCHITECTURE.md

@@ -1,5 +1,9 @@
 import { EventEmitter } from "events";
-import type { TranscriptSegment } from "@doctor-auditor/shared/local-review";
+import type {
+  Finding,
+  TranscriptSegment,
+} from "@doctor-auditor/shared/local-review";
+import type { ReviewMlAnalysisResult } from "./review-ml-contract";
 import { PythonReviewMlClient } from "./review-ml";
 
 export interface ReviewRuntimeTranscriptionJob {
@@ -18,9 +22,26 @@ export interface ReviewRuntimeTranscriptionFailed {
   job: ReviewRuntimeTranscriptionJob;
 }
 
+export interface ReviewRuntimeAnalysisCompleted {
+  analysis: ReviewMlAnalysisResult;
+  findings: Finding[];
+  job: ReviewRuntimeTranscriptionJob;
+  segments: TranscriptSegment[];
+}
+
+export interface ReviewRuntimeAnalysisFailed {
+  error: Error;
+  job: ReviewRuntimeTranscriptionJob;
+  segments: TranscriptSegment[];
+}
+
 export interface ReviewRuntimeMlAdapter {
   dispose(): Promise<void>;
   isModelAvailable(): Promise<boolean>;
+  analyzeTranscript(
+    sessionId: string,
+    transcriptSegments: TranscriptSegment[]
+  ): Promise<ReviewMlAnalysisResult>;
   transcribeFile(
     audioPath: string,
     sessionId: string,
@@ -67,6 +88,25 @@ export class ReviewRuntimeService extends EventEmitter {
           job,
           segments,
         } satisfies ReviewRuntimeTranscriptionCompleted);
+
+        try {
+          const analysis = await this.reviewMl.analyzeTranscript(
+            job.sessionId,
+            segments
+          );
+          this.emit("analysis-completed", {
+            analysis,
+            findings: analysis.findings,
+            job,
+            segments,
+          } satisfies ReviewRuntimeAnalysisCompleted);
+        } catch (error) {
+          this.emit("analysis-failed", {
+            error: normalizeError(error),
+            job,
+            segments,
+          } satisfies ReviewRuntimeAnalysisFailed);
+        }
       })
       .catch((error) => {
         this.emit("transcription-failed", {

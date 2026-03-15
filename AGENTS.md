@@ -14,6 +14,13 @@ This is a live repository with an existing scaffold and an `origin` remote. Agen
 - Do not change `package-lock.json` unless your task adds, removes, or upgrades dependencies.
 - If you need a shared contract change, make that change first, call it out clearly, and keep the diff small.
 
+## Architectural boundary
+
+- The current shared contracts stay review-first.
+- Any eventual insurer scoring model is a downstream layer, not a first-class desktop or shared-contract output.
+- The cloud server ingests approved exports and insurer-safe derived features, not full raw session bundles.
+- Raw audio, full transcripts, and other raw session artifacts stay local unless a future contract explicitly says otherwise.
+
 ## Coordination-critical files
 
 Treat these as serialized edits. Only one agent should touch them in a batch:

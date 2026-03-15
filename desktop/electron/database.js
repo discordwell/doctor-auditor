@@ -61,6 +61,7 @@ class LocalDatabase {
             transcriptStatus: "failed",
             reviewStatus: "not_started",
             encounterEndedAt: failedAt,
+            audioPath: null,
         });
     }
     updateSession(sessionId, updates) {
@@ -76,7 +77,7 @@ class LocalDatabase {
             encounterEndedAt: updates.encounterEndedAt ?? currentSummary.session.encounterEndedAt,
             updatedAt: new Date().toISOString(),
         };
-        const nextAudioPath = updates.audioPath ?? currentSummary.audioPath;
+        const nextAudioPath = updates.audioPath === undefined ? currentSummary.audioPath : updates.audioPath;
         this.db
             .prepare(`UPDATE sessions
          SET clinician_id = ?,
@@ -131,6 +132,7 @@ class LocalDatabase {
         }
         this.updateSession(sessionId, {
             exportStatus: "not_requested",
+            reviewStatus: findings.length > 0 ? undefined : "not_started",
         });
         this.syncSessionReviewStatus(sessionId);
     }
