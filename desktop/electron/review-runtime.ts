@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
-import type { TranscriptSegment } from "@doctor-auditor/shared";
-import { TranscriptionService } from "./transcription";
+import type { TranscriptSegment } from "@doctor-auditor/shared/local-review";
+import { PythonReviewMlClient } from "./review-ml";
 
 export interface ReviewRuntimeTranscriptionJob {
   audioPath: string;
@@ -18,7 +18,7 @@ export interface ReviewRuntimeTranscriptionFailed {
   job: ReviewRuntimeTranscriptionJob;
 }
 
-export interface ReviewRuntimeTranscriptionAdapter {
+export interface ReviewRuntimeMlAdapter {
   dispose(): Promise<void>;
   isModelAvailable(): Promise<boolean>;
   transcribeFile(
@@ -29,15 +29,15 @@ export interface ReviewRuntimeTranscriptionAdapter {
 }
 
 export class ReviewRuntimeService extends EventEmitter {
-  private readonly transcription: ReviewRuntimeTranscriptionAdapter;
+  private readonly reviewMl: ReviewRuntimeMlAdapter;
   private transcriptionQueue: Promise<void> = Promise.resolve();
   private isDisposed = false;
 
   constructor(
-    transcription: ReviewRuntimeTranscriptionAdapter = new TranscriptionService()
+    reviewMl: ReviewRuntimeMlAdapter = new PythonReviewMlClient()
   ) {
     super();
-    this.transcription = transcription;
+    this.reviewMl = reviewMl;
   }
 
   enqueueTranscription(job: ReviewRuntimeTranscriptionJob): void {
@@ -52,12 +52,12 @@ export class ReviewRuntimeService extends EventEmitter {
           throw new Error("Review runtime shut down.");
         }
 
-        const modelAvailable = await this.transcription.isModelAvailable();
+        const modelAvailable = await this.reviewMl.isModelAvailable();
         if (!modelAvailable) {
           throw new Error("Local transcription model not found.");
         }
 
-        const segments = await this.transcription.transcribeFile(
+        const segments = await this.reviewMl.transcribeFile(
           job.audioPath,
           job.sessionId,
           job.source
@@ -78,7 +78,7 @@ export class ReviewRuntimeService extends EventEmitter {
 
   async dispose(): Promise<void> {
     this.isDisposed = true;
-    await this.transcription.dispose();
+    await this.reviewMl.dispose();
   }
 }
 

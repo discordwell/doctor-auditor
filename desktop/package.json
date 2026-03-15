@@ -8,6 +8,7 @@
     "dev:renderer": "vite",
     "dev:electron:wait": "node electron/wait-for-renderer.mjs && npm run dev:electron",
     "dev:electron": "tsc -p electron/tsconfig.json && electron .",
+    "setup:review-ml": "python3 -m pip install -r electron/requirements-review-ml.txt",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json --outDir .typecheck",
     "build": "tsc -p electron/tsconfig.json && vite build && electron-builder",
     "test": "vitest run --passWithNoTests"

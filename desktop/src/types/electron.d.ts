@@ -1,14 +1,18 @@
+import type { ApprovedExportEnvelope } from "@doctor-auditor/shared/cloud";
 import type {
   EvidenceSpan,
+  ModelAssistReceipt,
   ReviewDecisionOutcome,
   ReviewSession,
   SessionBundle,
-} from "@doctor-auditor/shared";
+} from "@doctor-auditor/shared/local-review";
 
 export interface SessionIntakeRequest {
   clinicianId: string;
   recordedWithConsent: boolean;
   exportAllowed: boolean;
+  remoteAssistAllowed: boolean;
+  policyVersion: string;
 }
 
 export interface DesktopSessionSummary {
@@ -29,6 +33,37 @@ export interface PersistReviewDecisionRequest {
   editedTitle?: string;
   editedSummary?: string;
   approvedEvidenceSpans?: EvidenceSpan[];
+}
+
+export interface RequestSeriousnessAssistRequest {
+  sessionId: string;
+  findingId: string;
+}
+
+export interface RequestSeriousnessAssistResult {
+  bundle: DesktopSessionBundle | null;
+  receipt: ModelAssistReceipt;
+  synced: boolean;
+  syncError?: string;
+}
+
+export interface UpdateModelAssistActionRequest {
+  sessionId: string;
+  receiptId: string;
+  reviewerAction: NonNullable<ModelAssistReceipt["reviewerAction"]>;
+}
+
+export interface CreateApprovedExportRequest {
+  sessionId: string;
+  destination?: string;
+  status?: "approved" | "sent";
+}
+
+export interface CreateApprovedExportResult {
+  bundle: DesktopSessionBundle | null;
+  envelope: ApprovedExportEnvelope;
+  synced: boolean;
+  syncError?: string;
 }
 
 export interface AudioDevice {
@@ -89,6 +124,15 @@ export interface DoctorAuditorAPI {
     saveReviewDecision: (
       request: PersistReviewDecisionRequest
     ) => Promise<DesktopSessionBundle | null>;
+    requestSeriousnessAssist: (
+      request: RequestSeriousnessAssistRequest
+    ) => Promise<RequestSeriousnessAssistResult>;
+    updateModelAssistAction: (
+      request: UpdateModelAssistActionRequest
+    ) => Promise<DesktopSessionBundle | null>;
+    createApprovedExport: (
+      request: CreateApprovedExportRequest
+    ) => Promise<CreateApprovedExportResult>;
     importAudio: (
       request: SessionIntakeRequest
     ) => Promise<

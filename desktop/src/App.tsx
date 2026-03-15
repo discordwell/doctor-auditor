@@ -45,7 +45,7 @@ export default function App() {
         </ul>
         <div className="privacy-indicator">
           <span className="privacy-dot" />
-          HIPAA Compliant — Data Stays Local
+          🦛 Friendly — Data Stays Local
         </div>
       </nav>
       <main className="content">

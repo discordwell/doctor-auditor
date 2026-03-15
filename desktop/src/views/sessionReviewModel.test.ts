@@ -128,6 +128,8 @@ function createBundle(
       consent: {
         recordedWithConsent: true,
         exportAllowed: true,
+        remoteAssistAllowed: false,
+        policyVersion: "local-only-v1",
       },
     },
     transcriptSegments: [],
@@ -135,6 +137,7 @@ function createBundle(
     reviewDecisions: [],
     approvedExports: [],
     auditLogEntries: [],
+    modelAssistReceipts: [],
     ...overrides,
   };
 }

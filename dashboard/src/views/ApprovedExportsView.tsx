@@ -1,17 +1,17 @@
 import React, { useEffect, useState } from "react";
-import type { ApprovedExport } from "../services/api";
+import type { ApprovedExportEnvelope } from "../services/api";
 import {
   formatDateTime,
   getExportTone,
   loadApprovedExports,
 } from "../services/reviewDashboard";
 
-type ExportFilter = "all" | ApprovedExport["status"];
+type ExportFilter = "all" | ApprovedExportEnvelope["export"]["status"];
 
 const FILTERS: ExportFilter[] = ["all", "draft", "approved", "sent"];
 
 export default function ApprovedExportsView() {
-  const [exportsList, setExportsList] = useState<ApprovedExport[]>([]);
+  const [exportsList, setExportsList] = useState<ApprovedExportEnvelope[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<ExportFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -58,7 +58,7 @@ export default function ApprovedExportsView() {
         <div>
           <h2>Approved exports</h2>
           <p>
-            Reviewed summaries and evidence excerpts that are ready for manual
+            Reviewed export envelopes and approved packets that are ready for manual
             delivery or already sent downstream.
           </p>
         </div>
@@ -100,22 +100,25 @@ export default function ApprovedExportsView() {
           <tbody>
             {exportsList.map((item) => (
               <tr key={item.id}>
-                <td>{formatDateTime(item.approvedAt)}</td>
+                <td>{formatDateTime(item.export.approvedAt)}</td>
                 <td>
                   <div className="mono-code">{item.id}</div>
-                  <div className="table-meta">{item.summary}</div>
+                  <div className="table-meta">{item.export.summary}</div>
                 </td>
                 <td>
-                  <span className="mono-code">{item.sessionId}</span>
+                  <span className="mono-code">{item.session.localSessionId}</span>
+                  <div className="table-meta">{item.session.clinicianId}</div>
                 </td>
                 <td>
-                  <span className={`status-badge ${getExportTone(item.status)}`}>
-                    {item.status}
+                  <span
+                    className={`status-badge ${getExportTone(item.export.status)}`}
+                  >
+                    {item.export.status}
                   </span>
                 </td>
-                <td>{item.findings.length}</td>
-                <td>{item.approvedBy}</td>
-                <td>{item.destination ?? "Manual review hold"}</td>
+                <td>{item.export.findings.length}</td>
+                <td>{item.export.approvedBy}</td>
+                <td>{item.export.destination ?? "Manual review hold"}</td>
               </tr>
             ))}
           </tbody>

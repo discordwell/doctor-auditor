@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
+import type { CaptureMode } from "@doctor-auditor/shared";
 import type {
-  CaptureMode,
   ExportStatus,
   ReviewStatus,
   TranscriptStatus,
-} from "@doctor-auditor/shared";
+} from "@doctor-auditor/shared/local-review";
 import "./HistoryView.css";
 import type { DesktopSessionSummary } from "../types/electron";
 
@@ -502,6 +502,8 @@ function formatCaptureMode(value: CaptureMode): string {
     case "manual_entry":
       return "Manual entry";
   }
+
+  return "Unknown";
 }
 
 function formatTranscriptStatus(value: TranscriptStatus): string {

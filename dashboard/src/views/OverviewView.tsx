@@ -11,9 +11,13 @@ import {
 
 import {
   buildOverviewModel,
-  EMPTY_REVIEW_SNAPSHOT,
-  loadReviewSnapshot,
-  type ReviewSnapshot,
+  EMPTY_OPERATIONS_SNAPSHOT,
+  formatDateTime,
+  formatStatusLabel,
+  getExportTone,
+  getOpsTone,
+  loadOperationsSnapshot,
+  type OperationsSnapshot,
 } from "../services/reviewDashboard";
 
 const compactNumber = new Intl.NumberFormat("en-US", {
@@ -22,7 +26,9 @@ const compactNumber = new Intl.NumberFormat("en-US", {
 });
 
 export default function OverviewView() {
-  const [snapshot, setSnapshot] = useState<ReviewSnapshot>(EMPTY_REVIEW_SNAPSHOT);
+  const [snapshot, setSnapshot] = useState<OperationsSnapshot>(
+    EMPTY_OPERATIONS_SNAPSHOT
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -32,7 +38,7 @@ export default function OverviewView() {
     setLoading(true);
     setError("");
 
-    loadReviewSnapshot()
+    loadOperationsSnapshot()
       .then((data) => {
         if (active) {
           setSnapshot(data);
@@ -43,7 +49,7 @@ export default function OverviewView() {
           setError(
             fetchError instanceof Error
               ? fetchError.message
-              : "Unable to load review overview."
+              : "Unable to load export and ops overview."
           );
         }
       })
@@ -59,23 +65,22 @@ export default function OverviewView() {
   }, []);
 
   const overview = useMemo(() => buildOverviewModel(snapshot), [snapshot]);
-  const sessionsById = useMemo(
-    () => new Map(snapshot.sessions.map((session) => [session.id, session])),
-    [snapshot.sessions]
-  );
 
   if (loading) {
-    return <div className="empty-state">Loading review operations surface...</div>;
+    return <div className="empty-state">Loading export and ops surface...</div>;
   }
 
   if (error) {
     return <div className="empty-state">{error}</div>;
   }
 
-  if (overview.sessionsInScope === 0 && snapshot.findings.length === 0) {
+  if (
+    overview.totalExports === 0 &&
+    snapshot.opsEvents.length === 0
+  ) {
     return (
       <div className="empty-state">
-        No review data is available for this organization yet.
+        No approved export or safe ops data is available for this organization yet.
       </div>
     );
   }
@@ -84,26 +89,26 @@ export default function OverviewView() {
     <div className="overview-shell">
       <section className="overview-hero">
         <div>
-          <span className="overview-eyebrow">Review overview</span>
-          <h2>Sessions, findings, and approved exports in one review surface</h2>
+          <span className="overview-eyebrow">Cloud boundary</span>
+          <h2>Approved exports and safe ops only</h2>
           <p className="overview-intro">
-            The overview is derived from the current backend review records for
-            this organization, not from local fixture data.
+            This surface no longer mirrors desktop review state. It tracks approved
+            exports plus non-PHI operational signals from assist and delivery flows.
           </p>
         </div>
         <div className="source-card">
           <p>
-            Metrics below are computed from stored sessions, findings, and
-            approved export records in the live review database.
+            Metrics below are derived from export envelopes and safe ops events only.
+            Raw transcript text, findings, and reviewer notes remain desktop-local.
           </p>
           <dl className="source-details">
             <div>
-              <dt>Sessions in scope</dt>
-              <dd>{compactNumber.format(overview.sessionsInScope)}</dd>
+              <dt>Total exports</dt>
+              <dd>{compactNumber.format(overview.totalExports)}</dd>
             </div>
             <div>
-              <dt>Reviewed findings</dt>
-              <dd>{overview.reviewedFindings}</dd>
+              <dt>Assist usage</dt>
+              <dd>{overview.assistUsageCount}</dd>
             </div>
           </dl>
         </div>
@@ -111,36 +116,24 @@ export default function OverviewView() {
 
       <section className="stats-grid overview-kpis">
         <div className="stat-card kpi-card">
-          <div className="stat-label">Open findings</div>
-          <div className="stat-value attention">{overview.openFindings}</div>
-          <p>
-            {overview.agingItems} active sessions have been sitting in review
-            for more than 48 hours.
-          </p>
-        </div>
-        <div className="stat-card kpi-card">
           <div className="stat-label">Approved exports</div>
-          <div className="stat-value success">{overview.approvedExportCount}</div>
-          <p>
-            Only approved or sent packets count here. Draft exports stay
-            visible in the queue lane.
-          </p>
+          <div className="stat-value attention">{overview.approvedExports}</div>
+          <p>Approved packets waiting for downstream delivery or manual release.</p>
         </div>
         <div className="stat-card kpi-card">
-          <div className="stat-label">Reviewed findings</div>
-          <div className="stat-value accent">{overview.reviewedFindings}</div>
-          <p>
-            Accepted, rejected, and revised findings stay auditable instead of
-            collapsing into a score.
-          </p>
+          <div className="stat-label">Sent exports</div>
+          <div className="stat-value success">{overview.sentExports}</div>
+          <p>Exports already delivered after local review and approval.</p>
         </div>
         <div className="stat-card kpi-card">
-          <div className="stat-label">Session coverage</div>
-          <div className="stat-value">{overview.sessionsInScope}</div>
-          <p>
-            Every card in this overview is anchored to a session, finding, or
-            approved export record.
-          </p>
+          <div className="stat-label">Assist overrides</div>
+          <div className="stat-value accent">{overview.assistOverrideCount}</div>
+          <p>Human reviewers explicitly overrode a second-opinion assist result.</p>
+        </div>
+        <div className="stat-card kpi-card">
+          <div className="stat-label">Redaction blocks</div>
+          <div className="stat-value">{overview.redactionBlockCount}</div>
+          <p>Local privacy checks blocked assist or export progress.</p>
         </div>
       </section>
 
@@ -149,23 +142,23 @@ export default function OverviewView() {
           <div className="panel-header">
             <div>
               <span className="overview-eyebrow">Activity</span>
-              <h3>How review work is moving week to week</h3>
+              <h3>Export and ops signals by week</h3>
             </div>
             <p>
-              Sessions, findings, and exports are tracked independently so the
-              overview tells a workflow story instead of a risk-average story.
+              Exports, assist events, and privacy blocks are tracked separately to
+              preserve the local/cloud boundary.
             </p>
           </div>
           <ResponsiveContainer width="100%" height={320}>
             <AreaChart data={overview.weeklyActivity}>
               <defs>
-                <linearGradient id="sessionsFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3dd6d0" stopOpacity={0.55} />
-                  <stop offset="95%" stopColor="#3dd6d0" stopOpacity={0.05} />
-                </linearGradient>
                 <linearGradient id="exportsFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#ffd166" stopOpacity={0.45} />
                   <stop offset="95%" stopColor="#ffd166" stopOpacity={0.08} />
+                </linearGradient>
+                <linearGradient id="assistsFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#3dd6d0" stopOpacity={0.45} />
+                  <stop offset="95%" stopColor="#3dd6d0" stopOpacity={0.08} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#233241" />
@@ -181,26 +174,26 @@ export default function OverviewView() {
               />
               <Area
                 type="monotone"
-                dataKey="sessions"
-                stroke="#3dd6d0"
-                fill="url(#sessionsFill)"
-                name="Sessions"
-                strokeWidth={2}
-              />
-              <Area
-                type="monotone"
-                dataKey="findings"
-                stroke="#8cc9ff"
-                fill="transparent"
-                name="Findings"
-                strokeWidth={2}
-              />
-              <Area
-                type="monotone"
                 dataKey="exports"
                 stroke="#ffd166"
                 fill="url(#exportsFill)"
-                name="Approved exports"
+                name="Exports"
+                strokeWidth={2}
+              />
+              <Area
+                type="monotone"
+                dataKey="assists"
+                stroke="#3dd6d0"
+                fill="url(#assistsFill)"
+                name="Assist events"
+                strokeWidth={2}
+              />
+              <Area
+                type="monotone"
+                dataKey="blocks"
+                stroke="#ff7b7b"
+                fill="transparent"
+                name="Privacy blocks"
                 strokeWidth={2}
               />
             </AreaChart>
@@ -211,11 +204,10 @@ export default function OverviewView() {
           <div className="panel-header">
             <div>
               <span className="overview-eyebrow">Queue</span>
-              <h3>Where the review backlog is collecting</h3>
+              <h3>Centralized follow-up lanes</h3>
             </div>
             <p>
-              These lanes come directly from finding and export statuses instead
-              of from inferred risk buckets.
+              The cloud queue is limited to delivery and safe operational follow-up.
             </p>
           </div>
           <div className="queue-lanes">
@@ -236,70 +228,85 @@ export default function OverviewView() {
         <div className="panel-header">
           <div>
             <span className="overview-eyebrow">Focus areas</span>
-            <h3>Findings that deserve a second look</h3>
+            <h3>Ops items that deserve a second look</h3>
           </div>
           <p>
-            Tiles are grouped from the current finding set, with status and
-            detection source kept visible.
+            These cards stay operational and avoid recreating a centralized finding queue.
           </p>
         </div>
         <div className="focus-grid">
           {overview.focusItems.map((item) => (
             <article key={item.title} className={`focus-card ${item.tone}`}>
-              <div className="focus-card-top">
-                <span className="focus-count">{item.count}</span>
-                <span className="focus-owner">{item.owner}</span>
+              <div className="focus-count">{item.count}</div>
+              <div>
+                <h4>{item.title}</h4>
+                <p>{item.detail}</p>
+                <span>{item.owner}</span>
               </div>
-              <h4>{item.title}</h4>
-              <p>{item.detail}</p>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="panel-card export-section">
-        <div className="panel-header">
-          <div>
-            <span className="overview-eyebrow">Exports</span>
-            <h3>Approved export lane</h3>
-          </div>
-          <p>
-            Export packets remain explicitly downstream of review. Draft,
-            approved, and sent states stay visible as separate steps.
-          </p>
-        </div>
-        <div className="export-table">
-          <div className="export-row export-head">
-            <span>Approved</span>
-            <span>Clinician</span>
-            <span>Destination</span>
-            <span>Status</span>
-            <span>Summary</span>
-          </div>
-          {overview.exportRows.map((approvedExport) => (
-            <div key={approvedExport.id} className="export-row">
-              <span>
-                {new Date(approvedExport.approvedAt).toLocaleDateString(
-                  "en-US",
-                  {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  }
-                )}
-              </span>
-              <span>
-                {sessionsById.get(approvedExport.sessionId)?.clinicianId ??
-                  "unassigned"}
-              </span>
-              <span>{approvedExport.destination ?? "manual-review-hold"}</span>
-              <span className={`status-pill ${approvedExport.status}`}>
-                {approvedExport.status.replace(/_/g, " ")}
-              </span>
-              <span>{approvedExport.summary}</span>
+      <section className="overview-panels">
+        <div className="panel-card">
+          <div className="panel-header">
+            <div>
+              <span className="overview-eyebrow">Recent exports</span>
+              <h3>Latest approved envelopes</h3>
             </div>
-          ))}
+            <p>
+              Every export row carries only safe session metadata plus the approved packet.
+            </p>
+          </div>
+          <div className="export-list">
+            {overview.exportRows.map((item) => (
+              <article key={item.id} className="export-row">
+                <div>
+                  <p className="mono-code">{item.id}</p>
+                  <h4>{item.session.clinicianId}</h4>
+                  <p>{item.export.summary}</p>
+                </div>
+                <div className="export-row__meta">
+                  <span className={`status-badge ${getExportTone(item.export.status)}`}>
+                    {formatStatusLabel(item.export.status)}
+                  </span>
+                  <span>{item.export.destination ?? "Manual hold"}</span>
+                  <span>{formatDateTime(item.export.approvedAt)}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel-card">
+          <div className="panel-header">
+            <div>
+              <span className="overview-eyebrow">Recent ops</span>
+              <h3>Latest non-PHI operational events</h3>
+            </div>
+            <p>
+              Event rows keep provider, policy, and latency metadata but not prompts or evidence text.
+            </p>
+          </div>
+          <div className="export-list">
+            {overview.recentOpsEvents.map((event) => (
+              <article key={event.id} className="export-row">
+                <div>
+                  <p className="mono-code">{event.id}</p>
+                  <h4>{formatStatusLabel(event.type)}</h4>
+                  <p>{event.localSessionId}</p>
+                </div>
+                <div className="export-row__meta">
+                  <span className={`status-badge ${getOpsTone(event.type)}`}>
+                    {formatStatusLabel(event.type)}
+                  </span>
+                  <span>{event.provider ?? "local desktop"}</span>
+                  <span>{formatDateTime(event.recordedAt)}</span>
+                </div>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
     </div>

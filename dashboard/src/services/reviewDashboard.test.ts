@@ -1,222 +1,181 @@
 import { describe, expect, it } from "vitest";
 
-import type { ReviewSnapshot } from "./reviewDashboard";
+import type { OperationsSnapshot } from "./reviewDashboard";
 import {
   buildOverviewModel,
   formatStatusLabel,
   getExportTone,
-  getFindingTone,
-  getSessionStatusTone,
+  getOpsTone,
   sortApprovedExports,
-  sortFindings,
-  sortSessions,
+  sortOpsEvents,
 } from "./reviewDashboard";
 
-const sampleSnapshot: ReviewSnapshot = {
-  sessions: [
-    {
-      id: "session-demo-001",
-      clinicianId: "clinician-ada",
-      organizationId: "demo-health",
-      encounterStartedAt: "2026-03-10T15:00:00Z",
-      encounterEndedAt: "2026-03-10T15:28:00Z",
-      captureMode: "audio_import",
-      transcriptStatus: "completed",
-      reviewStatus: "in_review",
-      exportStatus: "draft",
-      createdAt: "2026-03-10T15:35:00Z",
-      updatedAt: "2026-03-12T09:15:00Z",
-      consent: {
-        recordedWithConsent: true,
-        exportAllowed: true,
-      },
-    },
-    {
-      id: "session-demo-002",
-      clinicianId: "clinician-ada",
-      organizationId: "demo-health",
-      encounterStartedAt: "2026-03-08T17:00:00Z",
-      encounterEndedAt: "2026-03-08T17:22:00Z",
-      captureMode: "audio_import",
-      transcriptStatus: "completed",
-      reviewStatus: "completed",
-      exportStatus: "sent",
-      createdAt: "2026-03-08T17:30:00Z",
-      updatedAt: "2026-03-09T11:00:00Z",
-      consent: {
-        recordedWithConsent: true,
-        exportAllowed: true,
-      },
-    },
-    {
-      id: "session-demo-003",
-      clinicianId: "clinician-lin",
-      organizationId: "demo-health",
-      encounterStartedAt: "2026-03-13T19:10:00Z",
-      encounterEndedAt: "2026-03-13T19:41:00Z",
-      captureMode: "live_capture",
-      transcriptStatus: "completed",
-      reviewStatus: "ready",
-      exportStatus: "not_requested",
-      createdAt: "2026-03-13T19:45:00Z",
-      updatedAt: "2026-03-14T07:40:00Z",
-      consent: {
-        recordedWithConsent: true,
-        exportAllowed: false,
-      },
-    },
-    {
-      id: "session-demo-004",
-      clinicianId: "clinician-noor",
-      organizationId: "demo-health",
-      encounterStartedAt: "2026-03-14T13:00:00Z",
-      encounterEndedAt: "2026-03-14T13:19:00Z",
-      captureMode: "audio_import",
-      transcriptStatus: "completed",
-      reviewStatus: "completed",
-      exportStatus: "approved",
-      createdAt: "2026-03-14T13:26:00Z",
-      updatedAt: "2026-03-15T08:35:00Z",
-      consent: {
-        recordedWithConsent: true,
-        exportAllowed: true,
-      },
-    },
-  ],
-  findings: [
-    {
-      id: "finding-demo-001",
-      sessionId: "session-demo-001",
-      code: "follow-up-plan",
-      title: "Follow-up plan still needs reviewer confirmation",
-      summary: "Timing language is still ambiguous in the export packet.",
-      status: "pending_review",
-      confidence: 0.82,
-      evidenceSpans: [],
-      detectedBy: "rules",
-      createdAt: "2026-03-10T15:40:00Z",
-      updatedAt: "2026-03-12T09:15:00Z",
-    },
-    {
-      id: "finding-demo-002",
-      sessionId: "session-demo-001",
-      code: "medication-risk",
-      title: "Medication side-effect counseling needs evidence trim",
-      summary: "Evidence spans overlap and need cleanup before approval.",
-      status: "uncertain",
-      confidence: 0.71,
-      evidenceSpans: [],
-      detectedBy: "local_llm",
-      createdAt: "2026-03-10T15:42:00Z",
-      updatedAt: "2026-03-12T09:20:00Z",
-    },
-    {
-      id: "finding-demo-003",
-      sessionId: "session-demo-002",
-      code: "empathy-gap",
-      title: "Patient concern was acknowledged and approved",
-      summary: "Reviewer accepted this finding for the final export.",
-      status: "accepted",
-      confidence: 0.65,
-      evidenceSpans: [],
-      detectedBy: "human",
-      createdAt: "2026-03-08T17:35:00Z",
-      updatedAt: "2026-03-09T11:00:00Z",
-      reviewDecisionId: "decision-demo-001",
-    },
-    {
-      id: "finding-demo-004",
-      sessionId: "session-demo-003",
-      code: "direct-question",
-      title: "Direct patient question has not been answered yet",
-      summary: "The answer is missing from the current evidence set.",
-      status: "draft",
-      confidence: 0.8,
-      evidenceSpans: [],
-      detectedBy: "rules",
-      createdAt: "2026-03-13T19:48:00Z",
-      updatedAt: "2026-03-14T07:40:00Z",
-    },
-    {
-      id: "finding-demo-005",
-      sessionId: "session-demo-004",
-      code: "handoff-clarity",
-      title: "Handoff summary was edited during review",
-      summary: "Reviewer tightened the summary language before export approval.",
-      status: "revised",
-      confidence: 0.77,
-      evidenceSpans: [],
-      detectedBy: "local_llm",
-      createdAt: "2026-03-14T13:29:00Z",
-      updatedAt: "2026-03-15T08:35:00Z",
-      reviewDecisionId: "decision-demo-002",
-    },
-  ],
+const sampleSnapshot: OperationsSnapshot = {
   approvedExports: [
     {
       id: "export-demo-001",
-      sessionId: "session-demo-002",
-      status: "sent",
-      summary: "Final export covering the reviewed empathy acknowledgement.",
-      findings: [],
-      approvedBy: "quality-lead-1",
-      approvedAt: "2026-03-09T11:20:00Z",
-      destination: "compliance-archive",
-      sentAt: "2026-03-09T11:55:00Z",
+      organizationId: "demo-health",
+      session: {
+        localSessionId: "session-demo-002",
+        clinicianId: "clinician-ada",
+        encounterStartedAt: "2026-03-08T17:00:00Z",
+        encounterEndedAt: "2026-03-08T17:22:00Z",
+        captureMode: "audio_import",
+      },
+      consent: {
+        recordedWithConsent: true,
+        exportAllowed: true,
+        remoteAssistAllowed: true,
+        policyVersion: "policy-v1",
+      },
+      export: {
+        id: "export-demo-001",
+        sessionId: "session-demo-002",
+        status: "sent",
+        summary: "Final export covering the reviewed empathy acknowledgement.",
+        findings: [],
+        approvedBy: "quality-lead-1",
+        approvedAt: "2026-03-09T11:20:00Z",
+        destination: "compliance-archive",
+        sentAt: "2026-03-09T11:55:00Z",
+      },
+      attestation: {
+        reviewedBy: "reviewer-1",
+        reviewCompletedAt: "2026-03-09T11:00:00Z",
+        clientVersion: "desktop-demo-1.0.0",
+        localBundleHash: "bundle-hash-demo-001",
+        assistReceiptIds: ["assist-demo-001"],
+      },
     },
     {
       id: "export-demo-002",
-      sessionId: "session-demo-004",
-      status: "approved",
-      summary: "Approved export packet for the updated handoff summary.",
-      findings: [],
-      approvedBy: "quality-lead-2",
-      approvedAt: "2026-03-15T08:40:00Z",
-      destination: "claims-review-queue",
+      organizationId: "demo-health",
+      session: {
+        localSessionId: "session-demo-004",
+        clinicianId: "clinician-noor",
+        encounterStartedAt: "2026-03-14T13:00:00Z",
+        encounterEndedAt: "2026-03-14T13:19:00Z",
+        captureMode: "audio_import",
+      },
+      consent: {
+        recordedWithConsent: true,
+        exportAllowed: true,
+        remoteAssistAllowed: false,
+        policyVersion: "policy-v1",
+      },
+      export: {
+        id: "export-demo-002",
+        sessionId: "session-demo-004",
+        status: "approved",
+        summary: "Approved export packet for the updated handoff summary.",
+        findings: [],
+        approvedBy: "quality-lead-2",
+        approvedAt: "2026-03-15T08:40:00Z",
+        destination: "claims-review-queue",
+      },
+      attestation: {
+        reviewedBy: "quality-lead-2",
+        reviewCompletedAt: "2026-03-15T08:35:00Z",
+        clientVersion: "desktop-demo-1.0.0",
+        localBundleHash: "bundle-hash-demo-002",
+        assistReceiptIds: [],
+      },
     },
     {
       id: "export-demo-003",
-      sessionId: "session-demo-001",
-      status: "draft",
-      summary: "Draft export waiting for final confirmation.",
-      findings: [],
-      approvedBy: "quality-lead-3",
-      approvedAt: "2026-03-12T09:30:00Z",
-      destination: "internal-quality-review",
+      organizationId: "demo-health",
+      session: {
+        localSessionId: "session-demo-005",
+        clinicianId: "clinician-lin",
+        encounterStartedAt: "2026-03-12T14:00:00Z",
+        encounterEndedAt: "2026-03-12T14:16:00Z",
+        captureMode: "audio_import",
+      },
+      consent: {
+        recordedWithConsent: true,
+        exportAllowed: true,
+        remoteAssistAllowed: false,
+        policyVersion: "policy-v1",
+      },
+      export: {
+        id: "export-demo-003",
+        sessionId: "session-demo-005",
+        status: "draft",
+        summary: "Draft export packet waiting on approval.",
+        findings: [],
+        approvedBy: "quality-lead-3",
+        approvedAt: "2026-03-12T09:30:00Z",
+        destination: "internal-quality-review",
+      },
+      attestation: {
+        reviewedBy: "reviewer-3",
+        reviewCompletedAt: "2026-03-12T09:25:00Z",
+        clientVersion: "desktop-demo-1.0.0",
+        localBundleHash: "bundle-hash-demo-003",
+        assistReceiptIds: [],
+      },
+    },
+  ],
+  opsEvents: [
+    {
+      id: "ops-demo-001",
+      organizationId: "demo-health",
+      localSessionId: "session-demo-002",
+      assistReceiptId: "assist-demo-001",
+      type: "assist_requested",
+      recordedAt: "2026-03-09T10:58:00Z",
+      actorId: "reviewer-1",
+      provider: "doctor-auditor-assist-gateway",
+      model: "policy-heuristic-v1",
+      policyMode: "minimized_no_raw_phi",
+    },
+    {
+      id: "ops-demo-002",
+      organizationId: "demo-health",
+      localSessionId: "session-demo-002",
+      assistReceiptId: "assist-demo-001",
+      type: "assist_overridden",
+      recordedAt: "2026-03-09T11:10:00Z",
+      actorId: "quality-lead-1",
+      reviewerAction: "dismissed",
+    },
+    {
+      id: "ops-demo-003",
+      organizationId: "demo-health",
+      localSessionId: "session-demo-004",
+      type: "redaction_blocked",
+      recordedAt: "2026-03-15T08:10:00Z",
+      actorId: "quality-lead-2",
+      errorCode: "manual-redaction-required",
+    },
+    {
+      id: "ops-demo-004",
+      organizationId: "demo-health",
+      localSessionId: "session-demo-004",
+      type: "assist_failed",
+      recordedAt: "2026-03-15T08:12:00Z",
+      actorId: "quality-lead-2",
+      errorCode: "gateway-timeout",
     },
   ],
 };
 
 describe("reviewDashboard helpers", () => {
-  it("builds stable overview metrics from review data", () => {
+  it("builds stable overview metrics from export and ops data", () => {
     const model = buildOverviewModel(
       sampleSnapshot,
-      new Date("2026-03-15T12:00:00Z")
+      new Date("2026-03-16T12:00:00Z")
     );
 
-    expect(model.sessionsInScope).toBe(4);
-    expect(model.openFindings).toBe(4);
-    expect(model.reviewedFindings).toBe(2);
-    expect(model.approvedExportCount).toBe(2);
-    expect(model.agingItems).toBe(1);
-    expect(model.queueLanes.map((lane) => lane.count)).toEqual([2, 2, 2]);
+    expect(model.totalExports).toBe(3);
+    expect(model.approvedExports).toBe(1);
+    expect(model.sentExports).toBe(1);
+    expect(model.assistUsageCount).toBe(1);
+    expect(model.assistOverrideCount).toBe(1);
+    expect(model.redactionBlockCount).toBe(1);
+    expect(model.queueLanes.map((lane) => lane.count)).toEqual([1, 1, 1]);
     expect(model.weeklyActivity).toHaveLength(6);
-  });
-
-  it("sorts and filters sessions by review status", () => {
-    const sessions = sortSessions(sampleSnapshot.sessions, "completed");
-
-    expect(sessions).toHaveLength(2);
-    expect(sessions[0]?.id).toBe("session-demo-004");
-    expect(sessions[1]?.id).toBe("session-demo-002");
-  });
-
-  it("orders findings by queue priority before timestamp", () => {
-    const findings = sortFindings(sampleSnapshot.findings);
-
-    expect(findings[0]?.status).toBe("pending_review");
-    expect(findings[1]?.status).toBe("draft");
-    expect(findings[findings.length - 1]?.status).toBe("accepted");
+    expect(model.averageSendLatencyMs).toBe(35 * 60 * 1000);
   });
 
   it("sorts approved exports newest first", () => {
@@ -226,10 +185,16 @@ describe("reviewDashboard helpers", () => {
     expect(approvedExports[2]?.id).toBe("export-demo-001");
   });
 
+  it("sorts ops events newest first", () => {
+    const opsEvents = sortOpsEvents(sampleSnapshot.opsEvents);
+
+    expect(opsEvents[0]?.id).toBe("ops-demo-004");
+    expect(opsEvents[opsEvents.length - 1]?.id).toBe("ops-demo-001");
+  });
+
   it("normalizes labels and tones consistently", () => {
-    expect(formatStatusLabel("pending_review")).toBe("pending review");
-    expect(getSessionStatusTone("in_review")).toBe("active");
-    expect(getFindingTone("accepted")).toBe("success");
+    expect(formatStatusLabel("assist_requested")).toBe("assist requested");
     expect(getExportTone("approved")).toBe("attention");
+    expect(getOpsTone("assist_completed")).toBe("active");
   });
 });

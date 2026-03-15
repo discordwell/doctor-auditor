@@ -1,11 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  CreateApprovedExportRequest,
+  CreateApprovedExportResult,
   DesktopSessionSummary,
   LiveCaptureError,
   LiveCaptureStatus,
   PersistReviewDecisionRequest,
+  RequestSeriousnessAssistRequest,
+  RequestSeriousnessAssistResult,
   SessionImportProgress,
   SessionIntakeRequest,
+  UpdateModelAssistActionRequest,
 } from "../src/types/electron";
 
 contextBridge.exposeInMainWorld("doctorAuditor", {
@@ -45,6 +50,18 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
     get: (sessionId: string) => ipcRenderer.invoke("session:get", sessionId),
     saveReviewDecision: (request: PersistReviewDecisionRequest) =>
       ipcRenderer.invoke("session:save-review-decision", request),
+    requestSeriousnessAssist: (request: RequestSeriousnessAssistRequest) =>
+      ipcRenderer.invoke(
+        "session:request-seriousness-assist",
+        request
+      ) as Promise<RequestSeriousnessAssistResult>,
+    updateModelAssistAction: (request: UpdateModelAssistActionRequest) =>
+      ipcRenderer.invoke("session:update-model-assist-action", request),
+    createApprovedExport: (request: CreateApprovedExportRequest) =>
+      ipcRenderer.invoke(
+        "session:create-approved-export",
+        request
+      ) as Promise<CreateApprovedExportResult>,
     importAudio: (request: SessionIntakeRequest) =>
       ipcRenderer.invoke("session:import-audio", request),
     onImportProgress: (

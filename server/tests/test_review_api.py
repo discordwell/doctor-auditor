@@ -7,10 +7,8 @@ from fastapi.testclient import TestClient
 TEST_DATABASE_PATH = Path(__file__).with_suffix(".sqlite3").resolve()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
 
-from app.api.review_models import SessionBundleModel
 from app.main import app
-from app.models.database import Base, async_session, engine
-from app.services.review_seed_repository import seed_session_bundle
+from app.models.database import Base, engine
 
 
 def reset_database() -> None:
@@ -18,7 +16,6 @@ def reset_database() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
-        await engine.dispose()
 
     asyncio.run(_reset())
 
@@ -38,254 +35,147 @@ def auth_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def session_bundle_payload() -> dict:
-    timestamp = "2026-03-15T10:00:00Z"
-
+def approved_export_envelope_payload() -> dict:
     return {
+        "id": "export-integration-001",
+        "organizationId": "demo-health",
         "session": {
-            "id": "session-integration-001",
+            "localSessionId": "session-local-001",
             "clinicianId": "clinician-42",
-            "organizationId": "demo-health",
-            "encounterStartedAt": timestamp,
+            "encounterStartedAt": "2026-03-15T10:00:00Z",
             "encounterEndedAt": "2026-03-15T10:22:00Z",
             "captureMode": "audio_import",
-            "transcriptStatus": "completed",
-            "reviewStatus": "ready",
-            "exportStatus": "not_requested",
-            "createdAt": timestamp,
-            "updatedAt": timestamp,
-            "consent": {
-                "recordedWithConsent": True,
-                "exportAllowed": True,
-                "capturedAt": timestamp,
-                "capturedBy": "desktop-import",
-            },
         },
-        "transcriptSegments": [
-            {
-                "id": "segment-001",
-                "sessionId": "session-integration-001",
-                "speakerLabel": "patient",
-                "text": "I missed two doses because the refill was delayed.",
-                "startOffsetMs": 0,
-                "endOffsetMs": 4300,
-                "transcriptConfidence": 0.97,
-                "speakerConfidence": 0.91,
-                "source": "audio_import",
-            }
-        ],
-        "findings": [
-            {
-                "id": "finding-001",
-                "sessionId": "session-integration-001",
-                "code": "medication-adherence",
-                "title": "Medication adherence needs review",
-                "summary": "The patient reported missing two doses due to a delayed refill.",
-                "status": "pending_review",
-                "confidence": 0.82,
-                "evidenceSpans": [
-                    {
-                        "id": "evidence-001",
-                        "transcriptSegmentId": "segment-001",
-                        "excerpt": "I missed two doses because the refill was delayed.",
-                        "startOffsetMs": 0,
-                        "endOffsetMs": 4300,
-                        "startTextOffset": 0,
-                        "endTextOffset": 50,
-                    }
-                ],
-                "detectedBy": "rules",
-                "createdAt": timestamp,
-                "updatedAt": timestamp,
-            }
-        ],
-        "reviewDecisions": [],
-        "approvedExports": [],
-        "auditLogEntries": [
-            {
-                "id": "audit-001",
-                "sessionId": "session-integration-001",
-                "timestamp": timestamp,
-                "action": "session_created",
-                "actorId": "desktop-import",
-                "details": {"captureMode": "audio_import"},
-            }
-        ],
-    }
-
-
-def review_session_payload() -> dict:
-    return session_bundle_payload()["session"]
-
-
-def seed_review_state() -> None:
-    async def _seed() -> None:
-        bundle_payload = session_bundle_payload()
-        bundle_payload["transcriptSegments"] = []
-
-        async with async_session() as db:
-            await seed_session_bundle(
-                db=db,
-                organization_id="demo-health",
-                payload=SessionBundleModel.model_validate(bundle_payload),
-            )
-
-    asyncio.run(_seed())
-
-
-def approved_export_payload() -> dict:
-    return {
-        "id": "export-001",
-        "sessionId": "session-integration-001",
-        "status": "approved",
-        "summary": "Approved summary for medication adherence follow-up.",
-        "findings": [
-            {
-                "findingId": "finding-001",
-                "code": "medication-adherence",
-                "title": "Medication adherence needs review",
-                "summary": "The patient missed doses because the refill was delayed.",
-                "reviewDecisionId": "decision-placeholder",
-                "evidenceExcerpts": [
-                    {
-                        "sourceEvidenceSpanId": "evidence-001",
-                        "sourceTranscriptSegmentId": "segment-001",
-                        "excerpt": "I missed two doses because the refill was delayed.",
-                        "startOffsetMs": 0,
-                        "endOffsetMs": 4300,
-                    }
-                ],
-            }
-        ],
-        "approvedBy": "quality-lead-1",
-        "approvedAt": "2026-03-15T10:30:00Z",
-        "destination": "qa-review-queue",
-    }
-
-
-def create_review_decision(
-    client: TestClient,
-    headers: dict[str, str],
-    outcome: str = "accepted",
-) -> str:
-    review_decision = client.post(
-        "/api/findings/finding-001/review-decisions",
-        json={
-            "outcome": outcome,
+        "consent": {
+            "recordedWithConsent": True,
+            "exportAllowed": True,
+            "remoteAssistAllowed": True,
+            "policyVersion": "policy-v1",
+        },
+        "export": {
+            "id": "export-integration-001",
+            "sessionId": "session-local-001",
+            "status": "approved",
+            "summary": "Approved summary for medication adherence follow-up.",
+            "findings": [
+                {
+                    "findingId": "finding-local-001",
+                    "code": "medication-adherence",
+                    "title": "Medication adherence needs review",
+                    "summary": "The patient missed doses because the refill was delayed.",
+                    "reviewDecisionId": "decision-local-001",
+                    "evidenceExcerpts": [
+                        {
+                            "sourceEvidenceSpanId": "evidence-local-001",
+                            "sourceTranscriptSegmentId": "segment-local-001",
+                            "excerpt": "I missed two doses because the refill was delayed.",
+                            "startOffsetMs": 0,
+                            "endOffsetMs": 4300,
+                        }
+                    ],
+                }
+            ],
+            "approvedBy": "quality-lead-1",
+            "approvedAt": "2026-03-15T10:30:00Z",
+            "destination": "qa-review-queue",
+        },
+        "attestation": {
             "reviewedBy": "reviewer-1",
-            "rationale": "Evidence is direct and should move forward to export.",
+            "reviewCompletedAt": "2026-03-15T10:28:00Z",
+            "clientVersion": "desktop-1.0.0",
+            "localBundleHash": "bundle-hash-001",
+            "assistReceiptIds": ["assist-receipt-001"],
         },
-        headers=headers,
-    )
-    assert review_decision.status_code == 201, review_decision.text
-    return review_decision.json()["id"]
+    }
 
 
-def test_review_workflow_round_trip() -> None:
+def ops_event_payload() -> dict:
+    return {
+        "id": "ops-event-001",
+        "organizationId": "demo-health",
+        "localSessionId": "session-local-001",
+        "assistReceiptId": "assist-receipt-001",
+        "type": "assist_completed",
+        "recordedAt": "2026-03-15T10:29:00Z",
+        "actorId": "reviewer-1",
+        "provider": "doctor-auditor-assist-gateway",
+        "model": "policy-heuristic-v1",
+        "policyMode": "minimized_no_raw_phi",
+        "latencyMs": 812,
+    }
+
+
+def assist_gateway_payload() -> dict:
+    return {
+        "id": "assist-request-001",
+        "sessionId": "session-local-001",
+        "findingId": "finding-local-001",
+        "requestedBy": "reviewer-1",
+        "requestedAt": "2026-03-15T10:28:30Z",
+        "policyVersion": "policy-v1",
+        "policyMode": "minimized_no_raw_phi",
+        "concern": {
+            "findingCode": "medication-risk",
+            "findingStatus": "accepted",
+            "findingConfidence": 0.82,
+            "evidenceSpanCount": 1,
+            "speakerLabels": ["clinician", "patient"],
+            "captureMode": "audio_import",
+            "encounterDurationMs": 1320000,
+        },
+    }
+
+
+def test_export_and_ops_round_trip() -> None:
     reset_database()
 
     with TestClient(app) as client:
         headers = auth_headers(client)
 
-        create_session = client.post(
-            "/api/sessions/",
-            json=review_session_payload(),
-            headers=headers,
-        )
-        assert create_session.status_code == 201, create_session.text
-        created_session = create_session.json()
-        assert created_session["id"] == "session-integration-001"
-
-        seed_review_state()
-
-        listed_sessions = client.get("/api/sessions/", headers=headers)
-        assert listed_sessions.status_code == 200, listed_sessions.text
-        assert listed_sessions.json()[0]["clinicianId"] == "clinician-42"
-
-        listed_findings = client.get(
-            "/api/findings/?status=pending_review",
-            headers=headers,
-        )
-        assert listed_findings.status_code == 200, listed_findings.text
-        assert listed_findings.json()[0]["id"] == "finding-001"
-
-        decision_id = create_review_decision(client, headers)
-
-        accepted_finding = client.get("/api/findings/finding-001", headers=headers)
-        assert accepted_finding.status_code == 200, accepted_finding.text
-        assert accepted_finding.json()["status"] == "accepted"
-        assert accepted_finding.json()["reviewDecisionId"] == decision_id
-
-        export_payload = approved_export_payload()
-        export_payload["findings"][0]["reviewDecisionId"] = decision_id
-        approved_export = client.post(
+        created_export = client.post(
             "/api/approved-exports/",
-            json=export_payload,
+            json=approved_export_envelope_payload(),
             headers=headers,
         )
-        assert approved_export.status_code == 201, approved_export.text
-        assert approved_export.json()["status"] == "approved"
+        assert created_export.status_code == 201, created_export.text
+        assert created_export.json()["session"]["localSessionId"] == "session-local-001"
 
         listed_exports = client.get(
             "/api/approved-exports/?export_status=approved",
             headers=headers,
         )
         assert listed_exports.status_code == 200, listed_exports.text
-        assert listed_exports.json()[0]["id"] == "export-001"
+        assert listed_exports.json()[0]["id"] == "export-integration-001"
 
-        session_record = client.get(
-            "/api/sessions/session-integration-001",
+        created_event = client.post(
+            "/api/ops-events/",
+            json=ops_event_payload(),
             headers=headers,
         )
-        assert session_record.status_code == 200, session_record.text
-        assert session_record.json()["reviewStatus"] == "completed"
-        assert session_record.json()["exportStatus"] == "approved"
-        assert "transcriptSegments" not in session_record.json()
-        assert "findings" not in session_record.json()
+        assert created_event.status_code == 200, created_event.text
+        assert created_event.json()["type"] == "assist_completed"
+
+        listed_events = client.get("/api/ops-events/", headers=headers)
+        assert listed_events.status_code == 200, listed_events.text
+        assert listed_events.json()[0]["id"] == "ops-event-001"
+
+        summary = client.get("/api/ops-events/summary", headers=headers)
+        assert summary.status_code == 200, summary.text
+        assert summary.json()["totalExports"] == 1
+        assert summary.json()["assistUsageCount"] == 0
 
 
-def test_sessions_endpoint_rejects_full_bundle_payload() -> None:
+def test_sessions_and_findings_routes_are_removed() -> None:
     reset_database()
 
     with TestClient(app) as client:
         headers = auth_headers(client)
 
-        response = client.post(
-            "/api/sessions/",
-            json=session_bundle_payload(),
-            headers=headers,
-        )
+        sessions = client.get("/api/sessions/", headers=headers)
+        findings = client.get("/api/findings/", headers=headers)
 
-        assert response.status_code == 422, response.text
-
-
-def test_session_detail_returns_metadata_only() -> None:
-    reset_database()
-
-    with TestClient(app) as client:
-        headers = auth_headers(client)
-
-        create_session = client.post(
-            "/api/sessions/",
-            json=review_session_payload(),
-            headers=headers,
-        )
-        assert create_session.status_code == 201, create_session.text
-
-        seed_review_state()
-
-        response = client.get(
-            "/api/sessions/session-integration-001",
-            headers=headers,
-        )
-
-        assert response.status_code == 200, response.text
-        assert response.json()["id"] == "session-integration-001"
-        assert "transcriptSegments" not in response.json()
-        assert "findings" not in response.json()
-        assert "reviewDecisions" not in response.json()
-        assert "approvedExports" not in response.json()
-        assert "auditLogEntries" not in response.json()
+        assert sessions.status_code == 404
+        assert findings.status_code == 404
 
 
 def test_approved_export_rejects_raw_transcript_fields() -> None:
@@ -293,26 +183,17 @@ def test_approved_export_rejects_raw_transcript_fields() -> None:
 
     with TestClient(app) as client:
         headers = auth_headers(client)
-
-        create_session = client.post(
-            "/api/sessions/",
-            json=review_session_payload(),
-            headers=headers,
-        )
-        assert create_session.status_code == 201, create_session.text
-
-        seed_review_state()
-
-        decision_id = create_review_decision(client, headers)
-        export_payload = approved_export_payload()
-        export_payload["findings"][0]["reviewDecisionId"] = decision_id
-        export_payload["transcriptSegments"] = session_bundle_payload()[
-            "transcriptSegments"
+        payload = approved_export_envelope_payload()
+        payload["transcriptSegments"] = [
+            {
+                "id": "segment-001",
+                "text": "Raw transcript text should never be accepted here.",
+            }
         ]
 
         response = client.post(
             "/api/approved-exports/",
-            json=export_payload,
+            json=payload,
             headers=headers,
         )
 
@@ -328,24 +209,12 @@ def test_approved_export_rejects_audio_upload_fields() -> None:
 
     with TestClient(app) as client:
         headers = auth_headers(client)
-
-        create_session = client.post(
-            "/api/sessions/",
-            json=review_session_payload(),
-            headers=headers,
-        )
-        assert create_session.status_code == 201, create_session.text
-
-        seed_review_state()
-
-        decision_id = create_review_decision(client, headers)
-        export_payload = approved_export_payload()
-        export_payload["findings"][0]["reviewDecisionId"] = decision_id
-        export_payload["audioBase64"] = "ZmFrZS1hdWRpby1ieXRlcw=="
+        payload = approved_export_envelope_payload()
+        payload["audioBase64"] = "ZmFrZS1hdWRpby1ieXRlcw=="
 
         response = client.post(
             "/api/approved-exports/",
-            json=export_payload,
+            json=payload,
             headers=headers,
         )
 
@@ -356,33 +225,57 @@ def test_approved_export_rejects_audio_upload_fields() -> None:
         )
 
 
-def test_approved_export_requires_accepted_or_edited_review_decision() -> None:
+def test_approved_export_requires_export_consent() -> None:
     reset_database()
 
     with TestClient(app) as client:
         headers = auth_headers(client)
-
-        create_session = client.post(
-            "/api/sessions/",
-            json=review_session_payload(),
-            headers=headers,
-        )
-        assert create_session.status_code == 201, create_session.text
-
-        seed_review_state()
-
-        decision_id = create_review_decision(client, headers, outcome="uncertain")
-        export_payload = approved_export_payload()
-        export_payload["findings"][0]["reviewDecisionId"] = decision_id
+        payload = approved_export_envelope_payload()
+        payload["consent"]["exportAllowed"] = False
 
         response = client.post(
             "/api/approved-exports/",
-            json=export_payload,
+            json=payload,
             headers=headers,
         )
 
         assert response.status_code == 400, response.text
         assert (
             response.json()["detail"]
-            == "approved export findings must reference accepted or edited review decisions"
+            == "exportAllowed must be true for approved export ingestion"
         )
+
+
+def test_demo_seed_creates_export_and_ops_only() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        response = client.post("/api/demo/seed", headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["approvedExports"] >= 2
+        assert response.json()["opsEvents"] >= 5
+
+        exports = client.get("/api/approved-exports/", headers=headers)
+        events = client.get("/api/ops-events/", headers=headers)
+
+        assert exports.status_code == 200, exports.text
+        assert events.status_code == 200, events.text
+        assert len(exports.json()) >= 2
+        assert len(events.json()) >= 5
+
+
+def test_assist_gateway_returns_structured_assessment() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/assist-gateway/seriousness-assessments",
+            json=assist_gateway_payload(),
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["disposition"] == "expedited_human_review"
+        assert body["provider"] == "doctor-auditor-assist-gateway"

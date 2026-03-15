@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.review_models import ApprovedExportIngestRequest, ApprovedExportModel
+from app.api.cloud_models import ApprovedExportEnvelopeModel
 from app.auth.jwt import verify_token
 from app.models.database import get_db
-from app.services.review_repository import (
+from app.services.cloud_repository import (
     ApprovedExportIngestError,
     current_organization_id,
     get_approved_export as get_approved_export_model,
@@ -15,10 +15,10 @@ from app.services.review_repository import (
 router = APIRouter()
 
 
-@router.get("/", response_model=list[ApprovedExportModel])
+@router.get("/", response_model=list[ApprovedExportEnvelopeModel])
 async def list_approved_exports(
-    session_id: str | None = None,
     export_status: str | None = None,
+    clinician_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     token: dict = Depends(verify_token),
 ):
@@ -26,12 +26,12 @@ async def list_approved_exports(
     return await list_approved_export_models(
         db=db,
         organization_id=organization_id,
-        session_id=session_id,
         status=export_status,
+        clinician_id=clinician_id,
     )
 
 
-@router.get("/{export_id}", response_model=ApprovedExportModel)
+@router.get("/{export_id}", response_model=ApprovedExportEnvelopeModel)
 async def get_approved_export(
     export_id: str,
     db: AsyncSession = Depends(get_db),
@@ -47,9 +47,13 @@ async def get_approved_export(
     return export
 
 
-@router.post("/", response_model=ApprovedExportModel, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=ApprovedExportEnvelopeModel,
+    status_code=status.HTTP_201_CREATED,
+)
 async def ingest_approved_export(
-    payload: ApprovedExportIngestRequest,
+    payload: ApprovedExportEnvelopeModel,
     db: AsyncSession = Depends(get_db),
     token: dict = Depends(verify_token),
 ):

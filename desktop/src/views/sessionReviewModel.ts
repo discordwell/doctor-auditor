@@ -2,7 +2,7 @@ import type {
   Finding,
   ReviewDecision,
   ReviewDecisionOutcome,
-} from "@doctor-auditor/shared";
+} from "@doctor-auditor/shared/local-review";
 import type { DesktopSessionBundle } from "../types/electron";
 
 export interface ReviewWorkspace {

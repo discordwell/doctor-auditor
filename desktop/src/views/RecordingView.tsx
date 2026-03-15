@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { CaptureMode } from "@doctor-auditor/shared";
 import type {
-  CaptureMode,
   ReviewStatus,
   TranscriptStatus,
-} from "@doctor-auditor/shared";
+} from "@doctor-auditor/shared/local-review";
 import type {
   DesktopSessionSummary,
   LiveCaptureStatus,
@@ -52,6 +52,7 @@ export default function RecordingView() {
   const [clinicianId, setClinicianId] = useState("");
   const [recordedWithConsent, setRecordedWithConsent] = useState(false);
   const [exportAllowed, setExportAllowed] = useState(false);
+  const [remoteAssistAllowed, setRemoteAssistAllowed] = useState(false);
   const [importState, setImportState] = useState<{
     stage: ImportStage;
     message: string;
@@ -228,6 +229,8 @@ export default function RecordingView() {
       clinicianId,
       recordedWithConsent,
       exportAllowed,
+      remoteAssistAllowed,
+      policyVersion: "policy-v1",
     });
 
     if ("error" in intake) {
@@ -279,6 +282,7 @@ export default function RecordingView() {
     isImporting,
     isRecording,
     liveCaptureStatus,
+    remoteAssistAllowed,
     recordedWithConsent,
     refreshLiveCaptureStatus,
   ]);
@@ -296,6 +300,8 @@ export default function RecordingView() {
       clinicianId,
       recordedWithConsent,
       exportAllowed,
+      remoteAssistAllowed,
+      policyVersion: "policy-v1",
     });
 
     if ("error" in intake) {
@@ -345,7 +351,7 @@ export default function RecordingView() {
     } finally {
       setIsImporting(false);
     }
-  }, [clinicianId, exportAllowed, recordedWithConsent]);
+  }, [clinicianId, exportAllowed, remoteAssistAllowed, recordedWithConsent]);
 
   const completedImportSteps =
     importState.stage === "idle" ||
@@ -423,6 +429,24 @@ export default function RecordingView() {
                 <strong>Export permitted</strong>
                 <span>
                   Marks the session as eligible for later approved export.
+                </span>
+              </span>
+            </label>
+
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={remoteAssistAllowed}
+                onChange={(event) =>
+                  setRemoteAssistAllowed(event.target.checked)
+                }
+                disabled={inputsLocked}
+              />
+              <span className="checkbox-copy">
+                <strong>Remote second opinion permitted</strong>
+                <span>
+                  Allows minimized finding metadata to be sent to the assist
+                  gateway from the review screen.
                 </span>
               </span>
             </label>
@@ -507,6 +531,11 @@ export default function RecordingView() {
                   {recentSession.session.consent.exportAllowed
                     ? "Export allowed"
                     : "Local review only"}
+                </span>
+                <span className="status-chip">
+                  {recentSession.session.consent.remoteAssistAllowed
+                    ? "Remote assist allowed"
+                    : "Assist local-only"}
                 </span>
               </div>
             </div>
@@ -624,6 +653,8 @@ function getValidatedIntakeRequest(
     clinicianId,
     recordedWithConsent: request.recordedWithConsent,
     exportAllowed: request.exportAllowed,
+    remoteAssistAllowed: request.remoteAssistAllowed,
+    policyVersion: request.policyVersion,
   };
 }
 
@@ -676,6 +707,8 @@ function formatCaptureMode(value: CaptureMode): string {
     case "manual_entry":
       return "Manual entry";
   }
+
+  return "Unknown";
 }
 
 function formatTranscriptStatus(value: TranscriptStatus): string {

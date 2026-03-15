@@ -7,12 +7,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum as SAEnum,
-    ForeignKey,
+    Integer,
     String,
     Text,
     Uuid,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.database import Base
 
@@ -42,12 +42,13 @@ class User(Base):
     )
 
 
-class ReviewSessionRecord(Base):
-    __tablename__ = "review_sessions"
+class ApprovedExportRecord(Base):
+    __tablename__ = "approved_exports"
 
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    clinician_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     organization_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    local_session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    clinician_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     encounter_started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -55,172 +56,58 @@ class ReviewSessionRecord(Base):
         DateTime(timezone=True), nullable=True
     )
     capture_mode: Mapped[str] = mapped_column(String(32), nullable=False)
-    transcript_status: Mapped[str] = mapped_column(String(32), nullable=False)
-    review_status: Mapped[str] = mapped_column(String(32), nullable=False)
-    export_status: Mapped[str] = mapped_column(String(32), nullable=False)
     consent_recorded_with_consent: Mapped[bool] = mapped_column(
         Boolean, nullable=False
     )
     consent_export_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    consent_captured_at: Mapped[datetime | None] = mapped_column(
+    consent_remote_assist_allowed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False
+    )
+    consent_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    export_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    export_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    export_findings_payload: Mapped[list[dict]] = mapped_column(
+        "export_findings", JSON, nullable=False, default=list
+    )
+    export_approved_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    export_approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    export_destination: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    export_sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    consent_captured_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
+    attestation_reviewed_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    attestation_review_completed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    attestation_client_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    attestation_local_bundle_hash: Mapped[str] = mapped_column(
+        String(255), nullable=False
     )
-
-    transcript_segments: Mapped[list["TranscriptSegmentRecord"]] = relationship(
-        back_populates="session",
-        cascade="all, delete-orphan",
-        order_by="TranscriptSegmentRecord.start_offset_ms",
-    )
-    findings: Mapped[list["FindingRecord"]] = relationship(
-        back_populates="session",
-        cascade="all, delete-orphan",
-        order_by="FindingRecord.created_at",
-    )
-    review_decisions: Mapped[list["ReviewDecisionRecord"]] = relationship(
-        back_populates="session",
-        cascade="all, delete-orphan",
-        order_by="ReviewDecisionRecord.reviewed_at",
-    )
-    approved_exports: Mapped[list["ApprovedExportRecord"]] = relationship(
-        back_populates="session",
-        cascade="all, delete-orphan",
-        order_by="ApprovedExportRecord.approved_at",
-    )
-    audit_log_entries: Mapped[list["AuditLogEntryRecord"]] = relationship(
-        back_populates="session",
-        cascade="all, delete-orphan",
-        order_by="AuditLogEntryRecord.timestamp",
-    )
-
-
-class TranscriptSegmentRecord(Base):
-    __tablename__ = "transcript_segments"
-
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    speaker_label: Mapped[str] = mapped_column(String(32), nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    start_offset_ms: Mapped[int] = mapped_column(nullable=False)
-    end_offset_ms: Mapped[int] = mapped_column(nullable=False)
-    transcript_confidence: Mapped[float | None] = mapped_column(nullable=True)
-    speaker_confidence: Mapped[float | None] = mapped_column(nullable=True)
-    source: Mapped[str] = mapped_column(String(32), nullable=False)
-
-    session: Mapped["ReviewSessionRecord"] = relationship(
-        back_populates="transcript_segments"
-    )
-
-
-class FindingRecord(Base):
-    __tablename__ = "findings"
-
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    code: Mapped[str] = mapped_column(String(100), nullable=False)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    confidence: Mapped[float] = mapped_column(nullable=False)
-    evidence_spans: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
-    detected_by: Mapped[str] = mapped_column(String(32), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-
-    session: Mapped["ReviewSessionRecord"] = relationship(back_populates="findings")
-    review_decision: Mapped["ReviewDecisionRecord | None"] = relationship(
-        back_populates="finding",
-        uselist=False,
-    )
-
-
-class ReviewDecisionRecord(Base):
-    __tablename__ = "review_decisions"
-
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    finding_id: Mapped[str] = mapped_column(
-        String(100),
-        ForeignKey("findings.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-    )
-    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
-    reviewed_by: Mapped[str] = mapped_column(String(100), nullable=False)
-    reviewed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
-    edited_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    edited_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    approved_evidence_spans: Mapped[list[dict]] = mapped_column(
+    attestation_assist_receipt_ids: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list
     )
 
-    session: Mapped["ReviewSessionRecord"] = relationship(
-        back_populates="review_decisions"
-    )
-    finding: Mapped["FindingRecord"] = relationship(back_populates="review_decision")
 
-
-class ApprovedExportRecord(Base):
-    __tablename__ = "approved_exports"
+class OpsEventRecord(Base):
+    __tablename__ = "ops_events"
 
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False
+    organization_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    local_session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    export_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    assist_receipt_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
     )
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    findings_payload: Mapped[list[dict]] = mapped_column(
-        "findings", JSON, nullable=False, default=list
-    )
-    approved_by: Mapped[str] = mapped_column(String(100), nullable=False)
-    approved_at: Mapped[datetime] = mapped_column(
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    destination: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    session: Mapped["ReviewSessionRecord"] = relationship(
-        back_populates="approved_exports"
-    )
-
-
-class AuditLogEntryRecord(Base):
-    __tablename__ = "audit_log_entries"
-
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    action: Mapped[str] = mapped_column(String(32), nullable=False)
     actor_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    details_payload: Mapped[dict] = mapped_column(
-        "details", JSON, nullable=False, default=dict
-    )
-
-    session: Mapped["ReviewSessionRecord"] = relationship(
-        back_populates="audit_log_entries"
-    )
+    provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    policy_mode: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reviewer_action: Mapped[str | None] = mapped_column(String(100), nullable=True)

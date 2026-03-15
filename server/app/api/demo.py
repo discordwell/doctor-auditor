@@ -5,16 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import verify_token
 from app.models.database import get_db
 from app.services.demo_seed import DemoSeedError, ensure_demo_review_data
-from app.services.review_repository import current_organization_id
+from app.services.cloud_repository import current_organization_id
 
 router = APIRouter()
 
 
 class DemoSeedResponse(BaseModel):
     seeded: bool
-    sessions: int
-    findings: int
     approvedExports: int
+    opsEvents: int
 
 
 @router.post("/seed", response_model=DemoSeedResponse)
@@ -30,7 +29,6 @@ async def seed_demo_data(
 
     return DemoSeedResponse(
         seeded=result.seeded,
-        sessions=result.sessions,
-        findings=result.findings,
         approvedExports=result.approved_exports,
+        opsEvents=result.ops_events,
     )

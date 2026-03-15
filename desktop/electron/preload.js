@@ -30,6 +30,9 @@ electron_1.contextBridge.exposeInMainWorld("doctorAuditor", {
         getAll: () => electron_1.ipcRenderer.invoke("session:get-all"),
         get: (sessionId) => electron_1.ipcRenderer.invoke("session:get", sessionId),
         saveReviewDecision: (request) => electron_1.ipcRenderer.invoke("session:save-review-decision", request),
+        requestSeriousnessAssist: (request) => electron_1.ipcRenderer.invoke("session:request-seriousness-assist", request),
+        updateModelAssistAction: (request) => electron_1.ipcRenderer.invoke("session:update-model-assist-action", request),
+        createApprovedExport: (request) => electron_1.ipcRenderer.invoke("session:create-approved-export", request),
         importAudio: (request) => electron_1.ipcRenderer.invoke("session:import-audio", request),
         onImportProgress: (callback) => {
             const listener = (_event, update) => callback(update);

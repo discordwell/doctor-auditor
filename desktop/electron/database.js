@@ -21,6 +21,8 @@ class LocalDatabase {
             clinicianId: input.clinicianId,
             recordedWithConsent: input.recordedWithConsent,
             exportAllowed: input.exportAllowed,
+            remoteAssistAllowed: input.remoteAssistAllowed,
+            policyVersion: input.policyVersion,
             encounterStartedAt: input.capturedAt,
             encounterEndedAt: input.capturedAt,
             audioPath: input.audioPath,
@@ -42,6 +44,8 @@ class LocalDatabase {
             clinicianId: input.clinicianId,
             recordedWithConsent: input.recordedWithConsent,
             exportAllowed: input.exportAllowed,
+            remoteAssistAllowed: input.remoteAssistAllowed,
+            policyVersion: input.policyVersion,
             encounterStartedAt: input.startedAt,
             audioPath: input.audioPath,
         });
@@ -86,11 +90,13 @@ class LocalDatabase {
              updated_at = ?,
              consent_recorded = ?,
              consent_export_allowed = ?,
+             consent_remote_assist_allowed = ?,
+             consent_policy_version = ?,
              consent_captured_at = ?,
              consent_captured_by = ?,
              audio_path = ?
          WHERE id = ?`)
-            .run(nextSession.clinicianId, nextSession.organizationId ?? null, nextSession.encounterStartedAt, nextSession.encounterEndedAt ?? null, nextSession.captureMode, nextSession.transcriptStatus, nextSession.reviewStatus, nextSession.exportStatus, nextSession.updatedAt, nextSession.consent.recordedWithConsent ? 1 : 0, nextSession.consent.exportAllowed ? 1 : 0, nextSession.consent.capturedAt ?? null, nextSession.consent.capturedBy ?? null, nextAudioPath ?? null, sessionId);
+            .run(nextSession.clinicianId, nextSession.organizationId ?? null, nextSession.encounterStartedAt, nextSession.encounterEndedAt ?? null, nextSession.captureMode, nextSession.transcriptStatus, nextSession.reviewStatus, nextSession.exportStatus, nextSession.updatedAt, nextSession.consent.recordedWithConsent ? 1 : 0, nextSession.consent.exportAllowed ? 1 : 0, nextSession.consent.remoteAssistAllowed ? 1 : 0, nextSession.consent.policyVersion, nextSession.consent.capturedAt ?? null, nextSession.consent.capturedBy ?? null, nextAudioPath ?? null, sessionId);
         return this.getSessionSummary(sessionId);
     }
     replaceTranscriptSegments(sessionId, segments) {
@@ -214,6 +220,72 @@ class LocalDatabase {
         }
         return null;
     }
+    recordModelAssistRequested(request) {
+        this.addAuditLog({
+            sessionId: request.sessionId,
+            action: "assist_requested",
+            actorId: request.requestedBy,
+            details: {
+                requestId: request.id,
+                findingId: request.findingId,
+                policyMode: request.policyMode,
+            },
+            timestamp: request.requestedAt,
+        });
+    }
+    saveModelAssistReceipt(input) {
+        this.db
+            .prepare(`INSERT OR REPLACE INTO model_assist_receipts (
+          id,
+          request_id,
+          session_id,
+          finding_id,
+          status,
+          policy_mode,
+          requested_at,
+          completed_at,
+          latency_ms,
+          error_code,
+          reviewer_action,
+          provider,
+          model_name,
+          request_payload,
+          assessment_payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(input.receipt.id, input.request.id, input.request.sessionId, input.request.findingId ?? null, input.receipt.status, input.receipt.policyMode, input.receipt.requestedAt, input.receipt.completedAt ?? null, input.receipt.latencyMs ?? null, input.receipt.errorCode ?? null, input.receipt.reviewerAction ?? null, input.receipt.assessment?.provider ?? null, input.receipt.assessment?.model ?? null, JSON.stringify(input.request), JSON.stringify(input.receipt.assessment ?? null));
+        this.addAuditLog({
+            sessionId: input.request.sessionId,
+            action: input.receipt.status === "completed" ? "assist_completed" : "assist_failed",
+            actorId: input.request.requestedBy,
+            details: {
+                receiptId: input.receipt.id,
+                findingId: input.request.findingId,
+                disposition: input.receipt.assessment?.disposition,
+                errorCode: input.receipt.errorCode,
+            },
+            timestamp: input.receipt.completedAt ?? input.receipt.requestedAt,
+        });
+        return this.getSession(input.request.sessionId);
+    }
+    updateModelAssistReviewerAction(input) {
+        this.db
+            .prepare(`UPDATE model_assist_receipts
+         SET reviewer_action = ?
+         WHERE id = ? AND session_id = ?`)
+            .run(input.reviewerAction, input.receiptId, input.sessionId);
+        if (input.reviewerAction === "dismissed") {
+            this.addAuditLog({
+                sessionId: input.sessionId,
+                action: "assist_overridden",
+                actorId: DESKTOP_ACTOR_ID,
+                details: {
+                    receiptId: input.receiptId,
+                    reviewerAction: input.reviewerAction,
+                },
+            });
+        }
+        return this.getSession(input.sessionId);
+    }
     getSession(sessionId) {
         const sessionRow = this.db
             .prepare("SELECT * FROM sessions WHERE id = ?")
@@ -247,6 +319,12 @@ class LocalDatabase {
          WHERE session_id = ?
          ORDER BY approved_at ASC, id ASC`)
             .all(sessionId);
+        const modelAssistRows = this.db
+            .prepare(`SELECT *
+         FROM model_assist_receipts
+         WHERE session_id = ?
+         ORDER BY requested_at ASC, id ASC`)
+            .all(sessionId);
         return {
             session: this.mapSession(sessionRow),
             transcriptSegments: transcriptRows.map((row) => this.mapTranscriptSegment(row)),
@@ -254,6 +332,7 @@ class LocalDatabase {
             reviewDecisions: reviewDecisionRows.map((row) => this.mapReviewDecision(row)),
             approvedExports: approvedExportRows.map((row) => this.mapApprovedExport(row)),
             auditLogEntries: auditRows.map((row) => this.mapAuditLogEntry(row)),
+            modelAssistReceipts: modelAssistRows.map((row) => this.mapModelAssistReceipt(row)),
             audioPath: normalizeString(sessionRow.audio_path),
         };
     }
@@ -307,6 +386,8 @@ class LocalDatabase {
             consent: {
                 recordedWithConsent: input.recordedWithConsent,
                 exportAllowed: input.exportAllowed,
+                remoteAssistAllowed: input.remoteAssistAllowed,
+                policyVersion: input.policyVersion,
                 capturedAt: now,
                 capturedBy: DESKTOP_ACTOR_ID,
             },
@@ -326,11 +407,13 @@ class LocalDatabase {
           updated_at,
           consent_recorded,
           consent_export_allowed,
+          consent_remote_assist_allowed,
+          consent_policy_version,
           consent_captured_at,
           consent_captured_by,
           audio_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-            .run(session.id, session.clinicianId, session.organizationId ?? null, session.encounterStartedAt, session.encounterEndedAt ?? null, session.captureMode, session.transcriptStatus, session.reviewStatus, session.exportStatus, session.createdAt, session.updatedAt, session.consent.recordedWithConsent ? 1 : 0, session.consent.exportAllowed ? 1 : 0, session.consent.capturedAt ?? null, session.consent.capturedBy ?? null, input.audioPath ?? null);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(session.id, session.clinicianId, session.organizationId ?? null, session.encounterStartedAt, session.encounterEndedAt ?? null, session.captureMode, session.transcriptStatus, session.reviewStatus, session.exportStatus, session.createdAt, session.updatedAt, session.consent.recordedWithConsent ? 1 : 0, session.consent.exportAllowed ? 1 : 0, session.consent.remoteAssistAllowed ? 1 : 0, session.consent.policyVersion, session.consent.capturedAt ?? null, session.consent.capturedBy ?? null, input.audioPath ?? null);
         this.addAuditLog({
             sessionId: session.id,
             action: "session_created",
@@ -363,6 +446,8 @@ class LocalDatabase {
         updated_at TEXT DEFAULT (datetime('now')),
         consent_recorded INTEGER DEFAULT 0,
         consent_export_allowed INTEGER DEFAULT 0,
+        consent_remote_assist_allowed INTEGER DEFAULT 0,
+        consent_policy_version TEXT DEFAULT 'local-only-v1',
         consent_captured_at TEXT,
         consent_captured_by TEXT,
         audio_path TEXT
@@ -425,6 +510,25 @@ class LocalDatabase {
         FOREIGN KEY (session_id) REFERENCES sessions(id)
       );
 
+      CREATE TABLE IF NOT EXISTS model_assist_receipts (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        finding_id TEXT,
+        status TEXT NOT NULL,
+        policy_mode TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        completed_at TEXT,
+        latency_ms INTEGER,
+        error_code TEXT,
+        reviewer_action TEXT,
+        provider TEXT,
+        model_name TEXT,
+        request_payload TEXT NOT NULL,
+        assessment_payload TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      );
+
       CREATE TABLE IF NOT EXISTS audit_log (
         id TEXT PRIMARY KEY,
         session_id TEXT,
@@ -440,6 +544,8 @@ class LocalDatabase {
       CREATE INDEX IF NOT EXISTS idx_review_decisions_session ON review_decisions(session_id);
       CREATE INDEX IF NOT EXISTS idx_review_decisions_finding ON review_decisions(finding_id);
       CREATE INDEX IF NOT EXISTS idx_exports_session ON approved_exports(session_id);
+      CREATE INDEX IF NOT EXISTS idx_assist_receipts_session ON model_assist_receipts(session_id);
+      CREATE INDEX IF NOT EXISTS idx_assist_receipts_finding ON model_assist_receipts(finding_id);
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
     `);
@@ -454,6 +560,8 @@ class LocalDatabase {
         this.ensureColumn("sessions", "updated_at", "TEXT");
         this.ensureColumn("sessions", "consent_recorded", "INTEGER DEFAULT 0");
         this.ensureColumn("sessions", "consent_export_allowed", "INTEGER DEFAULT 0");
+        this.ensureColumn("sessions", "consent_remote_assist_allowed", "INTEGER DEFAULT 0");
+        this.ensureColumn("sessions", "consent_policy_version", "TEXT DEFAULT 'local-only-v1'");
         this.ensureColumn("sessions", "consent_captured_at", "TEXT");
         this.ensureColumn("sessions", "consent_captured_by", "TEXT");
         this.ensureColumn("sessions", "audio_path", "TEXT");
@@ -468,6 +576,11 @@ class LocalDatabase {
         this.ensureColumn("findings", "review_decision_id", "TEXT");
         this.ensureColumn("review_decisions", "approved_evidence_spans", "TEXT NOT NULL DEFAULT '[]'");
         this.ensureColumn("approved_exports", "findings_payload", "TEXT NOT NULL DEFAULT '[]'");
+        this.ensureColumn("model_assist_receipts", "request_payload", "TEXT NOT NULL DEFAULT '{}'");
+        this.ensureColumn("model_assist_receipts", "assessment_payload", "TEXT");
+        this.ensureColumn("model_assist_receipts", "provider", "TEXT");
+        this.ensureColumn("model_assist_receipts", "model_name", "TEXT");
+        this.ensureColumn("model_assist_receipts", "reviewer_action", "TEXT");
         this.ensureColumn("audit_log", "session_id", "TEXT");
         this.ensureColumn("audit_log", "actor_id", "TEXT");
     }
@@ -540,6 +653,22 @@ class LocalDatabase {
             sentAt: normalizeString(row.sent_at),
         };
     }
+    mapModelAssistReceipt(row) {
+        return {
+            id: String(row.id),
+            requestId: String(row.request_id),
+            sessionId: String(row.session_id),
+            findingId: normalizeString(row.finding_id),
+            status: normalizeString(row.status) === "failed" ? "failed" : "completed",
+            policyMode: "minimized_no_raw_phi",
+            requestedAt: normalizeString(row.requested_at) ?? new Date().toISOString(),
+            completedAt: normalizeString(row.completed_at),
+            latencyMs: normalizeNumber(row.latency_ms) ?? undefined,
+            errorCode: normalizeString(row.error_code) ?? undefined,
+            reviewerAction: coerceModelAssistReviewerAction(normalizeString(row.reviewer_action)),
+            assessment: parseJsonValue(row.assessment_payload),
+        };
+    }
     syncSessionReviewStatus(sessionId) {
         const sessionSummary = this.getSessionSummary(sessionId);
         if (!sessionSummary) {
@@ -599,6 +728,8 @@ class LocalDatabase {
             consent: {
                 recordedWithConsent: normalizeBoolean(row.consent_recorded),
                 exportAllowed: normalizeBoolean(row.consent_export_allowed),
+                remoteAssistAllowed: normalizeBoolean(row.consent_remote_assist_allowed),
+                policyVersion: normalizeString(row.consent_policy_version) ?? "local-only-v1",
                 capturedAt: normalizeString(row.consent_captured_at),
                 capturedBy: normalizeString(row.consent_captured_by),
             },
@@ -692,6 +823,18 @@ function parseJsonArray(value) {
     }
     catch {
         return [];
+    }
+}
+function parseJsonValue(value) {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+    try {
+        const parsed = JSON.parse(value);
+        return parsed === null ? undefined : parsed;
+    }
+    catch {
+        return undefined;
     }
 }
 function coerceCaptureMode(value, fallback) {
@@ -794,8 +937,20 @@ function coerceAuditAction(value, fallback) {
         value === "audio_imported" ||
         value === "transcript_viewed" ||
         value === "finding_reviewed" ||
+        value === "assist_requested" ||
+        value === "assist_completed" ||
+        value === "assist_failed" ||
+        value === "assist_overridden" ||
+        value === "redaction_blocked" ||
         value === "export_approved" ||
         value === "export_sent"
         ? value
         : fallback;
+}
+function coerceModelAssistReviewerAction(value) {
+    return value === "accepted" ||
+        value === "dismissed" ||
+        value === "not_applied"
+        ? value
+        : undefined;
 }

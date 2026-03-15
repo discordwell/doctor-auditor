@@ -1,12 +1,16 @@
-import { api, type ApprovedExport, type Finding, type ReviewSession } from "./api";
+import {
+  api,
+  type ApprovedExportEnvelope,
+  type OpsEvent,
+} from "./api";
 
 export type StatusTone = "attention" | "active" | "success" | "neutral";
 
 export type WeeklyActivityPoint = {
   period: string;
-  sessions: number;
-  findings: number;
   exports: number;
+  assists: number;
+  blocks: number;
 };
 
 export type QueueLane = {
@@ -24,42 +28,32 @@ export type FocusItem = {
   tone: "alert" | "watch" | "stable";
 };
 
-export type ReviewSnapshot = {
-  sessions: ReviewSession[];
-  findings: Finding[];
-  approvedExports: ApprovedExport[];
+export type OperationsSnapshot = {
+  approvedExports: ApprovedExportEnvelope[];
+  opsEvents: OpsEvent[];
 };
 
 export type OverviewModel = {
-  sessionsInScope: number;
-  openFindings: number;
-  reviewedFindings: number;
-  approvedExportCount: number;
-  agingItems: number;
+  totalExports: number;
+  approvedExports: number;
+  sentExports: number;
+  assistUsageCount: number;
+  assistOverrideCount: number;
+  redactionBlockCount: number;
+  averageSendLatencyMs: number | null;
   queueLanes: QueueLane[];
   focusItems: FocusItem[];
   weeklyActivity: WeeklyActivityPoint[];
-  exportRows: ApprovedExport[];
+  exportRows: ApprovedExportEnvelope[];
+  recentOpsEvents: OpsEvent[];
 };
 
-export const EMPTY_REVIEW_SNAPSHOT: ReviewSnapshot = {
-  sessions: [],
-  findings: [],
+export const EMPTY_OPERATIONS_SNAPSHOT: OperationsSnapshot = {
   approvedExports: [],
+  opsEvents: [],
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const OPEN_STATUSES = new Set<Finding["status"]>([
-  "draft",
-  "pending_review",
-  "uncertain",
-  "revised",
-]);
-const REVIEWED_STATUSES = new Set<Finding["status"]>([
-  "accepted",
-  "rejected",
-  "revised",
-]);
 
 export function formatDateTime(value: string): string {
   return new Date(value).toLocaleString("en-US", {
@@ -74,44 +68,9 @@ export function formatStatusLabel(value: string): string {
   return value.replace(/_/g, " ");
 }
 
-export function getSessionStatusTone(
-  value:
-    | ReviewSession["transcriptStatus"]
-    | ReviewSession["reviewStatus"]
-    | ReviewSession["exportStatus"]
+export function getExportTone(
+  status: ApprovedExportEnvelope["export"]["status"]
 ): StatusTone {
-  if (value === "ready") {
-    return "attention";
-  }
-
-  if (value === "in_review" || value === "draft" || value === "in_progress") {
-    return "active";
-  }
-
-  if (value === "completed" || value === "approved" || value === "sent") {
-    return "success";
-  }
-
-  return "neutral";
-}
-
-export function getFindingTone(status: Finding["status"]): StatusTone {
-  if (status === "accepted") {
-    return "success";
-  }
-
-  if (status === "pending_review" || status === "uncertain") {
-    return "attention";
-  }
-
-  if (status === "revised") {
-    return "active";
-  }
-
-  return "neutral";
-}
-
-export function getExportTone(status: ApprovedExport["status"]): StatusTone {
   if (status === "draft") {
     return "active";
   }
@@ -123,75 +82,45 @@ export function getExportTone(status: ApprovedExport["status"]): StatusTone {
   return "success";
 }
 
-export function sortSessions(
-  sessions: ReviewSession[],
-  filter: "all" | ReviewSession["reviewStatus"] = "all"
-): ReviewSession[] {
-  return sessions
-    .filter((session) =>
-      filter === "all" ? true : session.reviewStatus === filter
-    )
-    .sort((left, right) =>
-      right.encounterStartedAt.localeCompare(left.encounterStartedAt)
-    );
-}
+export function getOpsTone(eventType: OpsEvent["type"]): StatusTone {
+  if (eventType === "redaction_blocked" || eventType === "assist_failed") {
+    return "attention";
+  }
 
-export function sortFindings(
-  findings: Finding[],
-  filter: "all" | Finding["status"] = "all"
-): Finding[] {
-  const priority: Record<Finding["status"], number> = {
-    pending_review: 0,
-    draft: 1,
-    uncertain: 2,
-    revised: 3,
-    accepted: 4,
-    rejected: 5,
-  };
+  if (
+    eventType === "assist_requested" ||
+    eventType === "assist_completed" ||
+    eventType === "assist_overridden"
+  ) {
+    return "active";
+  }
 
-  return findings
-    .filter((finding) => (filter === "all" ? true : finding.status === filter))
-    .sort((left, right) => {
-      if (priority[left.status] !== priority[right.status]) {
-        return priority[left.status] - priority[right.status];
-      }
-
-      return right.updatedAt.localeCompare(left.updatedAt);
-    });
+  return "success";
 }
 
 export function sortApprovedExports(
-  approvedExports: ApprovedExport[],
-  filter: "all" | ApprovedExport["status"] = "all"
-): ApprovedExport[] {
+  approvedExports: ApprovedExportEnvelope[],
+  filter: "all" | ApprovedExportEnvelope["export"]["status"] = "all"
+): ApprovedExportEnvelope[] {
   return approvedExports
-    .filter((approvedExport) =>
-      filter === "all" ? true : approvedExport.status === filter
-    )
-    .sort((left, right) => right.approvedAt.localeCompare(left.approvedAt));
+    .filter((item) => (filter === "all" ? true : item.export.status === filter))
+    .sort((left, right) =>
+      right.export.approvedAt.localeCompare(left.export.approvedAt)
+    );
 }
 
-export async function loadSessions(
-  filter: "all" | ReviewSession["reviewStatus"] = "all"
-): Promise<ReviewSession[]> {
-  return sortSessions(
-    await api.getSessions(filter === "all" ? undefined : { reviewStatus: filter }),
-    filter
-  );
-}
-
-export async function loadFindings(
-  filter: "all" | Finding["status"] = "all"
-): Promise<Finding[]> {
-  return sortFindings(
-    await api.getFindings(filter === "all" ? undefined : { status: filter }),
-    filter
-  );
+export function sortOpsEvents(
+  opsEvents: OpsEvent[],
+  filter: "all" | OpsEvent["type"] = "all"
+): OpsEvent[] {
+  return opsEvents
+    .filter((item) => (filter === "all" ? true : item.type === filter))
+    .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt));
 }
 
 export async function loadApprovedExports(
-  filter: "all" | ApprovedExport["status"] = "all"
-): Promise<ApprovedExport[]> {
+  filter: "all" | ApprovedExportEnvelope["export"]["status"] = "all"
+): Promise<ApprovedExportEnvelope[]> {
   return sortApprovedExports(
     await api.getApprovedExports(
       filter === "all" ? undefined : { exportStatus: filter }
@@ -200,17 +129,15 @@ export async function loadApprovedExports(
   );
 }
 
-export async function loadReviewSnapshot(): Promise<ReviewSnapshot> {
-  const [sessions, findings, approvedExports] = await Promise.all([
-    api.getSessions(),
-    api.getFindings(),
+export async function loadOperationsSnapshot(): Promise<OperationsSnapshot> {
+  const [approvedExports, opsEvents] = await Promise.all([
     api.getApprovedExports(),
+    api.getOpsEvents(),
   ]);
 
   return {
-    sessions: sortSessions(sessions),
-    findings: sortFindings(findings),
     approvedExports: sortApprovedExports(approvedExports),
+    opsEvents: sortOpsEvents(opsEvents),
   };
 }
 
@@ -225,15 +152,7 @@ function startOfUtcWeek(value: string | Date): Date {
   return copy;
 }
 
-function formatWeekLabel(date: Date): string {
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-function buildWeeklyActivity(snapshot: ReviewSnapshot): WeeklyActivityPoint[] {
+function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[] {
   const currentWeek = startOfUtcWeek(new Date());
   const weeks = Array.from({ length: 6 }, (_, index) => {
     const week = new Date(currentWeek);
@@ -243,172 +162,147 @@ function buildWeeklyActivity(snapshot: ReviewSnapshot): WeeklyActivityPoint[] {
 
   const points = weeks.map((week) => ({
     period: week.toISOString(),
-    sessions: 0,
-    findings: 0,
     exports: 0,
+    assists: 0,
+    blocks: 0,
   }));
   const pointByWeek = new Map(points.map((point) => [point.period, point]));
 
-  snapshot.sessions.forEach((session) => {
+  snapshot.approvedExports.forEach((item) => {
     const point = pointByWeek.get(
-      startOfUtcWeek(session.encounterStartedAt).toISOString()
-    );
-    if (point) {
-      point.sessions += 1;
-    }
-  });
-
-  snapshot.findings.forEach((finding) => {
-    const point = pointByWeek.get(startOfUtcWeek(finding.updatedAt).toISOString());
-    if (point) {
-      point.findings += 1;
-    }
-  });
-
-  snapshot.approvedExports.forEach((approvedExport) => {
-    const point = pointByWeek.get(
-      startOfUtcWeek(approvedExport.approvedAt).toISOString()
+      startOfUtcWeek(item.export.approvedAt).toISOString()
     );
     if (point) {
       point.exports += 1;
     }
   });
 
-  return points.map((point) => ({
-    ...point,
-    period: formatWeekLabel(new Date(point.period)),
-  }));
-}
-
-function buildFocusItems(findings: Finding[]): FocusItem[] {
-  const grouped = new Map<
-    string,
-    {
-      title: string;
-      count: number;
-      detail: string;
-      owner: string;
-      tone: FocusItem["tone"];
-      updatedAt: string;
-    }
-  >();
-
-  findings.forEach((finding) => {
-    const key = finding.code || finding.title;
-    const tone =
-      finding.status === "draft" || finding.status === "pending_review"
-        ? "alert"
-        : finding.status === "uncertain" || finding.status === "revised"
-          ? "watch"
-          : "stable";
-    const owner = `${formatStatusLabel(finding.detectedBy)} · ${formatStatusLabel(
-      finding.status
-    )}`;
-    const existing = grouped.get(key);
-
-    if (existing) {
-      existing.count += 1;
-      if (finding.updatedAt > existing.updatedAt) {
-        existing.detail = finding.summary;
-        existing.owner = owner;
-        existing.tone = tone;
-        existing.updatedAt = finding.updatedAt;
-      }
+  snapshot.opsEvents.forEach((item) => {
+    const point = pointByWeek.get(startOfUtcWeek(item.recordedAt).toISOString());
+    if (!point) {
       return;
     }
 
-    grouped.set(key, {
-      title: finding.title,
-      count: 1,
-      detail: finding.summary,
-      owner,
-      tone,
-      updatedAt: finding.updatedAt,
-    });
+    if (item.type.startsWith("assist_")) {
+      point.assists += 1;
+    }
+
+    if (item.type === "redaction_blocked") {
+      point.blocks += 1;
+    }
   });
 
-  return Array.from(grouped.values())
-    .sort((left, right) => {
-      if (right.count !== left.count) {
-        return right.count - left.count;
-      }
+  return points;
+}
 
-      return right.updatedAt.localeCompare(left.updatedAt);
+function averageSendLatencyMs(
+  approvedExports: ApprovedExportEnvelope[]
+): number | null {
+  const latencies = approvedExports
+    .filter(
+      (item) => item.export.status === "sent" && typeof item.export.sentAt === "string"
+    )
+    .map((item) => {
+      const sentAt = Date.parse(item.export.sentAt ?? "");
+      const approvedAt = Date.parse(item.export.approvedAt);
+      if (Number.isNaN(sentAt) || Number.isNaN(approvedAt)) {
+        return null;
+      }
+      return Math.max(sentAt - approvedAt, 0);
     })
-    .slice(0, 4)
-    .map(({ updatedAt, ...item }) => item);
+    .filter((item): item is number => item !== null);
+
+  if (latencies.length === 0) {
+    return null;
+  }
+
+  return latencies.reduce((sum, value) => sum + value, 0) / latencies.length;
 }
 
 export function buildOverviewModel(
-  snapshot: ReviewSnapshot,
-  now = new Date()
+  snapshot: OperationsSnapshot,
+  now: Date = new Date()
 ): OverviewModel {
-  const openFindings = snapshot.findings.filter((finding) =>
-    OPEN_STATUSES.has(finding.status)
+  const approvedExports = snapshot.approvedExports.filter(
+    (item) => item.export.status === "approved"
   );
-  const reviewedFindings = snapshot.findings.filter((finding) =>
-    REVIEWED_STATUSES.has(finding.status)
+  const sentExports = snapshot.approvedExports.filter(
+    (item) => item.export.status === "sent"
   );
-  const approvedExportCount = snapshot.approvedExports.filter(
-    (approvedExport) =>
-      approvedExport.status === "approved" || approvedExport.status === "sent"
-  ).length;
-  const agingItems = snapshot.sessions.filter((session) => {
-    if (
-      session.reviewStatus !== "ready" &&
-      session.reviewStatus !== "in_review"
-    ) {
-      return false;
-    }
-
-    return now.getTime() - new Date(session.updatedAt).getTime() > 2 * DAY_MS;
-  }).length;
-
-  const queueLanes: QueueLane[] = [
-    {
-      title: "Awaiting review decision",
-      count: snapshot.findings.filter(
-        (finding) =>
-          finding.status === "draft" || finding.status === "pending_review"
-      ).length,
-      detail:
-        "Findings that still need a human decision before they can move forward.",
-      tone: "attention",
-    },
-    {
-      title: "Needs evidence edits",
-      count: snapshot.findings.filter(
-        (finding) =>
-          finding.status === "uncertain" || finding.status === "revised"
-      ).length,
-      detail:
-        "Evidence spans or summaries changed during review and need another pass.",
-      tone: "active",
-    },
-    {
-      title: "Export packets in queue",
-      count: snapshot.approvedExports.filter(
-        (approvedExport) =>
-          approvedExport.status === "draft" ||
-          approvedExport.status === "approved"
-      ).length,
-      detail:
-        "Export packets stay downstream of review until a lead sends them.",
-      tone: "success",
-    },
-  ];
+  const draftExports = snapshot.approvedExports.filter(
+    (item) => item.export.status === "draft"
+  );
+  const assistUsageEvents = snapshot.opsEvents.filter(
+    (item) => item.type === "assist_requested"
+  );
+  const assistOverrides = snapshot.opsEvents.filter(
+    (item) => item.type === "assist_overridden"
+  );
+  const redactionBlocks = snapshot.opsEvents.filter(
+    (item) => item.type === "redaction_blocked"
+  );
+  const assistFailures = snapshot.opsEvents.filter(
+    (item) => item.type === "assist_failed"
+  );
+  const stuckApprovedExports = approvedExports.filter((item) => {
+    const approvedAt = Date.parse(item.export.approvedAt);
+    return !Number.isNaN(approvedAt) && now.getTime() - approvedAt > 2 * DAY_MS;
+  });
 
   return {
-    sessionsInScope: snapshot.sessions.length,
-    openFindings: openFindings.length,
-    reviewedFindings: reviewedFindings.length,
-    approvedExportCount,
-    agingItems,
-    queueLanes,
-    focusItems: buildFocusItems(
-      openFindings.length > 0 ? openFindings : snapshot.findings
-    ),
+    totalExports: snapshot.approvedExports.length,
+    approvedExports: approvedExports.length,
+    sentExports: sentExports.length,
+    assistUsageCount: assistUsageEvents.length,
+    assistOverrideCount: assistOverrides.length,
+    redactionBlockCount: redactionBlocks.length,
+    averageSendLatencyMs: averageSendLatencyMs(snapshot.approvedExports),
+    queueLanes: [
+      {
+        title: "Draft exports",
+        count: draftExports.length,
+        detail: "Desktop-reviewed packets that have not been approved for downstream delivery yet.",
+        tone: "active",
+      },
+      {
+        title: "Approved not sent",
+        count: approvedExports.length,
+        detail: "Approved envelopes waiting on manual downstream delivery or compliance release.",
+        tone: "attention",
+      },
+      {
+        title: "Privacy blocks",
+        count: redactionBlocks.length,
+        detail: "Redaction or minimization issues blocked export or assist work and require local review.",
+        tone: "attention",
+      },
+    ],
+    focusItems: [
+      {
+        title: "Assist requests",
+        count: assistUsageEvents.length,
+        detail: "Reviewer-invoked second-opinion calls recorded without raw PHI.",
+        owner: "Desktop reviewers",
+        tone: assistUsageEvents.length > 0 ? "watch" : "stable",
+      },
+      {
+        title: "Assist overrides",
+        count: assistOverrides.length,
+        detail: "Human reviewers overruled an assist recommendation and preserved the local decision.",
+        owner: "Quality leads",
+        tone: assistOverrides.length > 0 ? "watch" : "stable",
+      },
+      {
+        title: "Assist or delivery failures",
+        count: assistFailures.length + stuckApprovedExports.length,
+        detail: "Failures and aging approved exports are the main centralized follow-up queue.",
+        owner: "Ops and compliance",
+        tone:
+          assistFailures.length + stuckApprovedExports.length > 0 ? "alert" : "stable",
+      },
+    ],
     weeklyActivity: buildWeeklyActivity(snapshot),
-    exportRows: sortApprovedExports(snapshot.approvedExports).slice(0, 4),
+    exportRows: sortApprovedExports(snapshot.approvedExports).slice(0, 5),
+    recentOpsEvents: sortOpsEvents(snapshot.opsEvents).slice(0, 6),
   };
 }

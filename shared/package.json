@@ -6,6 +6,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.json"
   },
+  "exports": {
+    ".": "./types/index.ts",
+    "./cloud": "./types/cloud.ts",
+    "./local-review": "./types/local-review.ts"
+  },
   "main": "types/index.ts",
   "types": "types/index.ts"
 }

@@ -3,12 +3,13 @@ import type {
   EvidenceSpan,
   ExportStatus,
   Finding,
+  ModelAssistReceipt,
   ReviewDecisionOutcome,
   ReviewStatus,
   TranscriptSegment,
   TranscriptSpeakerLabel,
   TranscriptStatus,
-} from "@doctor-auditor/shared";
+} from "@doctor-auditor/shared/local-review";
 import type { DesktopSessionBundle } from "../types/electron";
 import {
   buildReviewWorkspace,
@@ -32,8 +33,13 @@ export default function SessionReviewView({
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [actionErrorMessage, setActionErrorMessage] = useState("");
+  const [actionInfoMessage, setActionInfoMessage] = useState("");
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [savingFindingId, setSavingFindingId] = useState<string | null>(null);
+  const [requestingAssistFindingId, setRequestingAssistFindingId] = useState<
+    string | null
+  >(null);
+  const [isCreatingExport, setIsCreatingExport] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
@@ -48,6 +54,7 @@ export default function SessionReviewView({
       setLoadState("loading");
       setErrorMessage("");
       setActionErrorMessage("");
+      setActionInfoMessage("");
 
       try {
         const nextBundle = await window.doctorAuditor.session.get(sessionId);
@@ -110,6 +117,7 @@ export default function SessionReviewView({
     }
 
     setActionErrorMessage("");
+    setActionInfoMessage("");
     setSavingFindingId(findingId);
 
     try {
@@ -135,15 +143,134 @@ export default function SessionReviewView({
     }
   }
 
+  async function requestSeriousnessAssist(findingId: string): Promise<void> {
+    if (!window.doctorAuditor || !bundle) {
+      setActionErrorMessage("Desktop review persistence is unavailable.");
+      return;
+    }
+
+    setActionErrorMessage("");
+    setActionInfoMessage("");
+    setRequestingAssistFindingId(findingId);
+
+    try {
+      const result =
+        await window.doctorAuditor.session.requestSeriousnessAssist({
+          sessionId: bundle.session.id,
+          findingId,
+        });
+
+      if (result.bundle) {
+        setBundle(result.bundle);
+      }
+
+      if (result.receipt.status === "failed") {
+        setActionErrorMessage(
+          result.syncError
+            ? `Assist failed locally, and ops sync also failed: ${result.syncError}`
+            : "Remote second opinion request failed. The failure was recorded locally."
+        );
+        return;
+      }
+
+      setActionInfoMessage(
+        result.syncError
+          ? `Second opinion saved locally, but cloud ops sync failed: ${result.syncError}`
+          : "Second opinion received and stored locally."
+      );
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to request a remote second opinion."
+      );
+    } finally {
+      setRequestingAssistFindingId(null);
+    }
+  }
+
+  async function dismissAssistReceipt(receiptId: string): Promise<void> {
+    if (!window.doctorAuditor || !bundle) {
+      setActionErrorMessage("Desktop review persistence is unavailable.");
+      return;
+    }
+
+    setActionErrorMessage("");
+    setActionInfoMessage("");
+
+    try {
+      const nextBundle = await window.doctorAuditor.session.updateModelAssistAction({
+        sessionId: bundle.session.id,
+        receiptId,
+        reviewerAction: "dismissed",
+      });
+
+      if (!nextBundle) {
+        throw new Error("The model-assist receipt could not be updated.");
+      }
+
+      setBundle(nextBundle);
+      setActionInfoMessage("Assist recommendation dismissed locally.");
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to update the assist recommendation."
+      );
+    }
+  }
+
+  async function createApprovedExport(): Promise<void> {
+    if (!window.doctorAuditor || !bundle) {
+      setActionErrorMessage("Desktop review persistence is unavailable.");
+      return;
+    }
+
+    setActionErrorMessage("");
+    setActionInfoMessage("");
+    setIsCreatingExport(true);
+
+    try {
+      const result = await window.doctorAuditor.session.createApprovedExport({
+        sessionId: bundle.session.id,
+      });
+
+      if (result.bundle) {
+        setBundle(result.bundle);
+      }
+
+      setActionInfoMessage(
+        result.syncError
+          ? `Approved export saved locally, but cloud sync failed: ${result.syncError}`
+          : "Approved export saved locally and synced to the cloud export plane."
+      );
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to create an approved export."
+      );
+    } finally {
+      setIsCreatingExport(false);
+    }
+  }
+
   const workspace = bundle ? buildReviewWorkspace(bundle) : null;
   const findings = workspace?.findings ?? [];
   const transcriptSegments = workspace?.transcriptSegments ?? [];
+  const modelAssistReceipts = bundle?.modelAssistReceipts ?? [];
   const selectedFinding =
     findings.find((finding) => finding.id === selectedFindingId) ?? findings[0];
   const selectedOutcome =
     selectedFinding && bundle
       ? getPersistedOutcome(selectedFinding, bundle.reviewDecisions)
       : undefined;
+  const selectedAssistReceipts = selectedFinding
+    ? modelAssistReceipts
+        .filter((receipt) => receipt.findingId === selectedFinding.id)
+        .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
+    : [];
+  const latestAssistReceipt = selectedAssistReceipts[0];
   const reviewedCount = findings.filter((finding) =>
     Boolean(bundle && getPersistedOutcome(finding, bundle.reviewDecisions))
   ).length;
@@ -190,6 +317,18 @@ export default function SessionReviewView({
           onClick={onBack}
         >
           Back to history
+        </button>
+        <button
+          type="button"
+          className="session-review__button"
+          onClick={() => void createApprovedExport()}
+          disabled={
+            isCreatingExport ||
+            bundle.session.reviewStatus !== "completed" ||
+            !bundle.session.consent.exportAllowed
+          }
+        >
+          {isCreatingExport ? "Saving export..." : "Approve export envelope"}
         </button>
       </div>
 
@@ -274,6 +413,12 @@ export default function SessionReviewView({
       {actionErrorMessage && (
         <div className="session-review__notice" role="alert">
           {actionErrorMessage}
+        </div>
+      )}
+
+      {actionInfoMessage && (
+        <div className="session-review__notice" role="status">
+          {actionInfoMessage}
         </div>
       )}
 
@@ -378,6 +523,8 @@ export default function SessionReviewView({
                   );
                   const tone = getDecisionTone(appliedOutcome);
                   const isSavingDecision = savingFindingId === finding.id;
+                  const isRequestingAssist =
+                    requestingAssistFindingId === finding.id;
 
                   return (
                     <article
@@ -433,6 +580,22 @@ export default function SessionReviewView({
                             {isSavingDecision ? "Saving..." : label}
                           </button>
                         ))}
+                        <button
+                          type="button"
+                          className="session-review__action-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedFindingId(finding.id);
+                            void requestSeriousnessAssist(finding.id);
+                          }}
+                          disabled={
+                            isRequestingAssist ||
+                            !bundle.session.consent.remoteAssistAllowed ||
+                            finding.evidenceSpans.length === 0
+                          }
+                        >
+                          {isRequestingAssist ? "Requesting..." : "Second opinion"}
+                        </button>
                       </div>
                     </article>
                   );
@@ -480,6 +643,14 @@ export default function SessionReviewView({
                   <span>Updated</span>
                   <strong>{formatDateTime(selectedFinding.updatedAt)}</strong>
                 </div>
+                <div className="session-review__detail-row">
+                  <span>Remote assist</span>
+                  <strong>
+                    {bundle.session.consent.remoteAssistAllowed
+                      ? "Permitted"
+                      : "Disabled for this session"}
+                  </strong>
+                </div>
 
                 <div className="session-review__detail-block">
                   <p className="session-review__detail-label">Summary</p>
@@ -508,6 +679,58 @@ export default function SessionReviewView({
                       );
                     })}
                   </div>
+                </div>
+
+                <div className="session-review__detail-block">
+                  <div className="session-review__detail-row">
+                    <span>Second opinion</span>
+                    <strong>
+                      {latestAssistReceipt
+                        ? formatAssistStatus(latestAssistReceipt)
+                        : "No remote assist request yet"}
+                    </strong>
+                  </div>
+                  {latestAssistReceipt ? (
+                    <div className="session-review__evidence-list">
+                      <article className="session-review__evidence-card">
+                        <p className="session-review__evidence-label">
+                          {latestAssistReceipt.assessment
+                            ? `${formatAssistDisposition(
+                                latestAssistReceipt.assessment.disposition
+                              )} / ${Math.round(
+                                latestAssistReceipt.assessment.confidence * 100
+                              )}% confidence`
+                            : "Request failed"}
+                        </p>
+                        <p>
+                          {latestAssistReceipt.assessment?.rationale ??
+                            latestAssistReceipt.errorCode ??
+                            "The assist gateway did not return an assessment."}
+                        </p>
+                        {latestAssistReceipt.assessment?.limitations.length ? (
+                          <p className="session-review__evidence-label">
+                            {latestAssistReceipt.assessment.limitations.join(" / ")}
+                          </p>
+                        ) : null}
+                        {latestAssistReceipt.reviewerAction !== "dismissed" && (
+                          <button
+                            type="button"
+                            className="session-review__action-button"
+                            onClick={() =>
+                              void dismissAssistReceipt(latestAssistReceipt.id)
+                            }
+                          >
+                            Dismiss assist result
+                          </button>
+                        )}
+                      </article>
+                    </div>
+                  ) : (
+                    <p>
+                      Request a second opinion to log a minimized, non-raw assist
+                      result without moving transcript or findings into the cloud.
+                    </p>
+                  )}
                 </div>
               </div>
             ) : (
@@ -764,4 +987,30 @@ function getDecisionTone(
     default:
       return "pending";
   }
+}
+
+function formatAssistDisposition(
+  value: NonNullable<ModelAssistReceipt["assessment"]>["disposition"]
+): string {
+  switch (value) {
+    case "routine_review":
+      return "Routine review";
+    case "expedited_human_review":
+      return "Expedited human review";
+    case "insufficient_context":
+      return "Insufficient context";
+  }
+}
+
+function formatAssistStatus(receipt: ModelAssistReceipt): string {
+  if (receipt.status === "failed") {
+    return "Assist failed";
+  }
+
+  const disposition = receipt.assessment?.disposition;
+  if (!disposition) {
+    return "Assist completed";
+  }
+
+  return formatAssistDisposition(disposition);
 }

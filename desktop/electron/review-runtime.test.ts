@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TranscriptSegment } from "@doctor-auditor/shared";
+import type { TranscriptSegment } from "@doctor-auditor/shared/local-review";
 import {
   ReviewRuntimeService,
-  type ReviewRuntimeTranscriptionAdapter,
+  type ReviewRuntimeMlAdapter,
   type ReviewRuntimeTranscriptionCompleted,
   type ReviewRuntimeTranscriptionFailed,
 } from "./review-runtime";
@@ -21,7 +21,7 @@ describe("ReviewRuntimeService", () => {
       throw new Error("Second transcription resolver was not initialized.");
     };
 
-    const transcription: ReviewRuntimeTranscriptionAdapter = {
+    const transcription: ReviewRuntimeMlAdapter = {
       dispose: vi.fn().mockResolvedValue(undefined),
       isModelAvailable: vi.fn().mockResolvedValue(true),
       transcribeFile: vi.fn((audioPath: string, sessionId: string, source) => {
@@ -103,7 +103,7 @@ describe("ReviewRuntimeService", () => {
   });
 
   it("surfaces runtime failures through a single failure channel", async () => {
-    const transcription: ReviewRuntimeTranscriptionAdapter = {
+    const transcription: ReviewRuntimeMlAdapter = {
       dispose: vi.fn().mockResolvedValue(undefined),
       isModelAvailable: vi.fn().mockResolvedValue(false),
       transcribeFile: vi.fn(),

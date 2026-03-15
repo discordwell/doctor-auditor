@@ -1,12 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import type { ModelAssistRequest } from "@doctor-auditor/shared/local-review";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalDatabase } from "./database";
 
 const cleanupPaths: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   while (cleanupPaths.length > 0) {
     const target = cleanupPaths.pop();
     if (target) {
@@ -17,12 +19,17 @@ afterEach(() => {
 
 describe("LocalDatabase review artifacts", () => {
   it("persists findings, review decisions, and approved exports locally", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-15T10:05:00Z"));
+
     const db = createDatabase();
     const capturedAt = "2026-03-15T10:00:00Z";
     const session = db.createImportedSession({
       clinicianId: "clinician-42",
       recordedWithConsent: true,
       exportAllowed: true,
+      remoteAssistAllowed: true,
+      policyVersion: "policy-v1",
       audioPath: "/tmp/encounter.wav",
       capturedAt,
       sourceFileName: "encounter.wav",
@@ -123,6 +130,110 @@ describe("LocalDatabase review artifacts", () => {
     expect(exportedBundle?.auditLogEntries.at(-1)?.action).toBe(
       "export_approved"
     );
+
+    db.close();
+  });
+
+  it("persists local assist receipts without mutating export state", () => {
+    const db = createDatabase();
+    const capturedAt = "2026-03-15T11:00:00Z";
+    const session = db.createImportedSession({
+      clinicianId: "clinician-99",
+      recordedWithConsent: true,
+      exportAllowed: true,
+      remoteAssistAllowed: true,
+      policyVersion: "policy-v1",
+      audioPath: "/tmp/assist.wav",
+      capturedAt,
+      sourceFileName: "assist.wav",
+    });
+    const sessionId = session.session.id;
+
+    db.replaceTranscriptSegments(sessionId, [
+      {
+        id: "segment-assist-001",
+        sessionId,
+        speakerLabel: "patient",
+        text: "The refill delay meant I missed another dose.",
+        startOffsetMs: 0,
+        endOffsetMs: 3200,
+        source: "audio_import",
+      },
+    ]);
+
+    db.replaceFindings(sessionId, [
+      {
+        id: "finding-assist-001",
+        sessionId,
+        code: "medication-risk",
+        title: "Medication risk needs a second look",
+        summary: "The patient described a delayed refill and a missed dose.",
+        status: "pending_review",
+        confidence: 0.77,
+        evidenceSpans: [
+          {
+            id: "evidence-assist-001",
+            transcriptSegmentId: "segment-assist-001",
+            excerpt: "The refill delay meant I missed another dose.",
+            startOffsetMs: 0,
+            endOffsetMs: 3200,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: capturedAt,
+        updatedAt: capturedAt,
+      },
+    ]);
+
+    const request: ModelAssistRequest = {
+      id: "assist-request-001",
+      sessionId,
+      findingId: "finding-assist-001",
+      requestedBy: "reviewer-2",
+      requestedAt: "2026-03-15T11:05:00Z",
+      policyVersion: "policy-v1",
+      policyMode: "minimized_no_raw_phi" as const,
+      concern: {
+        findingCode: "medication-risk",
+        findingStatus: "pending_review" as const,
+        findingConfidence: 0.77,
+        evidenceSpanCount: 1,
+        speakerLabels: ["patient"],
+        captureMode: "audio_import" as const,
+      },
+    };
+    db.recordModelAssistRequested(request);
+
+    const bundle = db.saveModelAssistReceipt({
+      request,
+      receipt: {
+        id: "assist-receipt-001",
+        requestId: "assist-request-001",
+        sessionId,
+        findingId: "finding-assist-001",
+        status: "completed",
+        policyMode: "minimized_no_raw_phi",
+        requestedAt: "2026-03-15T11:05:00Z",
+        completedAt: "2026-03-15T11:05:01Z",
+        latencyMs: 812,
+        reviewerAction: "not_applied",
+        assessment: {
+          disposition: "expedited_human_review",
+          confidence: 0.79,
+          rationale: "Medication-risk packets go to the higher-acuity review lane.",
+          limitations: ["Only minimized context was available."],
+          provider: "doctor-auditor-assist-gateway",
+          model: "policy-heuristic-v1",
+          assessedAt: "2026-03-15T11:05:01Z",
+        },
+      },
+    });
+
+    expect(bundle?.modelAssistReceipts).toHaveLength(1);
+    expect(bundle?.session.exportStatus).toBe("not_requested");
+    expect(
+      bundle?.auditLogEntries.some((entry) => entry.action === "assist_completed")
+    ).toBe(true);
 
     db.close();
   });

@@ -1,16 +1,9 @@
 import type {
-  ApprovedEvidenceExcerpt,
   ApprovedExport,
-  ApprovedExportFinding,
-  EvidenceSpan,
-  ExportStatus,
-  Finding,
-  FindingStatus,
-  ReviewDecisionOutcome,
-  ReviewSession,
-  ReviewStatus,
-  SessionConsent,
-} from "@doctor-auditor/shared";
+  ApprovedExportEnvelope,
+  OpsEvent,
+  OpsSummary,
+} from "@doctor-auditor/shared/cloud";
 
 const API_BASE = "/api";
 const AUTH_STORAGE_KEY = "doctor-auditor.dashboard-auth";
@@ -35,9 +28,8 @@ type StoredAuthSession = AuthResponse & {
 
 type DemoSeedResponse = {
   seeded: boolean;
-  sessions: number;
-  findings: number;
   approvedExports: number;
+  opsEvents: number;
 };
 
 let authToken: string | null = null;
@@ -244,9 +236,7 @@ async function request<T>(
   return response.json();
 }
 
-function buildQuery(
-  params: Record<string, string | undefined | null>
-): string {
+function buildQuery(params: Record<string, string | undefined | null>): string {
   const searchParams = new URLSearchParams();
 
   Object.entries(params).forEach(([key, value]) => {
@@ -260,65 +250,34 @@ function buildQuery(
 }
 
 export type {
-  ApprovedEvidenceExcerpt,
   ApprovedExport,
-  ApprovedExportFinding,
-  EvidenceSpan,
-  ExportStatus,
-  Finding,
-  FindingStatus,
-  ReviewSession,
-  ReviewStatus,
-  SessionConsent,
+  ApprovedExportEnvelope,
+  OpsEvent,
+  OpsSummary,
 };
 
-export interface ReviewDecisionCreateRequest {
-  outcome: ReviewDecisionOutcome;
-  reviewedBy: string;
-  rationale?: string;
-  editedTitle?: string;
-  editedSummary?: string;
-  approvedEvidenceSpans?: EvidenceSpan[];
-}
-
 export const api = {
-  getSessions: (params?: {
-    reviewStatus?: string;
+  getApprovedExports: (params?: {
     exportStatus?: string;
     clinicianId?: string;
   }) =>
-    request<ReviewSession[]>(
-      `/sessions/${buildQuery({
-        review_status: params?.reviewStatus,
+    request<ApprovedExportEnvelope[]>(
+      `/approved-exports/${buildQuery({
         export_status: params?.exportStatus,
         clinician_id: params?.clinicianId,
       })}`
     ),
-  getFindings: (params?: { sessionId?: string; status?: string }) =>
-    request<Finding[]>(
-      `/findings/${buildQuery({
-        session_id: params?.sessionId,
-        status: params?.status,
-      })}`
-    ),
-  createReviewDecision: (
-    findingId: string,
-    payload: ReviewDecisionCreateRequest
-  ) =>
-    request(`/findings/${findingId}/review-decisions`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  getApprovedExports: (params?: {
-    sessionId?: string;
-    exportStatus?: string;
+  getOpsEvents: (params?: {
+    localSessionId?: string;
+    eventType?: string;
   }) =>
-    request<ApprovedExport[]>(
-      `/approved-exports/${buildQuery({
-        session_id: params?.sessionId,
-        export_status: params?.exportStatus,
+    request<OpsEvent[]>(
+      `/ops-events/${buildQuery({
+        local_session_id: params?.localSessionId,
+        event_type: params?.eventType,
       })}`
     ),
+  getOpsSummary: () => request<OpsSummary>("/ops-events/summary"),
   login: (email: string, password: string) =>
     request<AuthResponse>("/auth/login", {
       method: "POST",

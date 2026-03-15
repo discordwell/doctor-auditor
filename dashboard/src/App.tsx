@@ -1,8 +1,6 @@
 import React from "react";
 import { Routes, Route, NavLink } from "react-router-dom";
 import OverviewView from "./views/OverviewView";
-import DoctorsView from "./views/DoctorsView";
-import AssessmentsView from "./views/AssessmentsView";
 import ApprovedExportsView from "./views/ApprovedExportsView";
 
 export default function App() {
@@ -20,16 +18,12 @@ export default function App() {
           <NavLink to="/" end>
             Overview
           </NavLink>
-          <NavLink to="/sessions">Sessions</NavLink>
-          <NavLink to="/findings">Findings</NavLink>
           <NavLink to="/approved-exports">Exports</NavLink>
         </nav>
       </header>
       <main className="dashboard-content">
         <Routes>
           <Route path="/" element={<OverviewView />} />
-          <Route path="/sessions" element={<DoctorsView />} />
-          <Route path="/findings" element={<AssessmentsView />} />
           <Route path="/approved-exports" element={<ApprovedExportsView />} />
         </Routes>
       </main>
