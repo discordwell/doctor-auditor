@@ -1,21 +1,30 @@
+import atexit
 import asyncio
 import os
+import shutil
+import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-TEST_DATABASE_PATH = Path(__file__).with_suffix(".sqlite3").resolve()
+TEST_DATABASE_DIR = Path(tempfile.mkdtemp(prefix="doctor-auditor-review-api-"))
+TEST_DATABASE_PATH = TEST_DATABASE_DIR / f"{uuid4().hex}.sqlite3"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
+atexit.register(shutil.rmtree, TEST_DATABASE_DIR, True)
 
+from app.auth.jwt import create_access_token
 from app.main import app
 from app.models.database import Base, engine
 
 
 def reset_database() -> None:
     async def _reset() -> None:
+        await engine.dispose()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
+        await engine.dispose()
 
     asyncio.run(_reset())
 
@@ -32,6 +41,10 @@ def auth_headers(client: TestClient) -> dict[str, str]:
     )
     assert response.status_code == 200, response.text
     token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def bearer_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -204,6 +217,27 @@ def test_approved_export_rejects_raw_transcript_fields() -> None:
         )
 
 
+def test_approved_export_rejects_mismatched_export_id() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = approved_export_envelope_payload()
+        payload["export"]["id"] = "export-other-001"
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 422, response.text
+        assert any(
+            "export id must match envelope id" in error["msg"]
+            for error in response.json()["detail"]
+        )
+
+
 def test_approved_export_rejects_audio_upload_fields() -> None:
     reset_database()
 
@@ -283,6 +317,49 @@ def test_demo_seed_is_idempotent() -> None:
         assert second.json()["opsEvents"] == first.json()["opsEvents"]
 
 
+def test_ops_event_rejects_mismatched_organization() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = ops_event_payload()
+        payload["organizationId"] = "other-health"
+
+        response = client.post(
+            "/api/ops-events/",
+            json=payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 400, response.text
+        assert (
+            response.json()["detail"]
+            == "ops event organization does not match authenticated organization"
+        )
+
+
+def test_ops_event_rejects_export_events_without_export_id() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = ops_event_payload()
+        payload.pop("assistReceiptId")
+        payload["type"] = "export_sent"
+
+        response = client.post(
+            "/api/ops-events/",
+            json=payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 422, response.text
+        assert any(
+            "exportId is required for export events" in error["msg"]
+            for error in response.json()["detail"]
+        )
+
+
 def test_approved_export_rejects_mismatched_organization() -> None:
     reset_database()
 
@@ -356,6 +433,30 @@ def test_assist_gateway_returns_structured_assessment() -> None:
         assert body["provider"] == "doctor-auditor-assist-gateway"
 
 
+def test_assist_gateway_rejects_raw_transcript_fields() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        payload = assist_gateway_payload()
+        payload["concern"]["transcriptSegments"] = [
+            {
+                "id": "segment-001",
+                "text": "Raw transcript text should never cross the assist boundary.",
+            }
+        ]
+
+        response = client.post(
+            "/api/assist-gateway/seriousness-assessments",
+            json=payload,
+        )
+
+        assert response.status_code == 422, response.text
+        assert any(
+            error["loc"] == ["body", "concern", "transcriptSegments"]
+            for error in response.json()["detail"]
+        )
+
+
 def test_assist_gateway_handles_insufficient_context() -> None:
     reset_database()
 
@@ -372,3 +473,24 @@ def test_assist_gateway_handles_insufficient_context() -> None:
         body = response.json()
         assert body["disposition"] == "insufficient_context"
         assert body["provider"] == "doctor-auditor-assist-gateway"
+
+
+def test_protected_routes_reject_tokens_without_organization_claims() -> None:
+    reset_database()
+
+    token = create_access_token(
+        {
+            "sub": "reviewer-1",
+            "email": "reviewer@demo-health.local",
+            "role": "reviewer",
+        }
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/approved-exports/",
+            headers=bearer_headers(token),
+        )
+
+        assert response.status_code == 401, response.text
+        assert response.json()["detail"] == "Invalid token"

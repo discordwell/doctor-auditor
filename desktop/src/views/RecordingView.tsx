@@ -13,6 +13,7 @@ import type {
 
 type ImportStage = "idle" | "cancelled" | SessionImportProgress["stage"];
 type LiveCaptureNoticeTone = "info" | "active" | "success" | "error";
+type CaptureTransition = "idle" | "starting" | "stopping";
 
 interface LiveCaptureNotice {
   tone: LiveCaptureNoticeTone;
@@ -71,6 +72,8 @@ export default function RecordingView() {
     useState<LiveCaptureStatus | null>(null);
   const [isLoadingLiveCaptureStatus, setIsLoadingLiveCaptureStatus] =
     useState(true);
+  const [captureTransition, setCaptureTransition] =
+    useState<CaptureTransition>("idle");
   const [recentSession, setRecentSession] =
     useState<DesktopSessionSummary | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -125,7 +128,9 @@ export default function RecordingView() {
 
     return window.doctorAuditor.audio.onCaptureError((captureError) => {
       stopRecordingTimer(timerRef);
+      setCaptureTransition("idle");
       setIsRecording(false);
+      setDuration(0);
       setAudioLevels(createEmptyAudioLevels());
       setLiveCaptureNotice({
         tone: "error",
@@ -189,15 +194,24 @@ export default function RecordingView() {
       return;
     }
 
-    if (isImporting) {
+    if (isImporting || captureTransition !== "idle") {
       return;
     }
 
     if (isRecording) {
+      setCaptureTransition("stopping");
+      setLiveCaptureNotice({
+        tone: "active",
+        message:
+          "Stopping live capture. Waiting for the local recorder to flush audio and queue transcription.",
+      });
+
       try {
         const result = await window.doctorAuditor.audio.stopRecording();
         stopRecordingTimer(timerRef);
+        setCaptureTransition("idle");
         setIsRecording(false);
+        setDuration(0);
         setAudioLevels(createEmptyAudioLevels());
         setLiveCaptureNotice({
           tone: "success",
@@ -211,7 +225,9 @@ export default function RecordingView() {
         }
       } catch (error) {
         stopRecordingTimer(timerRef);
+        setCaptureTransition("idle");
         setIsRecording(false);
+        setDuration(0);
         setAudioLevels(createEmptyAudioLevels());
         setLiveCaptureNotice({
           tone: "error",
@@ -252,7 +268,14 @@ export default function RecordingView() {
     }
 
     try {
+      setCaptureTransition("starting");
+      setLiveCaptureNotice({
+        tone: "active",
+        message:
+          "Starting live capture against the system default microphone. Import audio remains the safer demo path.",
+      });
       const result = await window.doctorAuditor.audio.startRecording(intake);
+      setCaptureTransition("idle");
       setIsRecording(true);
       setDuration(0);
       setAudioLevels(createEmptyAudioLevels());
@@ -267,6 +290,11 @@ export default function RecordingView() {
         setDuration((currentDuration) => currentDuration + 1);
       }, 1000);
     } catch (error) {
+      stopRecordingTimer(timerRef);
+      setCaptureTransition("idle");
+      setIsRecording(false);
+      setDuration(0);
+      setAudioLevels(createEmptyAudioLevels());
       setLiveCaptureNotice({
         tone: "error",
         message:
@@ -278,6 +306,7 @@ export default function RecordingView() {
     }
   }, [
     clinicianId,
+    captureTransition,
     exportAllowed,
     isImporting,
     isRecording,
@@ -364,16 +393,39 @@ export default function RecordingView() {
     clinicianId.trim().length > 0 &&
     recordedWithConsent &&
     !isImporting &&
-    !isRecording;
-  const inputsLocked = isImporting || isRecording;
+    !isRecording &&
+    captureTransition === "idle";
+  const inputsLocked =
+    isImporting || isRecording || captureTransition !== "idle";
   const liveCaptureAvailable = liveCaptureStatus?.available ?? false;
   const liveCaptureUnavailable = !liveCaptureAvailable;
-  const captureStatusSummary = isLoadingLiveCaptureStatus
-    ? "Checking local recorder prerequisites."
-    : liveCaptureAvailable
-      ? "Recorder preflight passed. Default microphone only; import audio is still the safer demo path."
-      : liveCaptureStatus?.issues[0] ??
-        "Live capture is unavailable on this machine. Import audio instead.";
+  const captureStatusSummary =
+    captureTransition === "starting"
+      ? "Recorder preflight is running against the default microphone."
+      : captureTransition === "stopping"
+        ? "Finalizing the capture file before local transcription is queued."
+        : isLoadingLiveCaptureStatus
+          ? "Checking local recorder prerequisites."
+          : liveCaptureAvailable
+            ? "Recorder preflight passed. Default microphone only; import audio is still the safer demo path."
+            : liveCaptureStatus?.issues[0] ??
+              "Live capture is unavailable on this machine. Import audio instead.";
+  const liveCaptureHeading =
+    captureTransition === "starting"
+      ? "Starting Live Capture"
+      : captureTransition === "stopping"
+        ? "Finalizing Live Capture"
+        : isRecording
+          ? "Recording Session"
+          : "Live Capture";
+  const liveCaptureDescription =
+    captureTransition === "starting"
+      ? "Creating the local live-capture session shell before audio starts streaming."
+      : captureTransition === "stopping"
+        ? "Waiting for the recorder to stop cleanly so the audio file can move into transcription."
+        : isRecording
+          ? `Local capture in progress — ${formatDuration(duration)}`
+          : "Use live capture when you need a fresh recording. Imported and recorded sessions now queue the same local transcription path.";
 
   return (
     <div className="recording-view">
@@ -544,12 +596,8 @@ export default function RecordingView() {
       </div>
 
       <div className="recording-status">
-        <h2>{isRecording ? "Recording Session" : "Live Capture"}</h2>
-        <p>
-          {isRecording
-            ? `Local capture in progress — ${formatDuration(duration)}`
-            : "Use live capture when you need a fresh recording. Imported and recorded sessions now queue the same local transcription path."}
-        </p>
+        <h2>{liveCaptureHeading}</h2>
+        <p>{liveCaptureDescription}</p>
         <div
           className={`capture-notice ${
             liveCaptureNotice.tone === "active"
@@ -577,7 +625,9 @@ export default function RecordingView() {
             type="button"
             className="capture-status-button"
             onClick={() => void refreshLiveCaptureStatus()}
-            disabled={isLoadingLiveCaptureStatus}
+            disabled={
+              isLoadingLiveCaptureStatus || captureTransition !== "idle"
+            }
           >
             {isLoadingLiveCaptureStatus ? "Checking..." : "Refresh status"}
           </button>
@@ -619,7 +669,11 @@ export default function RecordingView() {
       <button
         className={`record-button ${isRecording ? "recording" : ""}`}
         onClick={toggleRecording}
-        disabled={isImporting || (!isRecording && liveCaptureUnavailable)}
+        disabled={
+          isImporting ||
+          captureTransition !== "idle" ||
+          (!isRecording && liveCaptureUnavailable)
+        }
       >
         <div className="record-button-inner" />
       </button>

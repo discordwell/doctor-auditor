@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { OperationsSnapshot } from "./reviewDashboard";
+import type { OperationsSnapshot } from "./opsDashboard";
 import {
   buildOverviewModel,
   formatStatusLabel,
@@ -8,7 +8,7 @@ import {
   getOpsTone,
   sortApprovedExports,
   sortOpsEvents,
-} from "./reviewDashboard";
+} from "./opsDashboard";
 
 const sampleSnapshot: OperationsSnapshot = {
   approvedExports: [
@@ -160,7 +160,7 @@ const sampleSnapshot: OperationsSnapshot = {
   ],
 };
 
-describe("reviewDashboard helpers", () => {
+describe("opsDashboard helpers", () => {
   it("builds stable overview metrics from export and ops data", () => {
     const model = buildOverviewModel(
       sampleSnapshot,

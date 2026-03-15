@@ -133,6 +133,8 @@ class ApprovedExportEnvelopeModel(StrictCloudModel):
 
     @model_validator(mode="after")
     def validate_cross_references(self) -> "ApprovedExportEnvelopeModel":
+        if self.export.id != self.id:
+            raise ValueError("export id must match envelope id")
         if self.export.sessionId != self.session.localSessionId:
             raise ValueError(
                 "export sessionId must match session.localSessionId"
@@ -165,6 +167,19 @@ class OpsEventModel(StrictCloudModel):
     def validate_timestamps(cls, value: str) -> str:
         return _validate_iso8601_timestamp(value) or value
 
+    @model_validator(mode="after")
+    def validate_context_requirements(self) -> "OpsEventModel":
+        if self.type in {
+            "assist_requested",
+            "assist_completed",
+            "assist_failed",
+            "assist_overridden",
+        } and not self.assistReceiptId:
+            raise ValueError("assistReceiptId is required for assist events")
+        if self.type in {"export_approved", "export_sent"} and not self.exportId:
+            raise ValueError("exportId is required for export events")
+        return self
+
 
 class OpsSummaryModel(StrictCloudModel):
     totalExports: int
@@ -179,11 +194,11 @@ class OpsSummaryModel(StrictCloudModel):
 class MinimizedConcernPacketModel(StrictCloudModel):
     findingCode: str = Field(min_length=1)
     findingStatus: FindingStatus
-    findingConfidence: float
-    evidenceSpanCount: int
+    findingConfidence: float = Field(ge=0, le=1)
+    evidenceSpanCount: int = Field(ge=0)
     speakerLabels: list[TranscriptSpeakerLabel] = Field(default_factory=list)
     captureMode: CaptureMode
-    encounterDurationMs: int | None = None
+    encounterDurationMs: int | None = Field(default=None, ge=0)
 
 
 class AssistGatewayRequestModel(StrictCloudModel):
@@ -204,7 +219,7 @@ class AssistGatewayRequestModel(StrictCloudModel):
 
 class SeriousnessAssessmentModel(StrictCloudModel):
     disposition: SeriousnessDisposition
-    confidence: float
+    confidence: float = Field(ge=0, le=1)
     rationale: str = Field(min_length=1)
     limitations: list[str] = Field(default_factory=list)
     provider: str = Field(min_length=1)

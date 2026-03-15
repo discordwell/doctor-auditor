@@ -10,14 +10,20 @@ import type {
   RequestSeriousnessAssistResult,
   SessionImportProgress,
   SessionIntakeRequest,
+  StartRecordingResult,
+  StopRecordingResult,
   UpdateModelAssistActionRequest,
 } from "../src/types/electron";
 
 contextBridge.exposeInMainWorld("doctorAuditor", {
   audio: {
     startRecording: (request: SessionIntakeRequest) =>
-      ipcRenderer.invoke("audio:start-recording", request),
-    stopRecording: () => ipcRenderer.invoke("audio:stop-recording"),
+      ipcRenderer.invoke(
+        "audio:start-recording",
+        request
+      ) as Promise<StartRecordingResult>,
+    stopRecording: () =>
+      ipcRenderer.invoke("audio:stop-recording") as Promise<StopRecordingResult>,
     getDevices: () => ipcRenderer.invoke("audio:get-devices"),
     getCaptureStatus: () =>
       ipcRenderer.invoke("audio:get-capture-status") as Promise<LiveCaptureStatus>,

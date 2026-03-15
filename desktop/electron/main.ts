@@ -232,6 +232,7 @@ function queueTranscription(
     throw new Error("Review runtime unavailable.");
   }
 
+  db.resetLocalReviewArtifacts(sessionId);
   const queuedSummary = db.updateSession(sessionId, {
     transcriptStatus: "in_progress",
   });

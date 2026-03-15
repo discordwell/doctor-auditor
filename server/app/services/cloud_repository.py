@@ -18,8 +18,18 @@ class ApprovedExportIngestError(Exception):
         self.detail = detail
 
 
+class OpsEventIngestError(Exception):
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 def current_organization_id(token: dict) -> str:
-    return str(token.get("org") or token.get("organization_id") or "demo-health")
+    organization_id = token.get("org") or token.get("organization_id")
+    if organization_id is None:
+        raise ValueError("authenticated token missing organization claim")
+    return str(organization_id)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -234,6 +244,12 @@ async def ingest_ops_event(
     organization_id: str,
     payload: OpsEventModel,
 ) -> OpsEventModel:
+    if payload.organizationId not in {None, organization_id}:
+        raise OpsEventIngestError(
+            status_code=400,
+            detail="ops event organization does not match authenticated organization",
+        )
+
     result = await db.execute(
         select(OpsEventRecord).where(
             OpsEventRecord.id == payload.id,

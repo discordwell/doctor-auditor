@@ -100,7 +100,15 @@ class LocalDatabase {
             .run(nextSession.clinicianId, nextSession.organizationId ?? null, nextSession.encounterStartedAt, nextSession.encounterEndedAt ?? null, nextSession.captureMode, nextSession.transcriptStatus, nextSession.reviewStatus, nextSession.exportStatus, nextSession.updatedAt, nextSession.consent.recordedWithConsent ? 1 : 0, nextSession.consent.exportAllowed ? 1 : 0, nextSession.consent.remoteAssistAllowed ? 1 : 0, nextSession.consent.policyVersion, nextSession.consent.capturedAt ?? null, nextSession.consent.capturedBy ?? null, nextAudioPath ?? null, sessionId);
         return this.getSessionSummary(sessionId);
     }
+    resetLocalReviewArtifacts(sessionId) {
+        this.clearDerivedReviewArtifacts(sessionId);
+        return this.updateSession(sessionId, {
+            reviewStatus: "not_started",
+            exportStatus: "not_requested",
+        });
+    }
     replaceTranscriptSegments(sessionId, segments) {
+        this.clearDerivedReviewArtifacts(sessionId);
         this.db
             .prepare("DELETE FROM transcript_segments WHERE session_id = ?")
             .run(sessionId);
@@ -124,9 +132,7 @@ class LocalDatabase {
             .run(segment.id, segment.sessionId, segment.speakerLabel, segment.text, segment.startOffsetMs, segment.endOffsetMs, segment.transcriptConfidence ?? null, segment.speakerConfidence ?? null, segment.source);
     }
     replaceFindings(sessionId, findings) {
-        this.db.prepare("DELETE FROM approved_exports WHERE session_id = ?").run(sessionId);
-        this.db.prepare("DELETE FROM review_decisions WHERE session_id = ?").run(sessionId);
-        this.db.prepare("DELETE FROM findings WHERE session_id = ?").run(sessionId);
+        this.clearDerivedReviewArtifacts(sessionId);
         for (const finding of findings) {
             this.addFinding(finding);
         }
@@ -704,6 +710,12 @@ class LocalDatabase {
                 reviewStatus: nextReviewStatus,
             });
         }
+    }
+    clearDerivedReviewArtifacts(sessionId) {
+        this.db.prepare("DELETE FROM approved_exports WHERE session_id = ?").run(sessionId);
+        this.db.prepare("DELETE FROM review_decisions WHERE session_id = ?").run(sessionId);
+        this.db.prepare("DELETE FROM findings WHERE session_id = ?").run(sessionId);
+        this.db.prepare("DELETE FROM model_assist_receipts WHERE session_id = ?").run(sessionId);
     }
     mapSession(row) {
         const createdAt = normalizeString(row.created_at) ?? new Date().toISOString();

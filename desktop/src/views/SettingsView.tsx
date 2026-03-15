@@ -69,8 +69,8 @@ export default function SettingsView() {
             <h3>Live capture diagnostics</h3>
             <p>
               Import audio is the current demo-path intake. Live capture remains
-              experimental until the local recorder and microphone permissions
-              are stable.
+              experimental even when recorder preflight passes, and the desktop
+              app intentionally stays on the system default microphone only.
             </p>
           </div>
           <button
@@ -95,7 +95,9 @@ export default function SettingsView() {
           <>
             <div className="capture-status-meta">
               <span className="status-chip">
-                {captureStatus.available ? "Capture available" : "Capture unavailable"}
+                {captureStatus.available
+                  ? "Experimental path available"
+                  : "Capture unavailable"}
               </span>
               <span className="status-chip">
                 {captureStatus.recorder
@@ -127,8 +129,11 @@ export default function SettingsView() {
       </div>
 
       <div className="settings-section">
-        <h3>Audio devices</h3>
-        <p>Devices reported by the local capture layer.</p>
+        <h3>Default microphone path</h3>
+        <p>
+          Devices reported by the bounded live-capture layer. In-app device
+          selection is intentionally not exposed here.
+        </p>
 
         {loadState === "loading" && (
           <p className="settings-note">Loading local devices…</p>
@@ -141,7 +146,7 @@ export default function SettingsView() {
         {loadState === "ready" && devices.length === 0 && (
           <p className="settings-note">
             No live-capture devices are exposed until the recorder prerequisites
-            pass. Import audio is still available.
+            pass. Import audio remains the recommended intake path.
           </p>
         )}
 

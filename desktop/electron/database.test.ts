@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { ModelAssistRequest } from "@doctor-auditor/shared/local-review";
+import type {
+  ModelAssistReceipt,
+  ModelAssistRequest,
+} from "@doctor-auditor/shared/local-review";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalDatabase } from "./database";
 
@@ -77,6 +80,212 @@ describe("LocalDatabase review artifacts", () => {
     const withFindings = db.getSession(sessionId);
     expect(withFindings?.session.reviewStatus).toBe("ready");
     expect(withFindings?.findings).toHaveLength(1);
+
+    db.close();
+  });
+
+  it("clears stale review artifacts before fresh local analysis findings land", () => {
+    const db = createDatabase();
+    const capturedAt = "2026-03-15T09:15:00Z";
+    const session = db.createImportedSession({
+      clinicianId: "clinician-reanalysis",
+      recordedWithConsent: true,
+      exportAllowed: true,
+      remoteAssistAllowed: true,
+      policyVersion: "policy-v1",
+      audioPath: "/tmp/reanalysis.wav",
+      capturedAt,
+      sourceFileName: "reanalysis.wav",
+    });
+    const sessionId = session.session.id;
+
+    db.replaceTranscriptSegments(sessionId, [
+      {
+        id: "segment-original-001",
+        sessionId,
+        speakerLabel: "unknown",
+        text: "Please schedule the biopsy and call us if the dizziness worsens.",
+        startOffsetMs: 0,
+        endOffsetMs: 2400,
+        source: "audio_import",
+      },
+    ]);
+
+    db.replaceFindings(sessionId, [
+      {
+        id: "finding-original-001",
+        sessionId,
+        code: "missing-risk-discussion",
+        title: "Treatment risks were not discussed",
+        summary: "The original transcript referenced a biopsy without risk language.",
+        status: "pending_review",
+        confidence: 0.71,
+        evidenceSpans: [
+          {
+            id: "evidence-original-001",
+            transcriptSegmentId: "segment-original-001",
+            excerpt:
+              "Please schedule the biopsy and call us if the dizziness worsens.",
+            startOffsetMs: 0,
+            endOffsetMs: 2400,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: capturedAt,
+        updatedAt: capturedAt,
+      },
+    ]);
+
+    const reviewedBundle = db.saveReviewDecision({
+      sessionId,
+      findingId: "finding-original-001",
+      outcome: "accepted",
+      reviewedBy: "reviewer-2",
+    });
+    expect(reviewedBundle?.session.reviewStatus).toBe("completed");
+
+    const decisionId = reviewedBundle?.reviewDecisions[0]?.id;
+    expect(decisionId).toBeTruthy();
+
+    db.saveApprovedExport({
+      id: "export-original-001",
+      sessionId,
+      status: "approved",
+      summary: "Approved export for the first local analysis pass.",
+      findings: [
+        {
+          findingId: "finding-original-001",
+          code: "missing-risk-discussion",
+          title: "Treatment risks were not discussed",
+          summary: "The original transcript referenced a biopsy without risk language.",
+          reviewDecisionId: decisionId ?? "missing-decision",
+          evidenceExcerpts: [
+            {
+              sourceEvidenceSpanId: "evidence-original-001",
+              sourceTranscriptSegmentId: "segment-original-001",
+              excerpt:
+                "Please schedule the biopsy and call us if the dizziness worsens.",
+              startOffsetMs: 0,
+              endOffsetMs: 2400,
+            },
+          ],
+        },
+      ],
+      approvedBy: "quality-lead-2",
+      approvedAt: "2026-03-15T09:20:00Z",
+      destination: "manual-review-hold",
+    });
+
+    const assistRequest: ModelAssistRequest = {
+      id: "assist-request-reanalysis-001",
+      sessionId,
+      findingId: "finding-original-001",
+      requestedBy: "reviewer-2",
+      requestedAt: "2026-03-15T09:18:00Z",
+      policyVersion: "policy-v1",
+      policyMode: "minimized_no_raw_phi",
+      concern: {
+        findingCode: "missing-risk-discussion",
+        findingStatus: "pending_review",
+        findingConfidence: 0.71,
+        evidenceSpanCount: 1,
+        speakerLabels: ["unknown"],
+        captureMode: "audio_import",
+      },
+    };
+    const assistReceipt: ModelAssistReceipt = {
+      id: "assist-receipt-reanalysis-001",
+      requestId: assistRequest.id,
+      sessionId,
+      findingId: "finding-original-001",
+      status: "completed",
+      policyMode: assistRequest.policyMode,
+      requestedAt: assistRequest.requestedAt,
+      completedAt: "2026-03-15T09:18:01Z",
+      latencyMs: 120,
+      reviewerAction: "not_applied",
+      assessment: {
+        disposition: "routine_review",
+        confidence: 0.73,
+        rationale: "The original finding can stay in the normal review lane.",
+        limitations: ["Local transcript was still being refreshed."],
+        provider: "demo-provider",
+        model: "demo-model",
+        assessedAt: "2026-03-15T09:18:01Z",
+      },
+    };
+
+    const assistedBundle = db.saveModelAssistReceipt({
+      request: assistRequest,
+      receipt: assistReceipt,
+    });
+    expect(assistedBundle?.modelAssistReceipts).toHaveLength(1);
+
+    const resetSummary = db.resetLocalReviewArtifacts(sessionId);
+    expect(resetSummary?.session.reviewStatus).toBe("not_started");
+    expect(resetSummary?.session.exportStatus).toBe("not_requested");
+
+    const queuedSummary = db.updateSession(sessionId, {
+      transcriptStatus: "in_progress",
+    });
+    expect(queuedSummary?.session.transcriptStatus).toBe("in_progress");
+
+    const clearedBundle = db.getSession(sessionId);
+    expect(clearedBundle?.findings).toEqual([]);
+    expect(clearedBundle?.reviewDecisions).toEqual([]);
+    expect(clearedBundle?.approvedExports).toEqual([]);
+    expect(clearedBundle?.modelAssistReceipts).toEqual([]);
+
+    db.replaceTranscriptSegments(sessionId, [
+      {
+        id: "segment-reanalysis-001",
+        sessionId,
+        speakerLabel: "unknown",
+        text: "Please schedule the biopsy. We reviewed the risks and call us if dizziness returns.",
+        startOffsetMs: 0,
+        endOffsetMs: 2600,
+        source: "audio_import",
+      },
+    ]);
+
+    const afterTranscript = db.getSession(sessionId);
+    expect(afterTranscript?.transcriptSegments).toHaveLength(1);
+    expect(afterTranscript?.transcriptSegments[0]?.id).toBe("segment-reanalysis-001");
+    expect(afterTranscript?.findings).toEqual([]);
+    expect(afterTranscript?.reviewDecisions).toEqual([]);
+    expect(afterTranscript?.approvedExports).toEqual([]);
+    expect(afterTranscript?.modelAssistReceipts).toEqual([]);
+
+    db.replaceFindings(sessionId, [
+      {
+        id: "finding-reanalysis-001",
+        sessionId,
+        code: "medication-adherence",
+        title: "Medication adherence needs review",
+        summary: "The refreshed transcript now shows a refill delay instead of a risk discussion issue.",
+        status: "pending_review",
+        confidence: 0.78,
+        evidenceSpans: [
+          {
+            id: "evidence-reanalysis-001",
+            transcriptSegmentId: "segment-reanalysis-001",
+            excerpt:
+              "Please schedule the biopsy. We reviewed the risks and call us if dizziness returns.",
+            startOffsetMs: 0,
+            endOffsetMs: 2600,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: "2026-03-15T09:21:00Z",
+        updatedAt: "2026-03-15T09:21:00Z",
+      },
+    ]);
+
+    const refreshedBundle = db.getSession(sessionId);
+    expect(refreshedBundle?.session.reviewStatus).toBe("ready");
+    expect(refreshedBundle?.session.exportStatus).toBe("not_requested");
+    expect(refreshedBundle?.findings).toHaveLength(1);
+    expect(refreshedBundle?.findings[0]?.id).toBe("finding-reanalysis-001");
 
     db.close();
   });

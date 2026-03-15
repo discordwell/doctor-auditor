@@ -9,6 +9,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { describeDashboardLoadIssue } from "../services/api";
 import {
   buildOverviewModel,
   EMPTY_OPERATIONS_SNAPSHOT,
@@ -18,7 +19,7 @@ import {
   getOpsTone,
   loadOperationsSnapshot,
   type OperationsSnapshot,
-} from "../services/reviewDashboard";
+} from "../services/opsDashboard";
 
 const compactNumber = new Intl.NumberFormat("en-US", {
   notation: "compact",
@@ -30,13 +31,13 @@ export default function OverviewView() {
     EMPTY_OPERATIONS_SNAPSHOT
   );
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
-    setError("");
+    setError(null);
 
     loadOperationsSnapshot()
       .then((data) => {
@@ -46,11 +47,7 @@ export default function OverviewView() {
       })
       .catch((fetchError) => {
         if (active) {
-          setError(
-            fetchError instanceof Error
-              ? fetchError.message
-              : "Unable to load the approved export and ops surface."
-          );
+          setError(fetchError);
         }
       })
       .finally(() => {
@@ -65,13 +62,23 @@ export default function OverviewView() {
   }, []);
 
   const overview = useMemo(() => buildOverviewModel(snapshot), [snapshot]);
+  const loadIssue = error ? describeDashboardLoadIssue(error) : null;
 
   if (loading) {
-    return <div className="empty-state">Loading the approved export and ops surface...</div>;
+    return (
+      <div className="empty-state">
+        Loading the approved export and safe ops surface...
+      </div>
+    );
   }
 
-  if (error) {
-    return <div className="empty-state">{error}</div>;
+  if (loadIssue) {
+    return (
+      <section className={`load-issue ${loadIssue.tone}`}>
+        <strong>{loadIssue.title}</strong>
+        <p>{loadIssue.detail}</p>
+      </section>
+    );
   }
 
   if (
@@ -92,14 +99,16 @@ export default function OverviewView() {
           <span className="overview-eyebrow">Cloud boundary</span>
           <h2>Approved exports and safe ops only</h2>
           <p className="overview-intro">
-            This surface no longer mirrors desktop review state. It tracks approved
-            exports plus non-PHI operational signals from assist and delivery flows.
+            This console stays focused on approved export envelopes plus non-PHI
+            operational signals from assist and delivery flows. Desktop review
+            state never becomes a central cloud work queue.
           </p>
         </div>
         <div className="source-card">
           <p>
-            Metrics below are derived from export envelopes and safe ops events only.
-            Raw transcript text, findings, and reviewer notes remain desktop-local.
+            Metrics below are derived from approved export envelopes and safe ops
+            events only. Raw transcript text, findings, and reviewer notes remain
+            desktop-local.
           </p>
           <dl className="source-details">
             <div>
@@ -204,7 +213,7 @@ export default function OverviewView() {
           <div className="panel-header">
             <div>
               <span className="overview-eyebrow">Queue</span>
-              <h3>Centralized follow-up lanes</h3>
+              <h3>Central follow-up lanes</h3>
             </div>
             <p>
               The cloud queue is limited to delivery and safe operational follow-up.
@@ -228,10 +237,11 @@ export default function OverviewView() {
         <div className="panel-header">
           <div>
             <span className="overview-eyebrow">Focus areas</span>
-            <h3>Ops items that deserve a second look</h3>
+            <h3>Ops items that need operator follow-up</h3>
           </div>
           <p>
-            These cards stay operational and avoid recreating a centralized finding queue.
+            These cards stay operational and avoid recreating a centralized clinical
+            review queue.
           </p>
         </div>
         <div className="focus-grid">
@@ -253,7 +263,7 @@ export default function OverviewView() {
           <div className="panel-header">
             <div>
               <span className="overview-eyebrow">Recent exports</span>
-              <h3>Latest approved envelopes</h3>
+              <h3>Latest boundary-safe export envelopes</h3>
             </div>
             <p>
               Every export row carries only safe session metadata plus the approved packet.

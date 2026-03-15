@@ -21,7 +21,9 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
-        if payload.get("sub") is None:
+        if payload.get("sub") is None or (
+            payload.get("org") is None and payload.get("organization_id") is None
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token",

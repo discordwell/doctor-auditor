@@ -71,12 +71,31 @@ body {
 
 .header-badge {
   font-size: 10px;
-  background: var(--accent);
-  color: #062129;
+  background: rgba(143, 180, 197, 0.16);
+  color: var(--text-secondary);
   padding: 5px 10px;
   border-radius: 999px;
   font-weight: 700;
   letter-spacing: 0.12em;
+  border: 1px solid transparent;
+}
+
+.header-badge.active {
+  background: rgba(61, 214, 208, 0.12);
+  color: var(--accent);
+  border-color: rgba(61, 214, 208, 0.18);
+}
+
+.header-badge.attention {
+  background: rgba(255, 138, 91, 0.12);
+  color: var(--attention);
+  border-color: rgba(255, 138, 91, 0.22);
+}
+
+.header-badge.neutral {
+  background: rgba(143, 180, 197, 0.16);
+  color: var(--text-secondary);
+  border-color: rgba(143, 180, 197, 0.16);
 }
 
 .header-nav {
@@ -108,6 +127,42 @@ body {
   padding: 40px 32px 56px;
   max-width: 1280px;
   margin: 0 auto;
+}
+
+.boundary-banner-shell {
+  padding: 18px 32px 0;
+}
+
+.boundary-banner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgba(13, 36, 48, 0.72);
+  box-shadow: var(--shadow);
+}
+
+.boundary-banner strong,
+.load-issue strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.boundary-banner p,
+.load-issue p {
+  margin-top: 8px;
+  line-height: 1.55;
+}
+
+.boundary-banner.attention,
+.load-issue.attention {
+  border-color: rgba(255, 138, 91, 0.3);
+  background: rgba(255, 138, 91, 0.08);
+  color: #ffd6c7;
 }
 
 /* Stat Cards */
@@ -302,6 +357,14 @@ body {
   background: rgba(13, 36, 48, 0.45);
   border: 1px dashed var(--border);
   border-radius: 22px;
+}
+
+.load-issue {
+  padding: 24px 28px;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: rgba(13, 36, 48, 0.45);
+  box-shadow: var(--shadow);
 }
 
 h2 {
@@ -747,6 +810,10 @@ h4 {
 
   .dashboard-content {
     padding: 28px 20px 42px;
+  }
+
+  .boundary-banner-shell {
+    padding: 16px 20px 0;
   }
 
   .header-nav {

@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from "react";
-import type { ApprovedExportEnvelope } from "../services/api";
+import {
+  describeDashboardLoadIssue,
+  type ApprovedExportEnvelope,
+} from "../services/api";
 import {
   formatDateTime,
   getExportTone,
   loadApprovedExports,
-} from "../services/reviewDashboard";
+} from "../services/opsDashboard";
 
 type ExportFilter = "all" | ApprovedExportEnvelope["export"]["status"];
 
@@ -14,13 +17,14 @@ export default function ApprovedExportsView() {
   const [exportsList, setExportsList] = useState<ApprovedExportEnvelope[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<ExportFilter>("all");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const loadIssue = error ? describeDashboardLoadIssue(error) : null;
 
   useEffect(() => {
     let active = true;
 
     setLoading(true);
-    setError("");
+    setError(null);
 
     loadApprovedExports(selectedFilter)
       .then((data) => {
@@ -30,11 +34,7 @@ export default function ApprovedExportsView() {
       })
       .catch((fetchError) => {
         if (active) {
-          setError(
-            fetchError instanceof Error
-              ? fetchError.message
-              : "Unable to load approved exports from the cloud boundary."
-          );
+          setError(fetchError);
         }
       })
       .finally(() => {
@@ -49,17 +49,17 @@ export default function ApprovedExportsView() {
   }, [selectedFilter]);
 
   if (loading) {
-    return <div className="empty-state">Loading approved exports...</div>;
+    return <div className="empty-state">Loading approved export envelopes...</div>;
   }
 
   return (
     <div className="table-shell">
       <div className="table-header">
         <div>
-          <h2>Approved exports</h2>
+          <h2>Approved export envelopes</h2>
           <p>
-            Reviewed export envelopes and approved packets that are ready for manual
-            delivery or already sent downstream.
+            Boundary-safe export envelopes and delivery metadata that are ready
+            for manual release or already sent downstream.
           </p>
         </div>
         <div className="filter-row">
@@ -72,17 +72,20 @@ export default function ApprovedExportsView() {
               }`}
               onClick={() => setSelectedFilter(filter)}
             >
-              {filter === "all" ? "All exports" : filter}
+              {filter === "all" ? "All envelopes" : filter}
             </button>
           ))}
         </div>
       </div>
 
-      {error ? (
-        <div className="empty-state">{error}</div>
+      {loadIssue ? (
+        <section className={`load-issue ${loadIssue.tone}`}>
+          <strong>{loadIssue.title}</strong>
+          <p>{loadIssue.detail}</p>
+        </section>
       ) : exportsList.length === 0 ? (
         <div className="empty-state">
-          No approved exports matched the current delivery state.
+          No approved export envelopes matched the current delivery state.
         </div>
       ) : (
         <table className="data-table">
@@ -92,7 +95,7 @@ export default function ApprovedExportsView() {
               <th>Export</th>
               <th>Session</th>
               <th>Status</th>
-              <th>Findings</th>
+              <th>Approved findings</th>
               <th>Approved by</th>
               <th>Destination</th>
             </tr>
@@ -118,7 +121,7 @@ export default function ApprovedExportsView() {
                 </td>
                 <td>{item.export.findings.length}</td>
                 <td>{item.export.approvedBy}</td>
-                <td>{item.export.destination ?? "Manual review hold"}</td>
+                <td>{item.export.destination ?? "Compliance hold"}</td>
               </tr>
             ))}
           </tbody>

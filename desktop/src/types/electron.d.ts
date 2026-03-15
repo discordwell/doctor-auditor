@@ -96,6 +96,17 @@ export interface LiveCaptureError {
   session: DesktopSessionSummary | null;
 }
 
+export interface StartRecordingResult {
+  sessionPath: string;
+  session: DesktopSessionSummary;
+}
+
+export interface StopRecordingResult {
+  filePath: string;
+  duration: number;
+  session: DesktopSessionSummary | null;
+}
+
 export interface SessionImportProgress {
   stage: "selected" | "copying" | "creating-session" | "completed" | "error";
   message: string;
@@ -107,12 +118,8 @@ export interface DoctorAuditorAPI {
   audio: {
     startRecording: (
       request: SessionIntakeRequest
-    ) => Promise<{ sessionPath: string; session: DesktopSessionSummary }>;
-    stopRecording: () => Promise<{
-      filePath: string;
-      duration: number;
-      session: DesktopSessionSummary | null;
-    }>;
+    ) => Promise<StartRecordingResult>;
+    stopRecording: () => Promise<StopRecordingResult>;
     getDevices: () => Promise<AudioDevice[]>;
     getCaptureStatus: () => Promise<LiveCaptureStatus>;
     onAudioLevel: (callback: (level: number) => void) => () => void;

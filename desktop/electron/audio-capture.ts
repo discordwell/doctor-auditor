@@ -154,7 +154,9 @@ export class AudioCapture extends EventEmitter {
       this.emit("level", 0);
       return { sessionPath: outputPath };
     } catch (error) {
-      await this.cleanupActiveCapture({ deleteOutput: true });
+      await this.cleanupActiveCapture({ deleteOutput: true }).catch(
+        () => undefined
+      );
       throw toError(error, "Live capture could not be started.");
     }
   }
@@ -203,7 +205,7 @@ export class AudioCapture extends EventEmitter {
           this.emit("level", 0);
 
           if (audioBytes === 0) {
-            await fs.promises.rm(filePath, { force: true });
+            await this.removeOutputFile(filePath);
             throw new Error(
               "Live capture ended before any audio was written. Check recorder setup and microphone access."
             );
@@ -227,7 +229,9 @@ export class AudioCapture extends EventEmitter {
 
         settled = true;
         cleanupListeners();
-        await this.cleanupActiveCapture({ deleteOutput: true });
+        await this.cleanupActiveCapture({ deleteOutput: true }).catch(
+          () => undefined
+        );
         reject(toError(error, "Live capture could not be finalized."));
       };
 
@@ -347,7 +351,9 @@ export class AudioCapture extends EventEmitter {
   };
 
   private async failActiveRecording(message: string): Promise<void> {
-    await this.cleanupActiveCapture({ deleteOutput: true });
+    await this.cleanupActiveCapture({ deleteOutput: true }).catch(
+      () => undefined
+    );
     this.emit("capture-error", message);
   }
 
@@ -369,10 +375,18 @@ export class AudioCapture extends EventEmitter {
     destroyableStream?.destroy?.();
 
     if (options.deleteOutput && currentState.outputPath) {
-      await fs.promises.rm(currentState.outputPath, { force: true });
+      await this.removeOutputFile(currentState.outputPath);
     }
 
     this.emit("level", 0);
+  }
+
+  private async removeOutputFile(outputPath: string): Promise<void> {
+    try {
+      await fs.promises.rm(outputPath, { force: true });
+    } catch {
+      // Cleanup is best-effort; preserve the recorder failure that triggered it.
+    }
   }
 
   private clearActiveCaptureState(): {

@@ -259,21 +259,24 @@ export function buildOverviewModel(
     averageSendLatencyMs: averageSendLatencyMs(snapshot.approvedExports),
     queueLanes: [
       {
-        title: "Draft exports",
+        title: "Draft envelopes",
         count: draftExports.length,
-        detail: "Desktop-reviewed packets that have not been approved for downstream delivery yet.",
+        detail:
+          "Desktop-reviewed packets that have not been approved for downstream delivery yet.",
         tone: "active",
       },
       {
-        title: "Approved not sent",
+        title: "Approved awaiting release",
         count: approvedExports.length,
-        detail: "Approved envelopes waiting on manual downstream delivery or compliance release.",
+        detail:
+          "Approved envelopes waiting on manual downstream delivery or compliance release.",
         tone: "attention",
       },
       {
         title: "Privacy blocks",
         count: redactionBlocks.length,
-        detail: "Redaction or minimization issues blocked export or assist work and require local review.",
+        detail:
+          "Redaction or minimization issues blocked export or assist work and require local review.",
         tone: "attention",
       },
     ],
@@ -281,21 +284,24 @@ export function buildOverviewModel(
       {
         title: "Assist requests",
         count: assistUsageEvents.length,
-        detail: "Reviewer-invoked remote assist calls recorded without raw PHI.",
+        detail:
+          "Reviewer-invoked remote assist calls are logged as safe ops receipts without raw PHI.",
         owner: "Desktop reviewers",
         tone: assistUsageEvents.length > 0 ? "watch" : "stable",
       },
       {
         title: "Assist overrides",
         count: assistOverrides.length,
-        detail: "Human reviewers overruled a remote assist recommendation and preserved the local decision.",
+        detail:
+          "Human reviewers overruled a remote assist recommendation while keeping the local decision authoritative.",
         owner: "Quality leads",
         tone: assistOverrides.length > 0 ? "watch" : "stable",
       },
       {
-        title: "Assist or delivery failures",
+        title: "Assist or delivery follow-up",
         count: assistFailures.length + stuckApprovedExports.length,
-        detail: "Failures and aging approved exports are the main centralized follow-up queue.",
+        detail:
+          "Failed assist calls and aging approved exports are the only centralized follow-up queue.",
         owner: "Ops and compliance",
         tone:
           assistFailures.length + stuckApprovedExports.length > 0 ? "alert" : "stable",

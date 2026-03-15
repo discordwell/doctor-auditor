@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.cloud_models import OpsEventModel, OpsSummaryModel
 from app.auth.jwt import verify_token
 from app.models.database import get_db
 from app.services.cloud_repository import (
+    OpsEventIngestError,
     current_organization_id,
     get_ops_summary,
     ingest_ops_event,
@@ -37,7 +38,10 @@ async def post_ops_event(
     token: dict = Depends(verify_token),
 ):
     organization_id = current_organization_id(token)
-    return await ingest_ops_event(db, organization_id, payload)
+    try:
+        return await ingest_ops_event(db, organization_id, payload)
+    except OpsEventIngestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get("/summary", response_model=OpsSummaryModel)

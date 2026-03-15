@@ -183,10 +183,19 @@ export class LocalDatabase {
     return this.getSessionSummary(sessionId);
   }
 
+  resetLocalReviewArtifacts(sessionId: string): DesktopSessionSummary | null {
+    this.clearDerivedReviewArtifacts(sessionId);
+    return this.updateSession(sessionId, {
+      reviewStatus: "not_started",
+      exportStatus: "not_requested",
+    });
+  }
+
   replaceTranscriptSegments(
     sessionId: string,
     segments: TranscriptSegment[]
   ): void {
+    this.clearDerivedReviewArtifacts(sessionId);
     this.db
       .prepare("DELETE FROM transcript_segments WHERE session_id = ?")
       .run(sessionId);
@@ -225,9 +234,7 @@ export class LocalDatabase {
   }
 
   replaceFindings(sessionId: string, findings: Finding[]): void {
-    this.db.prepare("DELETE FROM approved_exports WHERE session_id = ?").run(sessionId);
-    this.db.prepare("DELETE FROM review_decisions WHERE session_id = ?").run(sessionId);
-    this.db.prepare("DELETE FROM findings WHERE session_id = ?").run(sessionId);
+    this.clearDerivedReviewArtifacts(sessionId);
 
     for (const finding of findings) {
       this.addFinding(finding);
@@ -1072,6 +1079,13 @@ export class LocalDatabase {
         reviewStatus: nextReviewStatus,
       });
     }
+  }
+
+  private clearDerivedReviewArtifacts(sessionId: string): void {
+    this.db.prepare("DELETE FROM approved_exports WHERE session_id = ?").run(sessionId);
+    this.db.prepare("DELETE FROM review_decisions WHERE session_id = ?").run(sessionId);
+    this.db.prepare("DELETE FROM findings WHERE session_id = ?").run(sessionId);
+    this.db.prepare("DELETE FROM model_assist_receipts WHERE session_id = ?").run(sessionId);
   }
 
   private mapSession(row: Record<string, unknown>): ReviewSession {
