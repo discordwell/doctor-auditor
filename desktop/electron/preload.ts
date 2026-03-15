@@ -1,4 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type {
+  ImportSessionRequest,
+  SessionImportProgress,
+} from "../src/types/electron";
 
 contextBridge.exposeInMainWorld("doctorAuditor", {
   audio: {
@@ -6,63 +10,33 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
     stopRecording: () => ipcRenderer.invoke("audio:stop-recording"),
     getDevices: () => ipcRenderer.invoke("audio:get-devices"),
     onAudioLevel: (callback: (level: number) => void) => {
-      ipcRenderer.on("audio:level", (_event, level) => callback(level));
-    },
-    onTranscriptUpdate: (
-      callback: (segment: {
-        speaker: string;
-        text: string;
-        startTime: number;
-        endTime: number;
-      }) => void
-    ) => {
-      ipcRenderer.on("audio:transcript", (_event, segment) =>
-        callback(segment)
-      );
+      const listener = (_event: Electron.IpcRendererEvent, level: number) => {
+        callback(level);
+      };
+
+      ipcRenderer.on("audio:level", listener);
+      return () => {
+        ipcRenderer.removeListener("audio:level", listener);
+      };
     },
   },
   session: {
     getAll: () => ipcRenderer.invoke("session:get-all"),
     get: (sessionId: string) => ipcRenderer.invoke("session:get", sessionId),
-    importAudio: (doctorId?: string) =>
-      ipcRenderer.invoke("session:import-audio", doctorId),
+    importAudio: (request: ImportSessionRequest) =>
+      ipcRenderer.invoke("session:import-audio", request),
     onImportProgress: (
-      callback: (update: {
-        stage: "selected" | "copying" | "creating-session" | "completed" | "error";
-        message: string;
-        fileName?: string;
-        sessionId?: string;
-      }) => void
+      callback: (update: SessionImportProgress) => void
     ) => {
-      const listener = (_event: Electron.IpcRendererEvent, update: {
-        stage: "selected" | "copying" | "creating-session" | "completed" | "error";
-        message: string;
-        fileName?: string;
-        sessionId?: string;
-      }) => callback(update);
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        update: SessionImportProgress
+      ) => callback(update);
 
       ipcRenderer.on("session:import-progress", listener);
       return () => {
         ipcRenderer.removeListener("session:import-progress", listener);
       };
     },
-  },
-  analysis: {
-    getRisk: (sessionId: string) =>
-      ipcRenderer.invoke("analysis:get-risk", sessionId),
-    onRiskUpdate: (
-      callback: (assessment: {
-        overallRisk: string;
-        overallScore: number;
-      }) => void
-    ) => {
-      ipcRenderer.on("analysis:risk-update", (_event, assessment) =>
-        callback(assessment)
-      );
-    },
-  },
-  settings: {
-    setCloudConsent: (consent: boolean) =>
-      ipcRenderer.invoke("settings:set-cloud-consent", consent),
   },
 });

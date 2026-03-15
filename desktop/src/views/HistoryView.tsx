@@ -1,22 +1,17 @@
 import React, { useEffect, useState } from "react";
+import type {
+  CaptureMode,
+  ExportStatus,
+  ReviewStatus,
+  TranscriptStatus,
+} from "@doctor-auditor/shared";
 import "./HistoryView.css";
+import type { DesktopSessionSummary } from "../types/electron";
 
-interface SessionSummary {
-  id: string;
-  doctorId: string;
-  startTime: string;
-  endTime?: string;
-  audioPath?: string;
-  cloudAnalysisConsent: boolean;
-  riskAssessment?: {
-    overallRisk: "high" | "medium" | "low";
-    overallScore: number;
-  };
-}
-
-type HistoryFilter = "all" | "active" | "ready" | "attention";
+type HistoryFilter = "all" | "review" | "transcript" | "attention";
 type LoadState = "loading" | "ready" | "error";
 type SessionTone = "active" | "ready" | "warning";
+type BadgeTone = "active" | "ready" | "warning" | "neutral";
 
 interface SessionState {
   label: string;
@@ -40,143 +35,13 @@ const DAY_FORMATTER = new Intl.DateTimeFormat("en-US", {
 
 const FILTER_LABELS: Record<HistoryFilter, string> = {
   all: "All sessions",
-  active: "Active",
-  ready: "Ready for review",
+  review: "Review queue",
+  transcript: "Transcript ready",
   attention: "Needs follow-up",
 };
 
-function parseTimestamp(value: string): number | null {
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function formatDateTime(value: string): string {
-  const timestamp = parseTimestamp(value);
-  if (timestamp === null) {
-    return "Time unavailable";
-  }
-
-  return DATE_TIME_FORMATTER.format(timestamp);
-}
-
-function formatDay(value: string): string {
-  const timestamp = parseTimestamp(value);
-  if (timestamp === null) {
-    return "Unscheduled";
-  }
-
-  return DAY_FORMATTER.format(timestamp);
-}
-
-function formatDuration(startTime: string, endTime?: string): string {
-  if (!endTime) {
-    return "Live";
-  }
-
-  const start = parseTimestamp(startTime);
-  const end = parseTimestamp(endTime);
-
-  if (start === null || end === null || end <= start) {
-    return "Unknown";
-  }
-
-  const totalMinutes = Math.round((end - start) / 60000);
-
-  if (totalMinutes <= 0) {
-    return "<1 min";
-  }
-
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  if (hours === 0) {
-    return `${totalMinutes} min`;
-  }
-
-  if (minutes === 0) {
-    return `${hours} hr`;
-  }
-
-  return `${hours} hr ${minutes} min`;
-}
-
-function getClinicianLabel(doctorId: string): string {
-  const normalizedDoctorId = doctorId.trim();
-  return normalizedDoctorId
-    ? `Clinician ${normalizedDoctorId}`
-    : "Unassigned clinician";
-}
-
-function getSessionState(session: SessionSummary): SessionState {
-  if (!session.endTime) {
-    return {
-      label: "Recording now",
-      tone: "active",
-      detail:
-        "Capture is still open. Finish the session to lock the timeline before transcript review.",
-    };
-  }
-
-  if (!session.audioPath) {
-    return {
-      label: "Needs follow-up",
-      tone: "warning",
-      detail:
-        "The session closed without a local audio file. Validate the capture before relying on it for review.",
-    };
-  }
-
-  return {
-    label: "Ready for review",
-    tone: "ready",
-    detail:
-      "Audio and timing metadata are present, so transcript drill-down can attach here cleanly in the next review step.",
-  };
-}
-
-function matchesFilter(session: SessionSummary, filter: HistoryFilter): boolean {
-  const state = getSessionState(session);
-
-  switch (filter) {
-    case "active":
-      return state.tone === "active";
-    case "ready":
-      return state.tone === "ready";
-    case "attention":
-      return state.tone === "warning";
-    default:
-      return true;
-  }
-}
-
-function matchesSearch(session: SessionSummary, searchQuery: string): boolean {
-  const trimmedQuery = searchQuery.trim().toLowerCase();
-
-  if (!trimmedQuery) {
-    return true;
-  }
-
-  return (
-    session.doctorId.toLowerCase().includes(trimmedQuery) ||
-    session.id.toLowerCase().includes(trimmedQuery)
-  );
-}
-
-function countSessions(
-  sessions: SessionSummary[],
-  filter: HistoryFilter
-): number {
-  return sessions.reduce((count, session) => {
-    return count + (matchesFilter(session, filter) ? 1 : 0);
-  }, 0);
-}
-
-function getRiskBadgeTone(overallRisk: "high" | "medium" | "low"): string {
-  return overallRisk;
-}
-
 export default function HistoryView() {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessions, setSessions] = useState<DesktopSessionSummary[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [selectedFilter, setSelectedFilter] = useState<HistoryFilter>("all");
@@ -200,12 +65,7 @@ export default function HistoryView() {
 
     try {
       const data = await window.doctorAuditor.session.getAll();
-
-      if (!Array.isArray(data)) {
-        throw new Error("Session archive response was malformed.");
-      }
-
-      setSessions(data as SessionSummary[]);
+      setSessions(data);
       setLoadState("ready");
     } catch (error) {
       const message =
@@ -243,19 +103,25 @@ export default function HistoryView() {
       caption: "Archived locally on this device.",
     },
     {
-      label: "Active now",
-      value: countSessions(sessions, "active"),
-      caption: "Sessions that are still recording.",
+      label: "Imported audio",
+      value: sessions.filter(
+        (session) => session.session.captureMode === "audio_import"
+      ).length,
+      caption: "Created through the intake import path.",
     },
     {
-      label: "Ready for review",
-      value: countSessions(sessions, "ready"),
-      caption: "Closed captures with local audio.",
+      label: "Transcript ready",
+      value: sessions.filter(
+        (session) => session.session.transcriptStatus === "completed"
+      ).length,
+      caption: "Prepared for reviewer attention.",
     },
     {
-      label: "Needs follow-up",
-      value: countSessions(sessions, "attention"),
-      caption: "Sessions missing review prerequisites.",
+      label: "Review active",
+      value: sessions.filter(
+        (session) => session.session.reviewStatus === "in_review"
+      ).length,
+      caption: "Currently in the review queue.",
     },
   ];
 
@@ -266,8 +132,8 @@ export default function HistoryView() {
           <p className="history-shell__eyebrow">Local encounter archive</p>
           <h2>Session history</h2>
           <p className="history-shell__intro">
-            Review recent encounters on this device, confirm capture
-            completeness, and see which sessions are ready for transcript review.
+            Review local encounter shells, track transcript state, and see which
+            sessions are ready to move into active review.
           </p>
         </div>
         <button
@@ -285,8 +151,7 @@ export default function HistoryView() {
           <p className="history-shell__state-label">Loading archive</p>
           <h3>Pulling local session history</h3>
           <p>
-            Reading encounters from the local database so the review queue is
-            ready.
+            Reading review sessions from the local database so the queue is ready.
           </p>
         </div>
       )}
@@ -411,20 +276,21 @@ export default function HistoryView() {
             </div>
           ) : (
             <div className="history-shell__list">
-              {filteredSessions.map((session) => {
-                const sessionState = getSessionState(session);
+              {filteredSessions.map((sessionSummary) => {
+                const sessionState = getSessionState(sessionSummary);
+                const { session } = sessionSummary;
 
                 return (
                   <article key={session.id} className="history-shell__card">
                     <div className="history-shell__card-top">
                       <div>
                         <p className="history-shell__card-kicker">
-                          {formatDay(session.startTime)}
+                          {formatDay(session.encounterStartedAt)}
                         </p>
-                        <h3>{getClinicianLabel(session.doctorId)}</h3>
+                        <h3>{formatClinicianLabel(session.clinicianId)}</h3>
                         <p className="history-shell__card-subtitle">
                           Encounter {session.id.slice(0, 8).toUpperCase()} /
-                          Started {formatDateTime(session.startTime)}
+                          Created {formatDateTime(session.createdAt)}
                         </p>
                       </div>
                       <span
@@ -437,60 +303,73 @@ export default function HistoryView() {
                     <div className="history-shell__metrics">
                       <div className="history-shell__metric">
                         <span>Started</span>
-                        <strong>{formatDateTime(session.startTime)}</strong>
+                        <strong>{formatDateTime(session.encounterStartedAt)}</strong>
                       </div>
                       <div className="history-shell__metric">
                         <span>Duration</span>
                         <strong>
-                          {formatDuration(session.startTime, session.endTime)}
+                          {formatDuration(
+                            session.encounterStartedAt,
+                            session.encounterEndedAt
+                          )}
                         </strong>
                       </div>
                       <div className="history-shell__metric">
-                        <span>Audio</span>
-                        <strong>
-                          {session.audioPath ? "Stored locally" : "Unavailable"}
-                        </strong>
+                        <span>Transcript</span>
+                        <strong>{formatTranscriptStatus(session.transcriptStatus)}</strong>
                       </div>
                       <div className="history-shell__metric">
-                        <span>Review mode</span>
-                        <strong>
-                          {session.cloudAnalysisConsent
-                            ? "Cloud permitted"
-                            : "Local only"}
-                        </strong>
+                        <span>Review</span>
+                        <strong>{formatReviewStatus(session.reviewStatus)}</strong>
                       </div>
                     </div>
 
                     <div className="history-shell__badges">
                       <span
-                        className={`history-shell__badge history-shell__badge--${
-                          session.endTime ? "neutral" : "active"
-                        }`}
+                        className={`history-shell__badge history-shell__badge--${getCaptureBadgeTone(
+                          session.captureMode
+                        )}`}
                       >
-                        {session.endTime ? "Completed" : "Recording live"}
+                        {formatCaptureMode(session.captureMode)}
                       </span>
                       <span
                         className={`history-shell__badge history-shell__badge--${
-                          session.audioPath ? "ready" : "warning"
+                          sessionSummary.audioPath ? "ready" : "warning"
                         }`}
                       >
-                        {session.audioPath ? "Local audio ready" : "Audio missing"}
+                        {sessionSummary.audioPath
+                          ? "Local audio stored"
+                          : "Audio missing"}
                       </span>
-                      <span className="history-shell__badge history-shell__badge--neutral">
-                        {session.cloudAnalysisConsent
-                          ? "Cloud review allowed"
-                          : "Local-only review"}
+                      <span
+                        className={`history-shell__badge history-shell__badge--${getTranscriptBadgeTone(
+                          session.transcriptStatus
+                        )}`}
+                      >
+                        {formatTranscriptStatus(session.transcriptStatus)}
+                      </span>
+                      <span
+                        className={`history-shell__badge history-shell__badge--${getReviewBadgeTone(
+                          session.reviewStatus
+                        )}`}
+                      >
+                        {formatReviewStatus(session.reviewStatus)}
+                      </span>
+                      <span
+                        className={`history-shell__badge history-shell__badge--${getExportBadgeTone(
+                          session.exportStatus
+                        )}`}
+                      >
+                        {formatExportStatus(session.exportStatus)}
                       </span>
                       <span
                         className={`history-shell__badge history-shell__badge--${
-                          session.riskAssessment
-                            ? getRiskBadgeTone(session.riskAssessment.overallRisk)
-                            : "neutral"
+                          session.consent.exportAllowed ? "neutral" : "warning"
                         }`}
                       >
-                        {session.riskAssessment
-                          ? `Latest signal ${session.riskAssessment.overallRisk}`
-                          : "Analysis pending"}
+                        {session.consent.exportAllowed
+                          ? "Export allowed"
+                          : "Local review only"}
                       </span>
                     </div>
 
@@ -506,4 +385,246 @@ export default function HistoryView() {
       )}
     </section>
   );
+}
+
+function parseTimestamp(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function formatDateTime(value: string): string {
+  const timestamp = parseTimestamp(value);
+  if (timestamp === null) {
+    return "Time unavailable";
+  }
+
+  return DATE_TIME_FORMATTER.format(timestamp);
+}
+
+function formatDay(value: string): string {
+  const timestamp = parseTimestamp(value);
+  if (timestamp === null) {
+    return "Unscheduled";
+  }
+
+  return DAY_FORMATTER.format(timestamp);
+}
+
+function formatDuration(startTime: string, endTime?: string): string {
+  if (!endTime) {
+    return "Open";
+  }
+
+  const start = parseTimestamp(startTime);
+  const end = parseTimestamp(endTime);
+
+  if (start === null || end === null || end <= start) {
+    return "Unknown";
+  }
+
+  const totalMinutes = Math.round((end - start) / 60000);
+
+  if (totalMinutes <= 0) {
+    return "<1 min";
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0) {
+    return `${totalMinutes} min`;
+  }
+
+  if (minutes === 0) {
+    return `${hours} hr`;
+  }
+
+  return `${hours} hr ${minutes} min`;
+}
+
+function formatClinicianLabel(clinicianId: string): string {
+  const trimmedValue = clinicianId.trim();
+  return trimmedValue || "Unassigned clinician";
+}
+
+function formatCaptureMode(value: CaptureMode): string {
+  switch (value) {
+    case "audio_import":
+      return "Imported audio";
+    case "live_capture":
+      return "Live capture";
+    case "manual_entry":
+      return "Manual entry";
+  }
+}
+
+function formatTranscriptStatus(value: TranscriptStatus): string {
+  switch (value) {
+    case "not_started":
+      return "Transcript pending";
+    case "in_progress":
+      return "Transcript running";
+    case "completed":
+      return "Transcript ready";
+    case "failed":
+      return "Transcript failed";
+  }
+}
+
+function formatReviewStatus(value: ReviewStatus): string {
+  switch (value) {
+    case "not_started":
+      return "Review not started";
+    case "ready":
+      return "Ready for review";
+    case "in_review":
+      return "Review in progress";
+    case "completed":
+      return "Review complete";
+  }
+}
+
+function formatExportStatus(value: ExportStatus): string {
+  switch (value) {
+    case "not_requested":
+      return "Export not requested";
+    case "draft":
+      return "Export draft";
+    case "approved":
+      return "Export approved";
+    case "sent":
+      return "Export sent";
+  }
+}
+
+function getSessionState(sessionSummary: DesktopSessionSummary): SessionState {
+  const { session, audioPath } = sessionSummary;
+
+  if (session.reviewStatus === "completed") {
+    return {
+      label: "Review complete",
+      tone: "ready",
+      detail:
+        "Review decisions are complete for this encounter, so it is ready for final archive or export handling.",
+    };
+  }
+
+  if (session.reviewStatus === "in_review") {
+    return {
+      label: "In review",
+      tone: "active",
+      detail:
+        "This encounter is actively being reviewed. Transcript and findings should stay attached to the current bundle.",
+    };
+  }
+
+  if (session.transcriptStatus === "completed") {
+    return {
+      label: "Ready for review",
+      tone: "ready",
+      detail:
+        "Transcript work is complete and the session can move into reviewer attention without more intake work.",
+    };
+  }
+
+  if (!audioPath) {
+    return {
+      label: "Needs follow-up",
+      tone: "warning",
+      detail:
+        "The session shell exists, but the local audio asset is missing. Validate the import before relying on it downstream.",
+    };
+  }
+
+  return {
+    label: "Transcript pending",
+    tone: "warning",
+    detail:
+      "Audio is stored locally and the review session is created, but transcript processing has not started yet.",
+  };
+}
+
+function matchesFilter(
+  sessionSummary: DesktopSessionSummary,
+  filter: HistoryFilter
+): boolean {
+  const { session } = sessionSummary;
+
+  switch (filter) {
+    case "review":
+      return session.reviewStatus === "ready" || session.reviewStatus === "in_review";
+    case "transcript":
+      return session.transcriptStatus === "completed";
+    case "attention":
+      return getSessionState(sessionSummary).tone === "warning";
+    default:
+      return true;
+  }
+}
+
+function matchesSearch(
+  sessionSummary: DesktopSessionSummary,
+  searchQuery: string
+): boolean {
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  if (!trimmedQuery) {
+    return true;
+  }
+
+  return (
+    sessionSummary.session.clinicianId.toLowerCase().includes(trimmedQuery) ||
+    sessionSummary.session.id.toLowerCase().includes(trimmedQuery)
+  );
+}
+
+function countSessions(
+  sessions: DesktopSessionSummary[],
+  filter: HistoryFilter
+): number {
+  return sessions.reduce((count, session) => {
+    return count + (matchesFilter(session, filter) ? 1 : 0);
+  }, 0);
+}
+
+function getCaptureBadgeTone(value: CaptureMode): BadgeTone {
+  return value === "audio_import" ? "ready" : "active";
+}
+
+function getTranscriptBadgeTone(value: TranscriptStatus): BadgeTone {
+  switch (value) {
+    case "completed":
+      return "ready";
+    case "in_progress":
+      return "active";
+    case "failed":
+      return "warning";
+    case "not_started":
+      return "neutral";
+  }
+}
+
+function getReviewBadgeTone(value: ReviewStatus): BadgeTone {
+  switch (value) {
+    case "completed":
+      return "ready";
+    case "in_review":
+      return "active";
+    case "ready":
+      return "ready";
+    case "not_started":
+      return "neutral";
+  }
+}
+
+function getExportBadgeTone(value: ExportStatus): BadgeTone {
+  switch (value) {
+    case "sent":
+      return "ready";
+    case "approved":
+      return "ready";
+    case "draft":
+      return "active";
+    case "not_requested":
+      return "neutral";
+  }
 }

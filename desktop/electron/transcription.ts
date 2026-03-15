@@ -2,7 +2,8 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import * as fs from "fs";
 import { app } from "electron";
-import type { TranscriptSegment } from "./contracts";
+import { v4 as uuidv4 } from "uuid";
+import type { TranscriptSegment } from "@doctor-auditor/shared";
 
 export interface TranscriptionConfig {
   modelPath?: string;
@@ -25,7 +26,10 @@ export class TranscriptionService extends EventEmitter {
     return fs.existsSync(this.modelPath);
   }
 
-  async transcribeFile(audioPath: string): Promise<TranscriptSegment[]> {
+  async transcribeFile(
+    audioPath: string,
+    sessionId: string
+  ): Promise<TranscriptSegment[]> {
     if (this.isProcessing) {
       throw new Error("Already processing a transcription");
     }
@@ -34,7 +38,6 @@ export class TranscriptionService extends EventEmitter {
     const segments: TranscriptSegment[] = [];
 
     try {
-      // Use whisper-node for local transcription
       const whisper = require("whisper-node").default;
 
       const result = await whisper(audioPath, {
@@ -49,11 +52,14 @@ export class TranscriptionService extends EventEmitter {
       if (result && Array.isArray(result)) {
         for (const item of result) {
           const segment: TranscriptSegment = {
-            speaker: "unknown", // Will be assigned by diarization
+            id: uuidv4(),
+            sessionId,
+            speakerLabel: "unknown",
             text: item.speech?.trim() ?? "",
-            startTime: this.timestampToSeconds(item.start),
-            endTime: this.timestampToSeconds(item.end),
-            confidence: 0.8, // whisper-node doesn't expose confidence directly
+            startOffsetMs: Math.round(this.timestampToSeconds(item.start) * 1000),
+            endOffsetMs: Math.round(this.timestampToSeconds(item.end) * 1000),
+            transcriptConfidence: 0.8,
+            source: "audio_import",
           };
 
           if (segment.text) {
@@ -70,17 +76,14 @@ export class TranscriptionService extends EventEmitter {
   }
 
   async transcribeStream(
-    audioStream: NodeJS.ReadableStream
+    audioStream: NodeJS.ReadableStream,
+    sessionId: string
   ): Promise<AsyncGenerator<TranscriptSegment>> {
-    // For real-time transcription, we buffer audio chunks and
-    // process them in windows. This is a simplified version —
-    // production would use whisper.cpp's streaming API directly.
     const self = this;
 
     async function* generate(): AsyncGenerator<TranscriptSegment> {
-      const chunks: Buffer[] = [];
-      const chunkDuration = 5; // Process every 5 seconds of audio
-      const bytesPerSecond = 32000; // 16kHz * 16-bit
+      const chunkDuration = 5;
+      const bytesPerSecond = 32000;
       const chunkSize = chunkDuration * bytesPerSecond;
       let buffer = Buffer.alloc(0);
       let timeOffset = 0;
@@ -92,7 +95,6 @@ export class TranscriptionService extends EventEmitter {
           const chunk = buffer.subarray(0, chunkSize);
           buffer = buffer.subarray(chunkSize);
 
-          // Write temp file for whisper processing
           const tempPath = path.join(
             app.getPath("temp"),
             `whisper-chunk-${Date.now()}.wav`
@@ -100,12 +102,12 @@ export class TranscriptionService extends EventEmitter {
           fs.writeFileSync(tempPath, chunk);
 
           try {
-            const segments = await self.transcribeFile(tempPath);
+            const segments = await self.transcribeFile(tempPath, sessionId);
             for (const segment of segments) {
               yield {
                 ...segment,
-                startTime: segment.startTime + timeOffset,
-                endTime: segment.endTime + timeOffset,
+                startOffsetMs: segment.startOffsetMs + timeOffset * 1000,
+                endOffsetMs: segment.endOffsetMs + timeOffset * 1000,
               };
             }
           } finally {
@@ -121,7 +123,6 @@ export class TranscriptionService extends EventEmitter {
   }
 
   private timestampToSeconds(timestamp: string): number {
-    // whisper-node returns timestamps like "00:00:05.000"
     if (!timestamp) return 0;
     const parts = timestamp.split(":");
     if (parts.length === 3) {

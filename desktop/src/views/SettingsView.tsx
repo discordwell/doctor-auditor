@@ -1,110 +1,99 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+
+type LoadState = "loading" | "ready" | "error";
+
+interface AudioDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
 
 export default function SettingsView() {
-  const [cloudConsent, setCloudConsent] = useState(false);
+  const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const toggleCloudConsent = async () => {
-    const newValue = !cloudConsent;
-    if (window.doctorAuditor) {
-      await window.doctorAuditor.settings.setCloudConsent(newValue);
+  useEffect(() => {
+    async function loadDevices() {
+      if (!window.doctorAuditor) {
+        setLoadState("error");
+        setErrorMessage("Desktop audio API unavailable.");
+        return;
+      }
+
+      try {
+        const deviceList = await window.doctorAuditor.audio.getDevices();
+        setDevices(deviceList);
+        setLoadState("ready");
+      } catch (error) {
+        setLoadState("error");
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Unable to read local audio devices."
+        );
+      }
     }
-    setCloudConsent(newValue);
-  };
+
+    void loadDevices();
+  }, []);
 
   return (
     <div className="settings-view">
       <h2>Settings</h2>
 
       <div className="settings-section">
-        <h3>Cloud Analysis (Claude API)</h3>
+        <h3>Workflow contract</h3>
         <p>
-          Enable cloud-based analysis for higher accuracy risk assessments.
-          Transcripts will be de-identified before sending — all patient names,
-          dates, addresses, and medical record numbers are stripped.
+          Desktop intake now creates shared review sessions instead of the older
+          assessment-only records. Imported audio starts as `audio_import` with
+          a transcript state of `not_started` and a review state of
+          `not_started`.
         </p>
-        <div className="toggle" onClick={toggleCloudConsent}>
-          <div className={`toggle-track ${cloudConsent ? "active" : ""}`}>
-            <div className="toggle-thumb" />
-          </div>
-          <span className="toggle-label">
-            {cloudConsent
-              ? "Cloud analysis enabled"
-              : "Cloud analysis disabled (local only)"}
-          </span>
-        </div>
-        {cloudConsent && (
-          <div className="consent-warning">
-            De-identified transcript snippets will be sent to Anthropic's Claude
-            API for analysis. No patient names, dates, or identifying
-            information will be transmitted. All transmissions are logged in the
-            audit trail.
-          </div>
+        <ul className="settings-list">
+          <li>Consent is captured explicitly during import.</li>
+          <li>Audio stays local until a later approved export step exists.</li>
+          <li>Review, transcript, and export state all track the shared contract.</li>
+        </ul>
+      </div>
+
+      <div className="settings-section">
+        <h3>Audio devices</h3>
+        <p>Devices reported by the local capture layer.</p>
+
+        {loadState === "loading" && (
+          <p className="settings-note">Loading local devices…</p>
+        )}
+
+        {loadState === "error" && (
+          <p className="settings-note">{errorMessage}</p>
+        )}
+
+        {loadState === "ready" && (
+          <ul className="settings-device-list">
+            {devices.map((device) => (
+              <li key={device.id} className="settings-device">
+                <span>{device.name}</span>
+                {device.isDefault && (
+                  <span className="status-chip">Default</span>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
       <div className="settings-section">
-        <h3>Audio Device</h3>
-        <p>Select the microphone to use for recording consultations.</p>
-        <select
-          style={{
-            background: "var(--bg-secondary)",
-            color: "var(--text-primary)",
-            border: "1px solid var(--border)",
-            padding: "8px 12px",
-            borderRadius: "6px",
-            width: "100%",
-            fontSize: "14px",
-          }}
-        >
-          <option>Default Microphone</option>
-        </select>
-      </div>
-
-      <div className="settings-section">
-        <h3>Local LLM Model</h3>
+        <h3>Local storage</h3>
         <p>
-          The local analysis model running via Ollama. Larger models are more
-          accurate but slower.
+          Imported audio is copied into app-managed storage before the review
+          session shell is created. That keeps the local archive stable even if
+          the original file moves or is deleted.
         </p>
-        <select
-          style={{
-            background: "var(--bg-secondary)",
-            color: "var(--text-primary)",
-            border: "1px solid var(--border)",
-            padding: "8px 12px",
-            borderRadius: "6px",
-            width: "100%",
-            fontSize: "14px",
-          }}
-        >
-          <option>llama3.1:8b (Recommended)</option>
-          <option>mistral:7b</option>
-          <option>llama3.1:70b (Slower, more accurate)</option>
-        </select>
-      </div>
-
-      <div className="settings-section">
-        <h3>Data Retention</h3>
-        <p>
-          How long to keep audio recordings and transcripts on this device.
-          Risk assessments sent to the cloud are managed separately.
+        <p className="settings-note">
+          No cloud-analysis toggle is shown here because desktop no longer
+          exposes the retired assessment workflow.
         </p>
-        <select
-          style={{
-            background: "var(--bg-secondary)",
-            color: "var(--text-primary)",
-            border: "1px solid var(--border)",
-            padding: "8px 12px",
-            borderRadius: "6px",
-            width: "100%",
-            fontSize: "14px",
-          }}
-        >
-          <option>30 days</option>
-          <option>90 days</option>
-          <option>1 year</option>
-          <option>Indefinite</option>
-        </select>
       </div>
     </div>
   );

@@ -1,10 +1,19 @@
-export interface ImportedSessionShell {
-  id: string;
-  doctorId: string;
-  startTime: string;
-  endTime?: string;
+import type { ReviewSession, SessionBundle } from "@doctor-auditor/shared";
+
+export interface DesktopSessionSummary {
+  session: ReviewSession;
   audioPath?: string;
-  cloudAnalysisConsent: boolean;
+  transcriptSegmentCount: number;
+}
+
+export interface DesktopSessionBundle extends SessionBundle {
+  audioPath?: string;
+}
+
+export interface ImportSessionRequest {
+  clinicianId: string;
+  recordedWithConsent: boolean;
+  exportAllowed: boolean;
 }
 
 export interface SessionImportProgress {
@@ -21,40 +30,20 @@ export interface DoctorAuditorAPI {
     getDevices: () => Promise<
       Array<{ id: string; name: string; isDefault: boolean }>
     >;
-    onAudioLevel: (callback: (level: number) => void) => void;
-    onTranscriptUpdate: (
-      callback: (segment: {
-        speaker: string;
-        text: string;
-        startTime: number;
-        endTime: number;
-      }) => void
-    ) => void;
+    onAudioLevel: (callback: (level: number) => void) => () => void;
   };
   session: {
-    getAll: () => Promise<unknown[]>;
-    get: (sessionId: string) => Promise<unknown>;
+    getAll: () => Promise<DesktopSessionSummary[]>;
+    get: (sessionId: string) => Promise<DesktopSessionBundle | null>;
     importAudio: (
-      doctorId?: string
+      request: ImportSessionRequest
     ) => Promise<
       | { cancelled: true }
-      | { cancelled: false; session: ImportedSessionShell }
+      | { cancelled: false; session: DesktopSessionSummary }
     >;
     onImportProgress: (
       callback: (update: SessionImportProgress) => void
     ) => () => void;
-  };
-  analysis: {
-    getRisk: (sessionId: string) => Promise<unknown>;
-    onRiskUpdate: (
-      callback: (assessment: {
-        overallRisk: string;
-        overallScore: number;
-      }) => void
-    ) => void;
-  };
-  settings: {
-    setCloudConsent: (consent: boolean) => Promise<boolean>;
   };
 }
 

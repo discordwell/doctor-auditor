@@ -1,99 +1,161 @@
-import React, { useState, useEffect } from "react";
-import { api, Assessment } from "../services/api";
+import React, { useEffect, useState } from "react";
+import { api, Finding, FindingStatus } from "../services/api";
+
+type FindingFilter = "all" | FindingStatus;
+
+const FILTERS: FindingFilter[] = [
+  "all",
+  "pending_review",
+  "accepted",
+  "rejected",
+  "uncertain",
+];
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatStatusLabel(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function getFindingTone(status: Finding["status"]) {
+  if (status === "accepted") {
+    return "success";
+  }
+
+  if (status === "pending_review" || status === "uncertain") {
+    return "attention";
+  }
+
+  if (status === "revised") {
+    return "active";
+  }
+
+  return "neutral";
+}
 
 export default function AssessmentsView() {
-  const [assessments, setAssessments] = useState<Assessment[]>([]);
-  const [riskFilter, setRiskFilter] = useState<string>("");
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [selectedFilter, setSelectedFilter] = useState<FindingFilter>("all");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    let active = true;
+
+    setLoading(true);
+    setError("");
+
     api
-      .getAssessments(riskFilter ? { risk_level: riskFilter } : undefined)
-      .then(setAssessments)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [riskFilter]);
+      .getFindings(
+        selectedFilter === "all" ? undefined : { status: selectedFilter }
+      )
+      .then((data) => {
+        if (active) {
+          setFindings(data);
+        }
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unable to load findings."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
 
-  if (loading) return <div className="empty-state">Loading...</div>;
+    return () => {
+      active = false;
+    };
+  }, [selectedFilter]);
 
-  const formatDate = (iso: string): string =>
-    new Date(iso).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-  const formatDuration = (seconds: number): string => {
-    const m = Math.floor(seconds / 60);
-    return `${m}m`;
-  };
+  if (loading) {
+    return <div className="empty-state">Loading findings...</div>;
+  }
 
   return (
-    <div>
-      <h2>Assessments</h2>
-
-      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
-        {["", "high", "medium", "low"].map((level) => (
-          <button
-            key={level}
-            onClick={() => setRiskFilter(level)}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background:
-                riskFilter === level
-                  ? "var(--accent)"
-                  : "var(--bg-card)",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-              fontSize: 13,
-            }}
-          >
-            {level || "All"}
-          </button>
-        ))}
+    <div className="table-shell">
+      <div className="table-header">
+        <div>
+          <h2>Findings</h2>
+          <p>
+            Evidence-linked findings waiting for reviewer confirmation, edits,
+            or rejection.
+          </p>
+        </div>
+        <div className="filter-row">
+          {FILTERS.map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              className={`filter-chip ${
+                selectedFilter === filter ? "active" : ""
+              }`}
+              onClick={() => setSelectedFilter(filter)}
+            >
+              {filter === "all" ? "All findings" : formatStatusLabel(filter)}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {assessments.length === 0 ? (
-        <div className="empty-state">No assessments match the filter.</div>
-      ) : (
+      {error && <div className="empty-state">{error}</div>}
+
+      {!error && findings.length === 0 ? (
+        <div className="empty-state">
+          No findings matched the current review state.
+        </div>
+      ) : null}
+
+      {!error && findings.length > 0 ? (
         <table className="data-table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Doctor</th>
-              <th>Duration</th>
-              <th>Comm</th>
-              <th>Clinical</th>
-              <th>Behavioral</th>
-              <th>Overall</th>
-              <th>Risk</th>
+              <th>Updated</th>
+              <th>Finding</th>
+              <th>Session</th>
+              <th>Status</th>
+              <th>Confidence</th>
               <th>Source</th>
+              <th>Evidence</th>
             </tr>
           </thead>
           <tbody>
-            {assessments.map((a) => (
-              <tr key={a.id}>
-                <td>{formatDate(a.timestamp)}</td>
-                <td>{a.doctor_id}</td>
-                <td>{formatDuration(a.duration)}</td>
-                <td>{a.communication_score}</td>
-                <td>{a.clinical_score}</td>
-                <td>{a.behavioral_score}</td>
-                <td>{a.overall_score}</td>
+            {findings.map((finding) => (
+              <tr key={finding.id}>
+                <td>{formatDateTime(finding.updatedAt)}</td>
                 <td>
-                  <span className={`risk-badge ${a.overall_risk}`}>
-                    {a.overall_risk}
+                  <div>{finding.title}</div>
+                  <div className="table-meta">{finding.code}</div>
+                </td>
+                <td>
+                  <span className="mono-code">{finding.sessionId}</span>
+                </td>
+                <td>
+                  <span className={`status-badge ${getFindingTone(finding.status)}`}>
+                    {formatStatusLabel(finding.status)}
                   </span>
                 </td>
-                <td>{a.analysis_source}</td>
+                <td>{Math.round(finding.confidence * 100)}%</td>
+                <td>{formatStatusLabel(finding.detectedBy)}</td>
+                <td>{finding.evidenceSpans.length} span(s)</td>
               </tr>
             ))}
           </tbody>
         </table>
-      )}
+      ) : null}
     </div>
   );
 }

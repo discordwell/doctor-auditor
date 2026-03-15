@@ -1,27 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import type {
-  ImportedSessionShell,
+  CaptureMode,
+  ReviewStatus,
+  TranscriptStatus,
+} from "@doctor-auditor/shared";
+import type {
+  DesktopSessionSummary,
   SessionImportProgress,
 } from "../types/electron";
 
-interface TranscriptEntry {
-  speaker: string;
-  text: string;
-  startTime: number;
-  endTime: number;
-}
-
-interface RiskState {
-  communication: number;
-  clinical: number;
-  behavioral: number;
-  overall: string;
-}
-
-type ImportStage =
-  | "idle"
-  | "cancelled"
-  | SessionImportProgress["stage"];
+type ImportStage = "idle" | "cancelled" | SessionImportProgress["stage"];
 
 const IMPORT_STEPS: Array<{
   key: SessionImportProgress["stage"];
@@ -29,7 +17,7 @@ const IMPORT_STEPS: Array<{
 }> = [
   { key: "selected", label: "Audio selected" },
   { key: "copying", label: "Local copy created" },
-  { key: "creating-session", label: "Session shell created" },
+  { key: "creating-session", label: "Review session created" },
   { key: "completed", label: "Ready in history" },
 ];
 
@@ -43,13 +31,13 @@ const IMPORT_STEP_ORDER = IMPORT_STEPS.reduce<Record<string, number>>(
 
 export default function RecordingView() {
   const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [audioLevels, setAudioLevels] = useState<number[]>(
     new Array(60).fill(0)
   );
-  const [risk, setRisk] = useState<RiskState | null>(null);
   const [duration, setDuration] = useState(0);
-  const [clinicianLabel, setClinicianLabel] = useState("Imported encounter");
+  const [clinicianId, setClinicianId] = useState("");
+  const [recordedWithConsent, setRecordedWithConsent] = useState(false);
+  const [exportAllowed, setExportAllowed] = useState(false);
   const [importState, setImportState] = useState<{
     stage: ImportStage;
     message: string;
@@ -57,37 +45,28 @@ export default function RecordingView() {
     sessionId?: string;
   }>({
     stage: "idle",
-    message: "Choose an audio file to create a local encounter shell.",
+    message:
+      "Choose a local audio file, confirm consent, and create a review session shell.",
   });
   const [isImporting, setIsImporting] = useState(false);
   const [importedSession, setImportedSession] =
-    useState<ImportedSessionShell | null>(null);
+    useState<DesktopSessionSummary | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (window.doctorAuditor) {
-      window.doctorAuditor.audio.onAudioLevel((level) => {
-        setAudioLevels((prev) => [...prev.slice(1), level]);
-      });
-
-      window.doctorAuditor.audio.onTranscriptUpdate((segment) => {
-        setTranscript((prev) => [...prev, segment]);
-      });
-
-      window.doctorAuditor.analysis.onRiskUpdate((assessment) => {
-        setRisk((prev) => ({
-          ...prev,
-          overall: assessment.overallRisk,
-          communication: prev?.communication ?? 0,
-          clinical: prev?.clinical ?? 0,
-          behavioral: prev?.behavioral ?? 0,
-        }));
-      });
+    if (!window.doctorAuditor) {
+      return undefined;
     }
+
+    return window.doctorAuditor.audio.onAudioLevel((level) => {
+      setAudioLevels((prev) => [...prev.slice(1), level]);
+    });
   }, []);
 
   useEffect(() => {
-    if (!window.doctorAuditor) return undefined;
+    if (!window.doctorAuditor) {
+      return undefined;
+    }
 
     return window.doctorAuditor.session.onImportProgress((update) => {
       setImportState({
@@ -117,15 +96,16 @@ export default function RecordingView() {
     if (isRecording) {
       await window.doctorAuditor.audio.stopRecording();
       setIsRecording(false);
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
     } else {
       await window.doctorAuditor.audio.startRecording();
       setIsRecording(true);
       setDuration(0);
-      setTranscript([]);
-      setRisk(null);
+      setAudioLevels(new Array(60).fill(0));
       timerRef.current = setInterval(() => {
-        setDuration((d) => d + 1);
+        setDuration((currentDuration) => currentDuration + 1);
       }, 1000);
     }
   }, [isRecording]);
@@ -139,6 +119,23 @@ export default function RecordingView() {
       return;
     }
 
+    const trimmedClinicianId = clinicianId.trim();
+    if (!trimmedClinicianId) {
+      setImportState({
+        stage: "error",
+        message: "Add a clinician label before importing audio.",
+      });
+      return;
+    }
+
+    if (!recordedWithConsent) {
+      setImportState({
+        stage: "error",
+        message: "Confirm recorded consent before importing audio.",
+      });
+      return;
+    }
+
     setIsImporting(true);
     setImportedSession(null);
     setImportState({
@@ -147,9 +144,11 @@ export default function RecordingView() {
     });
 
     try {
-      const result = await window.doctorAuditor.session.importAudio(
-        clinicianLabel.trim()
-      );
+      const result = await window.doctorAuditor.session.importAudio({
+        clinicianId: trimmedClinicianId,
+        recordedWithConsent,
+        exportAllowed,
+      });
 
       if (result.cancelled) {
         setImportState({
@@ -165,10 +164,9 @@ export default function RecordingView() {
         message:
           current.stage === "completed"
             ? current.message
-            : "Import complete. Session shell is ready in history.",
-        fileName:
-          current.fileName ?? getFileName(result.session.audioPath),
-        sessionId: current.sessionId ?? result.session.id,
+            : "Import complete. Review session shell is ready in history.",
+        fileName: current.fileName ?? getFileName(result.session.audioPath),
+        sessionId: current.sessionId ?? result.session.session.id,
       }));
     } catch (error) {
       setImportState({
@@ -181,19 +179,7 @@ export default function RecordingView() {
     } finally {
       setIsImporting(false);
     }
-  }, [clinicianLabel]);
-
-  const formatDuration = (seconds: number): string => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
-
-  const getRiskClass = (score: number): string => {
-    if (score >= 7) return "high";
-    if (score >= 4) return "medium";
-    return "low";
-  };
+  }, [clinicianId, exportAllowed, recordedWithConsent]);
 
   const completedImportSteps =
     importState.stage === "idle" ||
@@ -202,6 +188,9 @@ export default function RecordingView() {
       ? -1
       : IMPORT_STEP_ORDER[importState.stage];
 
+  const canImport =
+    clinicianId.trim().length > 0 && recordedWithConsent && !isImporting;
+
   return (
     <div className="recording-view">
       <div className="recording-hero">
@@ -209,34 +198,66 @@ export default function RecordingView() {
           <span className="section-kicker">Import-first intake</span>
           <h2>Start from existing encounter audio</h2>
           <p>
-            Pull in a local recording, keep the file on-device, and create a
-            session shell before live capture is production-ready.
+            Imported audio creates a shared-contract review session shell with
+            explicit transcript, review, export, and consent state.
           </p>
         </div>
 
         <div className="intake-panel">
-          <label className="field-label" htmlFor="clinician-label">
-            Clinician label
-          </label>
-          <input
-            id="clinician-label"
-            className="text-input"
-            value={clinicianLabel}
-            onChange={(event) => setClinicianLabel(event.target.value)}
-            placeholder="Imported encounter"
-          />
+          <div className="input-grid">
+            <label className="field-label" htmlFor="clinician-label">
+              Clinician label
+            </label>
+            <input
+              id="clinician-label"
+              className="text-input"
+              value={clinicianId}
+              onChange={(event) => setClinicianId(event.target.value)}
+              placeholder="Dr. Morales"
+            />
+          </div>
+
+          <div className="checkbox-group">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={recordedWithConsent}
+                onChange={(event) =>
+                  setRecordedWithConsent(event.target.checked)
+                }
+              />
+              <span className="checkbox-copy">
+                <strong>Recorded with consent</strong>
+                <span>Required before a local review session can be created.</span>
+              </span>
+            </label>
+
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={exportAllowed}
+                onChange={(event) => setExportAllowed(event.target.checked)}
+              />
+              <span className="checkbox-copy">
+                <strong>Export permitted</strong>
+                <span>
+                  Marks the session as eligible for later approved export.
+                </span>
+              </span>
+            </label>
+          </div>
 
           <div className="intake-actions">
             <button
               className="import-button"
               onClick={importAudio}
-              disabled={isImporting}
+              disabled={!canImport}
             >
               {isImporting ? "Importing audio..." : "Import Audio File"}
             </button>
             <p className="intake-helper">
-              Supports common local audio formats and creates a session shell in
-              the local database.
+              Supports common local audio formats. Imported audio is copied into
+              app storage and tracked as `audio_import`.
             </p>
           </div>
 
@@ -282,17 +303,32 @@ export default function RecordingView() {
           {importedSession && (
             <div className="import-result-card">
               <div>
-                <span className="section-kicker">Local session shell</span>
-                <h3>{importedSession.doctorId}</h3>
+                <span className="section-kicker">Review session shell</span>
+                <h3>{formatClinicianLabel(importedSession.session.clinicianId)}</h3>
                 <p>
-                  Created {new Date(importedSession.startTime).toLocaleString()}
+                  Imported {formatDateTime(importedSession.session.createdAt)}.
+                  Transcript state is{" "}
+                  {formatTranscriptStatus(
+                    importedSession.session.transcriptStatus
+                  ).toLowerCase()}
+                  .
                 </p>
               </div>
               <div className="import-result-meta">
                 <span className="status-chip">
                   {getFileName(importedSession.audioPath)}
                 </span>
-                <span className="status-chip">{importedSession.id}</span>
+                <span className="status-chip">
+                  {formatCaptureMode(importedSession.session.captureMode)}
+                </span>
+                <span className="status-chip">
+                  {formatReviewStatus(importedSession.session.reviewStatus)}
+                </span>
+                <span className="status-chip">
+                  {importedSession.session.consent.exportAllowed
+                    ? "Export allowed"
+                    : "Local review only"}
+                </span>
               </div>
             </div>
           )}
@@ -300,11 +336,11 @@ export default function RecordingView() {
       </div>
 
       <div className="recording-status">
-        <h2>{isRecording ? "Recording Session" : "Live Capture Beta"}</h2>
+        <h2>{isRecording ? "Recording Session" : "Live Capture"}</h2>
         <p>
           {isRecording
-            ? `Session in progress — ${formatDuration(duration)}`
-            : "Use live recording when you need a fresh capture. Import remains the faster path."}
+            ? `Local capture in progress — ${formatDuration(duration)}`
+            : "Use live capture when you need a fresh recording. Import remains the fastest intake path."}
         </p>
       </div>
 
@@ -316,53 +352,81 @@ export default function RecordingView() {
       </button>
 
       <div className="waveform">
-        {audioLevels.map((level, i) => (
+        {audioLevels.map((level, index) => (
           <div
-            key={i}
+            key={index}
             className="waveform-bar"
             style={{ height: `${Math.max(4, level * 70)}px` }}
           />
         ))}
       </div>
-
-      {risk && (
-        <div className="risk-indicator">
-          <div className="risk-category">
-            <div className="risk-category-label">Communication</div>
-            <div className={`risk-score ${getRiskClass(risk.communication)}`}>
-              {risk.communication}
-            </div>
-          </div>
-          <div className="risk-category">
-            <div className="risk-category-label">Clinical</div>
-            <div className={`risk-score ${getRiskClass(risk.clinical)}`}>
-              {risk.clinical}
-            </div>
-          </div>
-          <div className="risk-category">
-            <div className="risk-category-label">Behavioral</div>
-            <div className={`risk-score ${getRiskClass(risk.behavioral)}`}>
-              {risk.behavioral}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {transcript.length > 0 && (
-        <div className="transcript-panel">
-          <h3>Live Transcript</h3>
-          {transcript.map((entry, i) => (
-            <div key={i} className="transcript-segment">
-              <div className={`transcript-speaker ${entry.speaker}`}>
-                {entry.speaker === "doctor" ? "Doctor" : "Patient"}
-              </div>
-              <div className="transcript-text">{entry.text}</div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes.toString().padStart(2, "0")}:${remainder
+    .toString()
+    .padStart(2, "0")}`;
+}
+
+function formatDateTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "time unavailable";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function formatClinicianLabel(value: string): string {
+  const trimmedValue = value.trim();
+  return trimmedValue || "Unassigned clinician";
+}
+
+function formatCaptureMode(value: CaptureMode): string {
+  switch (value) {
+    case "audio_import":
+      return "Imported audio";
+    case "live_capture":
+      return "Live capture";
+    case "manual_entry":
+      return "Manual entry";
+  }
+}
+
+function formatTranscriptStatus(value: TranscriptStatus): string {
+  switch (value) {
+    case "not_started":
+      return "Transcript not started";
+    case "in_progress":
+      return "Transcript in progress";
+    case "completed":
+      return "Transcript completed";
+    case "failed":
+      return "Transcript failed";
+  }
+}
+
+function formatReviewStatus(value: ReviewStatus): string {
+  switch (value) {
+    case "not_started":
+      return "Review not started";
+    case "ready":
+      return "Ready for review";
+    case "in_review":
+      return "Review in progress";
+    case "completed":
+      return "Review complete";
+  }
 }
 
 function getFileName(filePath?: string): string {

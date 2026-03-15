@@ -3,6 +3,7 @@ import { Routes, Route, NavLink } from "react-router-dom";
 import OverviewView from "./views/OverviewView";
 import DoctorsView from "./views/DoctorsView";
 import AssessmentsView from "./views/AssessmentsView";
+import ApprovedExportsView from "./views/ApprovedExportsView";
 
 export default function App() {
   return (
@@ -11,7 +12,7 @@ export default function App() {
         <div className="header-brand">
           <div>
             <h1>Doctor Auditor</h1>
-            <p>Review operations overview</p>
+            <p>Review operations surface</p>
           </div>
           <span className="header-badge">BEACON</span>
         </div>
@@ -19,15 +20,17 @@ export default function App() {
           <NavLink to="/" end>
             Overview
           </NavLink>
-          <NavLink to="/doctors">Doctors</NavLink>
-          <NavLink to="/assessments">Assessments</NavLink>
+          <NavLink to="/sessions">Sessions</NavLink>
+          <NavLink to="/findings">Findings</NavLink>
+          <NavLink to="/approved-exports">Exports</NavLink>
         </nav>
       </header>
       <main className="dashboard-content">
         <Routes>
           <Route path="/" element={<OverviewView />} />
-          <Route path="/doctors" element={<DoctorsView />} />
-          <Route path="/assessments" element={<AssessmentsView />} />
+          <Route path="/sessions" element={<DoctorsView />} />
+          <Route path="/findings" element={<AssessmentsView />} />
+          <Route path="/approved-exports" element={<ApprovedExportsView />} />
         </Routes>
       </main>
     </div>

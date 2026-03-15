@@ -1,84 +1,169 @@
-import React, { useState, useEffect } from "react";
-import { api, DoctorSummary } from "../services/api";
+import React, { useEffect, useState } from "react";
+import { api, ReviewSession } from "../services/api";
 
-export default function DoctorsView() {
-  const [doctors, setDoctors] = useState<DoctorSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+type SessionFilter = "all" | "ready" | "in_review" | "completed";
 
-  useEffect(() => {
-    api
-      .getDoctors()
-      .then(setDoctors)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+const FILTERS: SessionFilter[] = ["all", "ready", "in_review", "completed"];
 
-  if (loading) return <div className="empty-state">Loading...</div>;
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
-  if (doctors.length === 0) {
-    return (
-      <div>
-        <h2>Doctors</h2>
-        <div className="empty-state">
-          No doctor data received yet. Risk assessments will appear here as
-          desktop clients submit de-identified data.
-        </div>
-      </div>
-    );
+function formatStatusLabel(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function getStatusTone(
+  value: string
+): "attention" | "active" | "success" | "neutral" {
+  if (value === "ready") {
+    return "attention";
   }
 
-  const getRiskClass = (score: number | null): string => {
-    if (score === null) return "";
-    if (score >= 7) return "high";
-    if (score >= 4) return "medium";
-    return "low";
-  };
+  if (value === "in_review" || value === "draft") {
+    return "active";
+  }
+
+  if (value === "completed" || value === "approved" || value === "sent") {
+    return "success";
+  }
+
+  return "neutral";
+}
+
+export default function DoctorsView() {
+  const [sessions, setSessions] = useState<ReviewSession[]>([]);
+  const [selectedFilter, setSelectedFilter] = useState<SessionFilter>("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    setLoading(true);
+    setError("");
+
+    api
+      .getSessions(
+        selectedFilter === "all"
+          ? undefined
+          : { reviewStatus: selectedFilter }
+      )
+      .then((data) => {
+        if (active) {
+          setSessions(data);
+        }
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unable to load sessions."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedFilter]);
+
+  if (loading) {
+    return <div className="empty-state">Loading review sessions...</div>;
+  }
 
   return (
-    <div>
-      <h2>Doctors</h2>
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Doctor ID</th>
-            <th>Specialty</th>
-            <th>Sessions</th>
-            <th>Avg Score</th>
-            <th>Latest Risk</th>
-          </tr>
-        </thead>
-        <tbody>
-          {doctors.map((doctor) => (
-            <tr key={doctor.id}>
-              <td>{doctor.id}</td>
-              <td>{doctor.specialty ?? "—"}</td>
-              <td>{doctor.total_sessions}</td>
-              <td>
-                {doctor.avg_overall_score ?? "—"}
-                {doctor.avg_overall_score !== null && (
-                  <span className="score-bar">
-                    <span
-                      className={`score-bar-fill ${getRiskClass(doctor.avg_overall_score)}`}
-                      style={{
-                        width: `${(doctor.avg_overall_score / 10) * 100}%`,
-                      }}
-                    />
-                  </span>
-                )}
-              </td>
-              <td>
-                {doctor.latest_risk ? (
-                  <span className={`risk-badge ${doctor.latest_risk}`}>
-                    {doctor.latest_risk}
-                  </span>
-                ) : (
-                  "—"
-                )}
-              </td>
-            </tr>
+    <div className="table-shell">
+      <div className="table-header">
+        <div>
+          <h2>Sessions</h2>
+          <p>
+            Review-ready encounter sessions flowing into transcript, findings,
+            and export approval work.
+          </p>
+        </div>
+        <div className="filter-row">
+          {FILTERS.map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              className={`filter-chip ${
+                selectedFilter === filter ? "active" : ""
+              }`}
+              onClick={() => setSelectedFilter(filter)}
+            >
+              {filter === "all" ? "All sessions" : formatStatusLabel(filter)}
+            </button>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+
+      {error && <div className="empty-state">{error}</div>}
+
+      {!error && sessions.length === 0 ? (
+        <div className="empty-state">
+          No sessions matched the current review filter.
+        </div>
+      ) : null}
+
+      {!error && sessions.length > 0 ? (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Clinician</th>
+              <th>Started</th>
+              <th>Capture</th>
+              <th>Transcript</th>
+              <th>Review</th>
+              <th>Export</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.map((session) => (
+              <tr key={session.id}>
+                <td>
+                  <div className="mono-code">{session.id}</div>
+                </td>
+                <td>{session.clinicianId}</td>
+                <td>
+                  <div>{formatDateTime(session.encounterStartedAt)}</div>
+                  <div className="table-meta">
+                    Updated {formatDateTime(session.updatedAt)}
+                  </div>
+                </td>
+                <td>{formatStatusLabel(session.captureMode)}</td>
+                <td>
+                  <span className={`status-badge ${getStatusTone(session.transcriptStatus)}`}>
+                    {formatStatusLabel(session.transcriptStatus)}
+                  </span>
+                </td>
+                <td>
+                  <span className={`status-badge ${getStatusTone(session.reviewStatus)}`}>
+                    {formatStatusLabel(session.reviewStatus)}
+                  </span>
+                </td>
+                <td>
+                  <span className={`status-badge ${getStatusTone(session.exportStatus)}`}>
+                    {formatStatusLabel(session.exportStatus)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
     </div>
   );
 }

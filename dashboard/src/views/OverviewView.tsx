@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -8,89 +8,440 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { api, OverviewStats, TrendPoint } from "../services/api";
 
-type ReviewFlowPoint = {
+import { api, ApprovedExport, Finding, ReviewSession } from "../services/api";
+
+type WeeklyActivityPoint = {
   period: string;
-  intake: number;
-  ready: number;
-  approved: number;
+  sessions: number;
+  findings: number;
+  exports: number;
 };
 
 type QueueLane = {
   title: string;
-  count: string;
+  count: number;
   detail: string;
   tone: "attention" | "active" | "success";
 };
 
 type FocusItem = {
   title: string;
-  count: string;
+  count: number;
   detail: string;
   owner: string;
   tone: "alert" | "watch" | "stable";
 };
 
-const fallbackFlowSeed: Array<Pick<TrendPoint, "period" | "session_count">> = [
-  { period: "2026-01-06", session_count: 12 },
-  { period: "2026-01-13", session_count: 15 },
-  { period: "2026-01-20", session_count: 19 },
-  { period: "2026-01-27", session_count: 17 },
-  { period: "2026-02-03", session_count: 22 },
-  { period: "2026-02-10", session_count: 24 },
+const previewSessions: ReviewSession[] = [
+  {
+    id: "session-preview-001",
+    clinicianId: "clinician-ada",
+    organizationId: "demo-health",
+    encounterStartedAt: "2026-03-10T15:00:00Z",
+    encounterEndedAt: "2026-03-10T15:28:00Z",
+    captureMode: "audio_import",
+    transcriptStatus: "completed",
+    reviewStatus: "in_review",
+    exportStatus: "draft",
+    createdAt: "2026-03-10T15:35:00Z",
+    updatedAt: "2026-03-12T09:15:00Z",
+    consent: {
+      recordedWithConsent: true,
+      exportAllowed: true,
+    },
+  },
+  {
+    id: "session-preview-002",
+    clinicianId: "clinician-ada",
+    organizationId: "demo-health",
+    encounterStartedAt: "2026-03-08T17:00:00Z",
+    encounterEndedAt: "2026-03-08T17:22:00Z",
+    captureMode: "audio_import",
+    transcriptStatus: "completed",
+    reviewStatus: "completed",
+    exportStatus: "sent",
+    createdAt: "2026-03-08T17:30:00Z",
+    updatedAt: "2026-03-09T11:00:00Z",
+    consent: {
+      recordedWithConsent: true,
+      exportAllowed: true,
+    },
+  },
+  {
+    id: "session-preview-003",
+    clinicianId: "clinician-lin",
+    organizationId: "demo-health",
+    encounterStartedAt: "2026-03-13T19:10:00Z",
+    encounterEndedAt: "2026-03-13T19:41:00Z",
+    captureMode: "live_capture",
+    transcriptStatus: "completed",
+    reviewStatus: "ready",
+    exportStatus: "not_requested",
+    createdAt: "2026-03-13T19:45:00Z",
+    updatedAt: "2026-03-14T07:40:00Z",
+    consent: {
+      recordedWithConsent: true,
+      exportAllowed: false,
+    },
+  },
+  {
+    id: "session-preview-004",
+    clinicianId: "clinician-noor",
+    organizationId: "demo-health",
+    encounterStartedAt: "2026-03-14T13:00:00Z",
+    encounterEndedAt: "2026-03-14T13:19:00Z",
+    captureMode: "audio_import",
+    transcriptStatus: "completed",
+    reviewStatus: "completed",
+    exportStatus: "approved",
+    createdAt: "2026-03-14T13:26:00Z",
+    updatedAt: "2026-03-15T08:35:00Z",
+    consent: {
+      recordedWithConsent: true,
+      exportAllowed: true,
+    },
+  },
 ];
 
+const previewFindings: Finding[] = [
+  {
+    id: "finding-preview-001",
+    sessionId: "session-preview-001",
+    code: "follow-up-plan",
+    title: "Follow-up plan still needs reviewer confirmation",
+    summary:
+      "The patient left with a follow-up mention, but the timing language is still ambiguous in the export packet.",
+    status: "pending_review",
+    confidence: 0.82,
+    evidenceSpans: [
+      {
+        id: "evidence-preview-001",
+        transcriptSegmentId: "segment-preview-001",
+        excerpt: "I'd like to see you again next week if the refill comes through.",
+        startOffsetMs: 18000,
+        endOffsetMs: 23100,
+      },
+    ],
+    detectedBy: "rules",
+    createdAt: "2026-03-10T15:40:00Z",
+    updatedAt: "2026-03-12T09:15:00Z",
+  },
+  {
+    id: "finding-preview-002",
+    sessionId: "session-preview-001",
+    code: "medication-risk",
+    title: "Medication side-effect counseling needs evidence trim",
+    summary:
+      "Evidence spans overlap two adjacent segments and need reviewer cleanup before approval.",
+    status: "uncertain",
+    confidence: 0.71,
+    evidenceSpans: [
+      {
+        id: "evidence-preview-002",
+        transcriptSegmentId: "segment-preview-002",
+        excerpt: "It may make you dizzy for the first few days.",
+        startOffsetMs: 9200,
+        endOffsetMs: 12600,
+      },
+    ],
+    detectedBy: "local_llm",
+    createdAt: "2026-03-10T15:42:00Z",
+    updatedAt: "2026-03-12T09:20:00Z",
+  },
+  {
+    id: "finding-preview-003",
+    sessionId: "session-preview-002",
+    code: "empathy-gap",
+    title: "Patient concern was acknowledged and approved",
+    summary:
+      "Reviewer accepted this finding for the final export after confirming the evidence clip.",
+    status: "accepted",
+    confidence: 0.65,
+    evidenceSpans: [
+      {
+        id: "evidence-preview-003",
+        transcriptSegmentId: "segment-preview-003",
+        excerpt: "I hear that this has been exhausting for you.",
+        startOffsetMs: 6000,
+        endOffsetMs: 9100,
+      },
+    ],
+    detectedBy: "human",
+    createdAt: "2026-03-08T17:35:00Z",
+    updatedAt: "2026-03-09T11:00:00Z",
+    reviewDecisionId: "decision-preview-001",
+  },
+  {
+    id: "finding-preview-004",
+    sessionId: "session-preview-003",
+    code: "direct-question",
+    title: "Direct patient question has not been answered yet",
+    summary:
+      "The patient asked when swelling should trigger a callback, but the answer is missing from the current evidence set.",
+    status: "draft",
+    confidence: 0.8,
+    evidenceSpans: [
+      {
+        id: "evidence-preview-004",
+        transcriptSegmentId: "segment-preview-004",
+        excerpt: "When should I call back if the swelling keeps going?",
+        startOffsetMs: 14100,
+        endOffsetMs: 17600,
+      },
+    ],
+    detectedBy: "rules",
+    createdAt: "2026-03-13T19:48:00Z",
+    updatedAt: "2026-03-14T07:40:00Z",
+  },
+  {
+    id: "finding-preview-005",
+    sessionId: "session-preview-004",
+    code: "handoff-clarity",
+    title: "Handoff summary was edited during review",
+    summary:
+      "Reviewer tightened the summary language before export approval.",
+    status: "revised",
+    confidence: 0.77,
+    evidenceSpans: [
+      {
+        id: "evidence-preview-005",
+        transcriptSegmentId: "segment-preview-005",
+        excerpt:
+          "We'll transfer this plan to your primary team this afternoon.",
+        startOffsetMs: 8800,
+        endOffsetMs: 11900,
+      },
+    ],
+    detectedBy: "local_llm",
+    createdAt: "2026-03-14T13:29:00Z",
+    updatedAt: "2026-03-15T08:35:00Z",
+    reviewDecisionId: "decision-preview-002",
+  },
+];
+
+const previewApprovedExports: ApprovedExport[] = [
+  {
+    id: "export-preview-001",
+    sessionId: "session-preview-002",
+    status: "sent",
+    summary:
+      "Final export covering the reviewed empathy acknowledgement and callback instructions.",
+    findings: [],
+    approvedBy: "quality-lead-1",
+    approvedAt: "2026-03-09T11:20:00Z",
+    destination: "compliance-archive",
+    sentAt: "2026-03-09T11:55:00Z",
+  },
+  {
+    id: "export-preview-002",
+    sessionId: "session-preview-004",
+    status: "approved",
+    summary:
+      "Approved export packet for the updated handoff summary and discharge instructions.",
+    findings: [],
+    approvedBy: "quality-lead-2",
+    approvedAt: "2026-03-15T08:40:00Z",
+    destination: "claims-review-queue",
+  },
+  {
+    id: "export-preview-003",
+    sessionId: "session-preview-001",
+    status: "draft",
+    summary:
+      "Draft export waiting for final confirmation on medication side-effect counseling.",
+    findings: [],
+    approvedBy: "quality-lead-3",
+    approvedAt: "2026-03-12T09:30:00Z",
+    destination: "internal-quality-review",
+  },
+];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const OPEN_STATUSES = new Set<Finding["status"]>([
+  "draft",
+  "pending_review",
+  "uncertain",
+  "revised",
+]);
+const REVIEWED_STATUSES = new Set<Finding["status"]>([
+  "accepted",
+  "rejected",
+  "revised",
+]);
 const compactNumber = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
 
-function buildReviewFlow(
-  points: Array<Pick<TrendPoint, "period" | "session_count">>
-): ReviewFlowPoint[] {
-  const source = points.length > 0 ? points.slice(-6) : fallbackFlowSeed;
-
-  return source.map((point, index) => ({
-    period: point.period,
-    intake: point.session_count,
-    ready: Math.max(3, Math.round(point.session_count * 0.72) + (index % 2)),
-    approved: Math.max(1, Math.round(point.session_count * 0.38) - (index % 2)),
-  }));
+function startOfUtcWeek(value: string | Date): Date {
+  const date = typeof value === "string" ? new Date(value) : new Date(value);
+  const copy = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  );
+  const day = copy.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  copy.setUTCDate(copy.getUTCDate() + diff);
+  return copy;
 }
 
-function formatPeriod(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
+function formatWeekLabel(date: Date): string {
+  return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
+function buildWeeklyActivity(
+  sessions: ReviewSession[],
+  findings: Finding[],
+  approvedExports: ApprovedExport[]
+): WeeklyActivityPoint[] {
+  const currentWeek = startOfUtcWeek(new Date());
+  const weeks = Array.from({ length: 6 }, (_, index) => {
+    const week = new Date(currentWeek);
+    week.setUTCDate(currentWeek.getUTCDate() + (index - 5) * 7);
+    return week;
+  });
+
+  const points = weeks.map((week) => ({
+    period: week.toISOString(),
+    sessions: 0,
+    findings: 0,
+    exports: 0,
+  }));
+  const pointByWeek = new Map(points.map((point) => [point.period, point]));
+
+  sessions.forEach((session) => {
+    const point = pointByWeek.get(startOfUtcWeek(session.encounterStartedAt).toISOString());
+    if (point) {
+      point.sessions += 1;
+    }
+  });
+
+  findings.forEach((finding) => {
+    const point = pointByWeek.get(startOfUtcWeek(finding.updatedAt).toISOString());
+    if (point) {
+      point.findings += 1;
+    }
+  });
+
+  approvedExports.forEach((approvedExport) => {
+    const point = pointByWeek.get(startOfUtcWeek(approvedExport.approvedAt).toISOString());
+    if (point) {
+      point.exports += 1;
+    }
+  });
+
+  return points.map((point) => ({
+    ...point,
+    period: formatWeekLabel(new Date(point.period)),
+  }));
+}
+
+function buildFocusItems(findings: Finding[]): FocusItem[] {
+  const grouped = new Map<
+    string,
+    {
+      title: string;
+      count: number;
+      detail: string;
+      owner: string;
+      tone: FocusItem["tone"];
+      updatedAt: string;
+    }
+  >();
+
+  findings.forEach((finding) => {
+    const key = finding.code || finding.title;
+    const tone =
+      finding.status === "draft" || finding.status === "pending_review"
+        ? "alert"
+        : finding.status === "uncertain" || finding.status === "revised"
+          ? "watch"
+          : "stable";
+    const owner = `${finding.detectedBy.replace(/_/g, " ")} · ${finding.status.replace(
+      /_/g,
+      " "
+    )}`;
+    const existing = grouped.get(key);
+
+    if (existing) {
+      existing.count += 1;
+      if (finding.updatedAt > existing.updatedAt) {
+        existing.detail = finding.summary;
+        existing.owner = owner;
+        existing.tone = tone;
+        existing.updatedAt = finding.updatedAt;
+      }
+      return;
+    }
+
+    grouped.set(key, {
+      title: finding.title,
+      count: 1,
+      detail: finding.summary,
+      owner,
+      tone,
+      updatedAt: finding.updatedAt,
+    });
+  });
+
+  return Array.from(grouped.values())
+    .sort((left, right) => {
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+
+      return right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, 4)
+    .map(({ updatedAt, ...item }) => item);
+}
+
 export default function OverviewView() {
-  const [stats, setStats] = useState<OverviewStats | null>(null);
-  const [trends, setTrends] = useState<TrendPoint[]>([]);
+  const [sessions, setSessions] = useState<ReviewSession[]>(previewSessions);
+  const [findings, setFindings] = useState<Finding[]>(previewFindings);
+  const [approvedExports, setApprovedExports] =
+    useState<ApprovedExport[]>(previewApprovedExports);
   const [loading, setLoading] = useState(true);
   const [sourceMode, setSourceMode] = useState<"live" | "preview">("preview");
 
   useEffect(() => {
     let active = true;
 
-    Promise.allSettled([api.getOverview(), api.getTrends()])
-      .then(([overviewResult, trendsResult]) => {
+    Promise.allSettled([
+      api.getSessions(),
+      api.getFindings(),
+      api.getApprovedExports(),
+    ])
+      .then(([sessionsResult, findingsResult, exportsResult]) => {
         if (!active) {
           return;
         }
 
         const hasLiveData =
-          overviewResult.status === "fulfilled" ||
-          trendsResult.status === "fulfilled";
+          sessionsResult.status === "fulfilled" ||
+          findingsResult.status === "fulfilled" ||
+          exportsResult.status === "fulfilled";
 
-        if (overviewResult.status === "fulfilled") {
-          setStats(overviewResult.value);
-        }
-
-        if (trendsResult.status === "fulfilled") {
-          setTrends(trendsResult.value);
+        if (hasLiveData) {
+          setSessions(
+            sessionsResult.status === "fulfilled"
+              ? sessionsResult.value
+              : previewSessions
+          );
+          setFindings(
+            findingsResult.status === "fulfilled"
+              ? findingsResult.value
+              : previewFindings
+          );
+          setApprovedExports(
+            exportsResult.status === "fulfilled"
+              ? exportsResult.value
+              : previewApprovedExports
+          );
         }
 
         setSourceMode(hasLiveData ? "live" : "preview");
@@ -106,115 +457,119 @@ export default function OverviewView() {
     };
   }, []);
 
+  const openFindings = useMemo(
+    () => findings.filter((finding) => OPEN_STATUSES.has(finding.status)),
+    [findings]
+  );
+  const reviewedFindings = useMemo(
+    () => findings.filter((finding) => REVIEWED_STATUSES.has(finding.status)),
+    [findings]
+  );
+  const agingItems = useMemo(
+    () =>
+      sessions.filter((session) => {
+        if (
+          session.reviewStatus !== "ready" &&
+          session.reviewStatus !== "in_review"
+        ) {
+          return false;
+        }
+
+        return Date.now() - new Date(session.updatedAt).getTime() > 2 * DAY_MS;
+      }).length,
+    [sessions]
+  );
+
+  const queueLanes: QueueLane[] = useMemo(
+    () => [
+      {
+        title: "Awaiting review decision",
+        count: findings.filter(
+          (finding) =>
+            finding.status === "draft" || finding.status === "pending_review"
+        ).length,
+        detail:
+          "Findings that still need a human decision before they can move forward.",
+        tone: "attention",
+      },
+      {
+        title: "Needs evidence edits",
+        count: findings.filter(
+          (finding) =>
+            finding.status === "uncertain" || finding.status === "revised"
+        ).length,
+        detail:
+          "Evidence spans or summaries changed during review and need another pass.",
+        tone: "active",
+      },
+      {
+        title: "Export packets in queue",
+        count: approvedExports.filter(
+          (approvedExport) =>
+            approvedExport.status === "draft" ||
+            approvedExport.status === "approved"
+        ).length,
+        detail:
+          "Export packets stay downstream of review until a lead sends them.",
+        tone: "success",
+      },
+    ],
+    [approvedExports, findings]
+  );
+
+  const focusItems = useMemo(
+    () => buildFocusItems(openFindings.length > 0 ? openFindings : findings),
+    [findings, openFindings]
+  );
+  const weeklyActivity = useMemo(
+    () => buildWeeklyActivity(sessions, findings, approvedExports),
+    [approvedExports, findings, sessions]
+  );
+  const sessionsById = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions]
+  );
+  const exportRows = useMemo(
+    () =>
+      [...approvedExports]
+        .sort((left, right) => right.approvedAt.localeCompare(left.approvedAt))
+        .slice(0, 4),
+    [approvedExports]
+  );
+
   if (loading) {
-    return <div className="empty-state">Loading review operations shell...</div>;
+    return <div className="empty-state">Loading review operations surface...</div>;
   }
-
-  const flow = buildReviewFlow(trends);
-  const connectedSessions =
-    stats?.total_sessions ??
-    flow.reduce((total, point) => total + point.intake, 0);
-  const latestWindow = flow[flow.length - 1];
-  const reviewQueue = Math.max(
-    8,
-    (latestWindow?.ready ?? 0) - (latestWindow?.approved ?? 0) + 6
-  );
-  const flaggedFindings = Math.max(
-    14,
-    reviewQueue + Math.round(connectedSessions / 7)
-  );
-  const approvedExports = Math.max(
-    6,
-    flow.reduce((total, point) => total + point.approved, 0)
-  );
-  const agingItems = Math.max(2, Math.round(reviewQueue * 0.3));
-  const reviewedToday = Math.max(10, (latestWindow?.approved ?? 0) + 4);
-
-  const queueLanes: QueueLane[] = [
-    {
-      title: "Needs reviewer assignment",
-      count: `${Math.max(4, Math.round(reviewQueue * 0.45))}`,
-      detail: "Fresh findings grouped after transcript and evidence packaging.",
-      tone: "attention",
-    },
-    {
-      title: "In evidence confirmation",
-      count: `${Math.max(3, Math.round(reviewQueue * 0.35))}`,
-      detail: "Reviewer is checking quote spans, timestamps, and missing context.",
-      tone: "active",
-    },
-    {
-      title: "Approved for export",
-      count: `${Math.max(2, Math.round(approvedExports * 0.3))}`,
-      detail: "Payload is redacted and waiting for downstream delivery approval.",
-      tone: "success",
-    },
-  ];
-
-  const focusItems: FocusItem[] = [
-    {
-      title: "Missing follow-up instructions",
-      count: `${Math.max(3, Math.round(flaggedFindings * 0.27))}`,
-      detail:
-        "Shows up most often in short closeouts where the patient leaves without next-step language.",
-      owner: "Clinical QA",
-      tone: "alert",
-    },
-    {
-      title: "Medication risk not explained",
-      count: `${Math.max(2, Math.round(flaggedFindings * 0.2))}`,
-      detail:
-        "Evidence clips cluster around treatment changes that lack side-effect counseling.",
-      owner: "Safety review",
-      tone: "watch",
-    },
-    {
-      title: "Patient concern restated incorrectly",
-      count: `${Math.max(2, Math.round(flaggedFindings * 0.16))}`,
-      detail:
-        "Useful for auditing whether the clinician reflected the core symptom accurately.",
-      owner: "Communication review",
-      tone: "watch",
-    },
-    {
-      title: "Unresolved direct question",
-      count: `${Math.max(1, Math.round(flaggedFindings * 0.11))}`,
-      detail:
-        "Questions remain open at session end and should be either resolved or explicitly deferred.",
-      owner: "Operations",
-      tone: "stable",
-    },
-  ];
 
   return (
     <div className="overview-shell">
       <section className="overview-hero">
         <div>
           <span className="overview-eyebrow">Beacon overview</span>
-          <h2>Review activity, evidence backlog, and export readiness</h2>
+          <h2>Sessions, findings, and approved exports in one review surface</h2>
           <p className="overview-intro">
-            This shell reframes the dashboard around auditable review work. Live
-            legacy session totals are used when available, while review queue
-            and export states stay local until the new server contract lands.
+            The overview is now wired to the live review endpoints. A demo
+            reviewer token is bootstrapped automatically so the dashboard can
+            read session, finding, and export data without manual setup.
           </p>
         </div>
         <div className="source-card">
           <span className={`source-pill ${sourceMode}`}>
-            {sourceMode === "live" ? "Partially connected" : "Preview mode"}
+            {sourceMode === "live" ? "Live review data" : "Preview fallback"}
           </span>
           <p>
             {sourceMode === "live"
-              ? "Using legacy dashboard totals for intake volume while review queue metrics stay scaffolded locally."
-              : "No review-oriented API is available yet, so this overview is using shell data only."}
+              ? "Connected to the active review surface. Metrics are derived from live sessions, findings, and approved exports."
+              : "The review API is unavailable, so the dashboard is rendering preview data instead of an empty shell."}
           </p>
           <dl className="source-details">
             <div>
-              <dt>Connected sessions</dt>
-              <dd>{compactNumber.format(connectedSessions)}</dd>
+              <dt>Sessions in scope</dt>
+              <dd>{compactNumber.format(sessions.length)}</dd>
             </div>
             <div>
-              <dt>Reviewed today</dt>
-              <dd>{reviewedToday}</dd>
+              <dt>Reviewed findings</dt>
+              <dd>{reviewedFindings.length}</dd>
             </div>
           </dl>
         </div>
@@ -222,24 +577,32 @@ export default function OverviewView() {
 
       <section className="stats-grid overview-kpis">
         <div className="stat-card kpi-card">
-          <div className="stat-label">Open review queue</div>
-          <div className="stat-value">{reviewQueue}</div>
-          <p>{agingItems} items are aging past the 48-hour review target.</p>
-        </div>
-        <div className="stat-card kpi-card">
-          <div className="stat-label">Flagged findings</div>
-          <div className="stat-value attention">{flaggedFindings}</div>
-          <p>Evidence-linked issues awaiting a reviewer decision or escalation.</p>
+          <div className="stat-label">Open findings</div>
+          <div className="stat-value attention">{openFindings.length}</div>
+          <p>{agingItems} active sessions have been sitting in review for more than 48 hours.</p>
         </div>
         <div className="stat-card kpi-card">
           <div className="stat-label">Approved exports</div>
-          <div className="stat-value success">{approvedExports}</div>
-          <p>Redacted summaries are ready for downstream delivery once approved.</p>
+          <div className="stat-value success">
+            {
+              approvedExports.filter(
+                (approvedExport) =>
+                  approvedExport.status === "approved" ||
+                  approvedExport.status === "sent"
+              ).length
+            }
+          </div>
+          <p>Only approved or sent packets count here. Draft exports stay visible in the queue lane.</p>
         </div>
         <div className="stat-card kpi-card">
-          <div className="stat-label">Connected intake volume</div>
-          <div className="stat-value accent">{compactNumber.format(connectedSessions)}</div>
-          <p>Live session totals appear here first while review-specific endpoints catch up.</p>
+          <div className="stat-label">Reviewed findings</div>
+          <div className="stat-value accent">{reviewedFindings.length}</div>
+          <p>Accepted, rejected, and revised findings stay auditable instead of collapsing into a score.</p>
+        </div>
+        <div className="stat-card kpi-card">
+          <div className="stat-label">Session coverage</div>
+          <div className="stat-value">{sessions.length}</div>
+          <p>Every card in this overview is anchored to a session, finding, or approved export record.</p>
         </div>
       </section>
 
@@ -247,35 +610,30 @@ export default function OverviewView() {
         <div className="chart-container panel-card">
           <div className="panel-header">
             <div>
-              <span className="overview-eyebrow">Flow</span>
-              <h3>Session intake moving toward reviewed evidence</h3>
+              <span className="overview-eyebrow">Activity</span>
+              <h3>How review work is moving week to week</h3>
             </div>
             <p>
-              Intake is live when the legacy endpoint responds. Review-ready and
-              approved values are shell estimates until queue APIs exist.
+              Sessions, findings, and exports are tracked independently so the
+              overview tells a workflow story instead of a risk-average story.
             </p>
           </div>
           <ResponsiveContainer width="100%" height={320}>
-            <AreaChart data={flow}>
+            <AreaChart data={weeklyActivity}>
               <defs>
-                <linearGradient id="intakeFill" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="sessionsFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#3dd6d0" stopOpacity={0.55} />
                   <stop offset="95%" stopColor="#3dd6d0" stopOpacity={0.05} />
                 </linearGradient>
-                <linearGradient id="approvedFill" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="exportsFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#ffd166" stopOpacity={0.45} />
                   <stop offset="95%" stopColor="#ffd166" stopOpacity={0.08} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#233241" />
-              <XAxis
-                dataKey="period"
-                stroke="#7ea0b7"
-                tickFormatter={formatPeriod}
-              />
-              <YAxis stroke="#7ea0b7" />
+              <XAxis dataKey="period" stroke="#7ea0b7" />
+              <YAxis stroke="#7ea0b7" allowDecimals={false} />
               <Tooltip
-                labelFormatter={formatPeriod}
                 contentStyle={{
                   background: "#102330",
                   border: "1px solid #294457",
@@ -285,26 +643,26 @@ export default function OverviewView() {
               />
               <Area
                 type="monotone"
-                dataKey="intake"
+                dataKey="sessions"
                 stroke="#3dd6d0"
-                fill="url(#intakeFill)"
-                name="Session intake"
+                fill="url(#sessionsFill)"
+                name="Sessions"
                 strokeWidth={2}
               />
               <Area
                 type="monotone"
-                dataKey="ready"
+                dataKey="findings"
                 stroke="#8cc9ff"
                 fill="transparent"
-                name="Ready for review"
+                name="Findings"
                 strokeWidth={2}
               />
               <Area
                 type="monotone"
-                dataKey="approved"
+                dataKey="exports"
                 stroke="#ffd166"
-                fill="url(#approvedFill)"
-                name="Approved for export"
+                fill="url(#exportsFill)"
+                name="Approved exports"
                 strokeWidth={2}
               />
             </AreaChart>
@@ -315,9 +673,12 @@ export default function OverviewView() {
           <div className="panel-header">
             <div>
               <span className="overview-eyebrow">Queue</span>
-              <h3>Where reviewers are spending time</h3>
+              <h3>Where the review backlog is collecting</h3>
             </div>
-            <p>The shell prioritizes aging work, evidence confirmation, and export approval.</p>
+            <p>
+              These lanes come directly from finding and export statuses instead
+              of from inferred risk buckets.
+            </p>
           </div>
           <div className="queue-lanes">
             {queueLanes.map((lane) => (
@@ -337,11 +698,11 @@ export default function OverviewView() {
         <div className="panel-header">
           <div>
             <span className="overview-eyebrow">Focus areas</span>
-            <h3>Findings worth a second look</h3>
+            <h3>Findings that deserve a second look</h3>
           </div>
           <p>
-            These tiles are intentionally review-oriented: each one assumes
-            evidence clips, a human reviewer, and a reversible decision.
+            Tiles are grouped from the current finding set, with status and
+            detection source kept visible.
           </p>
         </div>
         <div className="focus-grid">
@@ -365,35 +726,42 @@ export default function OverviewView() {
             <h3>Approved export lane</h3>
           </div>
           <p>
-            Export actions stay explicitly downstream of review approval. The
-            shell keeps that separation visible even before the server flow lands.
+            Export packets remain explicitly downstream of review. Draft,
+            approved, and sent states stay visible as separate steps.
           </p>
         </div>
         <div className="export-table">
           <div className="export-row export-head">
-            <span>Batch</span>
+            <span>Approved</span>
+            <span>Clinician</span>
             <span>Destination</span>
             <span>Status</span>
-            <span>Notes</span>
+            <span>Summary</span>
           </div>
-          <div className="export-row">
-            <span>Outpatient follow-up</span>
-            <span>Claims review queue</span>
-            <span className="status-pill ready">Ready to send</span>
-            <span>14 reviewed sessions with approved redactions.</span>
-          </div>
-          <div className="export-row">
-            <span>Escalation subset</span>
-            <span>Internal quality review</span>
-            <span className="status-pill review">Needs final approval</span>
-            <span>3 sessions waiting for a supervisor sign-off.</span>
-          </div>
-          <div className="export-row">
-            <span>Weekly audit sample</span>
-            <span>Compliance archive</span>
-            <span className="status-pill sent">Sent</span>
-            <span>Delivery completed after reviewer approval and redaction check.</span>
-          </div>
+          {exportRows.map((approvedExport) => (
+            <div key={approvedExport.id} className="export-row">
+              <span>
+                {new Date(approvedExport.approvedAt).toLocaleDateString(
+                  "en-US",
+                  {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }
+                )}
+              </span>
+              <span>
+                {sessionsById.get(approvedExport.sessionId)?.clinicianId ??
+                  "unassigned"}
+              </span>
+              <span>{approvedExport.destination ?? "manual-review-hold"}</span>
+              <span className={`status-pill ${approvedExport.status}`}>
+                {approvedExport.status.replace(/_/g, " ")}
+              </span>
+              <span>{approvedExport.summary}</span>
+            </div>
+          ))}
         </div>
       </section>
     </div>
