@@ -167,7 +167,7 @@ export default function SessionReviewView({
       if (result.receipt.status === "failed") {
         setActionErrorMessage(
           result.syncError
-            ? `Assist failed locally, and ops sync also failed: ${result.syncError}`
+            ? `Remote assist failed locally, and ops sync also failed: ${result.syncError}`
             : "Remote assist request failed. The failure was recorded locally."
         );
         return;
@@ -206,16 +206,16 @@ export default function SessionReviewView({
       });
 
       if (!nextBundle) {
-        throw new Error("The model-assist receipt could not be updated.");
+        throw new Error("The Remote assist record could not be updated.");
       }
 
       setBundle(nextBundle);
-      setActionInfoMessage("Assist recommendation dismissed locally.");
+      setActionInfoMessage("Remote assist recommendation dismissed locally.");
     } catch (error) {
       setActionErrorMessage(
         error instanceof Error
           ? error.message
-          : "Unable to update the assist recommendation."
+          : "Unable to update the Remote assist recommendation."
       );
     }
   }
@@ -594,7 +594,9 @@ export default function SessionReviewView({
                             finding.evidenceSpans.length === 0
                           }
                         >
-                          {isRequestingAssist ? "Requesting..." : "Second opinion"}
+                          {isRequestingAssist
+                            ? "Requesting..."
+                            : "Request Remote assist"}
                         </button>
                       </div>
                     </article>
@@ -687,7 +689,7 @@ export default function SessionReviewView({
                     <strong>
                       {latestAssistReceipt
                         ? formatAssistStatus(latestAssistReceipt)
-                        : "No remote assist request yet"}
+                        : "No Remote assist request yet"}
                     </strong>
                   </div>
                   {latestAssistReceipt ? (
@@ -705,7 +707,7 @@ export default function SessionReviewView({
                         <p>
                           {latestAssistReceipt.assessment?.rationale ??
                             latestAssistReceipt.errorCode ??
-                            "The assist gateway did not return an assessment."}
+                            "The Remote assist gateway did not return an assessment."}
                         </p>
                         {latestAssistReceipt.assessment?.limitations.length ? (
                           <p className="session-review__evidence-label">
@@ -720,14 +722,14 @@ export default function SessionReviewView({
                               void dismissAssistReceipt(latestAssistReceipt.id)
                             }
                           >
-                            Dismiss assist result
+                            Dismiss Remote assist result
                           </button>
                         )}
                       </article>
                     </div>
                   ) : (
                     <p>
-                      Request remote assist to log a minimized, non-raw result
+                      Request Remote assist to log a minimized, non-raw result
                       without moving transcript or findings into the cloud.
                     </p>
                   )}
@@ -1004,12 +1006,12 @@ function formatAssistDisposition(
 
 function formatAssistStatus(receipt: ModelAssistReceipt): string {
   if (receipt.status === "failed") {
-    return "Assist failed";
+    return "Remote assist failed";
   }
 
   const disposition = receipt.assessment?.disposition;
   if (!disposition) {
-    return "Assist completed";
+    return "Remote assist completed";
   }
 
   return formatAssistDisposition(disposition);

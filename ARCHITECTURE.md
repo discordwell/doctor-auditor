@@ -14,7 +14,7 @@ These decisions are intentional and should remain explicit:
 - insurer scoring is a separate downstream layer
 - the cloud server ingests approved exports and insurer-safe derived features, not raw session bundles
 - raw audio, full transcripts, draft findings, and reviewer notes stay local
-- remote assist is an optional minimized workflow, not a raw-PHI analysis channel
+- Remote assist is an optional minimized workflow, not a raw-PHI analysis channel
 
 ## System components
 
@@ -58,7 +58,7 @@ These decisions are intentional and should remain explicit:
 │  │               Review Dashboard                         │  │
 │  │                                                        │  │
 │  │  Approved exports                                      │  │
-│  │  Assist and delivery ops                               │  │
+│  │  Remote assist and delivery ops                        │  │
 │  │  Redaction and delivery follow-up                      │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
@@ -78,7 +78,7 @@ These decisions are intentional and should remain explicit:
 
 - approved export envelopes
 - approved, redacted evidence excerpts
-- ops events for approved export and remote-assist workflows
+- ops events for approved export and Remote assist workflows
 - insurer-safe derived features that are intentionally generated from approved outputs
 
 ### What must not leave the workstation
@@ -119,7 +119,7 @@ It owns:
 - approved export ingestion
 - ops event ingestion
 - demo seed
-- remote assist gateway
+- Remote assist gateway
 
 It does not own:
 

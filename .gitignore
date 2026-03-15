@@ -54,6 +54,7 @@ htmlcov/
 
 # Electron
 desktop/release/
+desktop/electron/*.js
 
 # Docker
 docker-compose.override.yml

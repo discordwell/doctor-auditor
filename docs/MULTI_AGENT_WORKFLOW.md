@@ -72,7 +72,7 @@ Responsibilities:
 - auth
 - approved export ingestion
 - ops events
-- assist gateway
+- Remote assist gateway
 - demo seed behavior
 - persistence and tests
 

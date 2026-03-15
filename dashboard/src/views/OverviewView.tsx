@@ -100,8 +100,8 @@ export default function OverviewView() {
           <h2>Approved exports and safe ops only</h2>
           <p className="overview-intro">
             This console stays focused on approved export envelopes plus non-PHI
-            operational signals from assist and delivery flows. Desktop review
-            state never becomes a central cloud work queue.
+            operational signals from Remote assist and delivery flows. Desktop
+            review state never becomes a central cloud work queue.
           </p>
         </div>
         <div className="source-card">
@@ -116,7 +116,7 @@ export default function OverviewView() {
               <dd>{compactNumber.format(overview.totalExports)}</dd>
             </div>
             <div>
-              <dt>Assist usage</dt>
+              <dt>Remote assist usage</dt>
               <dd>{overview.assistUsageCount}</dd>
             </div>
           </dl>
@@ -135,14 +135,14 @@ export default function OverviewView() {
           <p>Exports already delivered after local review and approval.</p>
         </div>
         <div className="stat-card kpi-card">
-          <div className="stat-label">Assist overrides</div>
+          <div className="stat-label">Remote assist overrides</div>
           <div className="stat-value accent">{overview.assistOverrideCount}</div>
-          <p>Human reviewers explicitly overrode a remote-assist result.</p>
+          <p>Human reviewers explicitly overrode a Remote assist result.</p>
         </div>
         <div className="stat-card kpi-card">
           <div className="stat-label">Redaction blocks</div>
           <div className="stat-value">{overview.redactionBlockCount}</div>
-          <p>Local privacy checks blocked assist or export progress.</p>
+          <p>Local privacy checks blocked Remote assist or export progress.</p>
         </div>
       </section>
 
@@ -154,8 +154,8 @@ export default function OverviewView() {
               <h3>Export and ops signals by week</h3>
             </div>
             <p>
-              Exports, assist events, and privacy blocks are tracked separately to
-              preserve the local/cloud boundary.
+              Exports, Remote assist events, and privacy blocks are tracked
+              separately to preserve the local/cloud boundary.
             </p>
           </div>
           <ResponsiveContainer width="100%" height={320}>
@@ -194,7 +194,7 @@ export default function OverviewView() {
                 dataKey="assists"
                 stroke="#3dd6d0"
                 fill="url(#assistsFill)"
-                name="Assist events"
+                name="Remote assist events"
                 strokeWidth={2}
               />
               <Area

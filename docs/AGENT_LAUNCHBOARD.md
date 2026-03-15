@@ -376,7 +376,7 @@ Acceptance:
 - dead score-centric CSS or status names are deleted or renamed
 - demo-auth/bootstrap failures are visible in the UI
 - dashboard continues to import only `@doctor-auditor/shared/cloud`
-- views stay focused on approved exports, assist ops, redaction blocks, and delivery follow-up
+- views stay focused on approved exports, Remote assist ops, redaction blocks, and delivery follow-up
 
 Prompt:
 

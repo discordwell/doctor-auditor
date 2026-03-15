@@ -26,7 +26,7 @@ These decisions are explicit and should stay explicit:
 - insurer scoring is a separate downstream layer
 - the cloud server ingests approved exports and insurer-safe derived features, not raw session bundles
 - raw audio, full transcripts, draft findings, and reviewer notes remain local
-- remote assist is optional and limited to minimized, non-raw context
+- Remote assist is optional and limited to minimized, non-raw context
 
 ## Near-term objectives
 

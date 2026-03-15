@@ -65,6 +65,22 @@ export function formatDateTime(value: string): string {
 }
 
 export function formatStatusLabel(value: string): string {
+  if (value === "assist_requested") {
+    return "Remote assist requested";
+  }
+
+  if (value === "assist_completed") {
+    return "Remote assist completed";
+  }
+
+  if (value === "assist_failed") {
+    return "Remote assist failed";
+  }
+
+  if (value === "assist_overridden") {
+    return "Remote assist overridden";
+  }
+
   return value.replace(/_/g, " ");
 }
 
@@ -276,32 +292,32 @@ export function buildOverviewModel(
         title: "Privacy blocks",
         count: redactionBlocks.length,
         detail:
-          "Redaction or minimization issues blocked export or assist work and require local review.",
+          "Redaction or minimization issues blocked export or Remote assist work and require local review.",
         tone: "attention",
       },
     ],
     focusItems: [
       {
-        title: "Assist requests",
+        title: "Remote assist requests",
         count: assistUsageEvents.length,
         detail:
-          "Reviewer-invoked remote assist calls are logged as safe ops receipts without raw PHI.",
+          "Reviewer-invoked Remote assist calls are logged as safe ops receipts without raw PHI.",
         owner: "Desktop reviewers",
         tone: assistUsageEvents.length > 0 ? "watch" : "stable",
       },
       {
-        title: "Assist overrides",
+        title: "Remote assist overrides",
         count: assistOverrides.length,
         detail:
-          "Human reviewers overruled a remote assist recommendation while keeping the local decision authoritative.",
+          "Human reviewers overruled a Remote assist recommendation while keeping the local decision authoritative.",
         owner: "Quality leads",
         tone: assistOverrides.length > 0 ? "watch" : "stable",
       },
       {
-        title: "Assist or delivery follow-up",
+        title: "Remote assist or delivery follow-up",
         count: assistFailures.length + stuckApprovedExports.length,
         detail:
-          "Failed assist calls and aging approved exports are the only centralized follow-up queue.",
+          "Failed Remote assist calls and aging approved exports are the only centralized follow-up queue.",
         owner: "Ops and compliance",
         tone:
           assistFailures.length + stuckApprovedExports.length > 0 ? "alert" : "stable",

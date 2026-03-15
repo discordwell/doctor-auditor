@@ -193,7 +193,7 @@ describe("opsDashboard helpers", () => {
   });
 
   it("normalizes labels and tones consistently", () => {
-    expect(formatStatusLabel("assist_requested")).toBe("assist requested");
+    expect(formatStatusLabel("assist_requested")).toBe("Remote assist requested");
     expect(getExportTone("approved")).toBe("attention");
     expect(getOpsTone("assist_completed")).toBe("active");
   });

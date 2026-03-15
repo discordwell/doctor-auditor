@@ -497,8 +497,8 @@ export default function RecordingView() {
               <span className="checkbox-copy">
                 <strong>Remote assist permitted</strong>
                 <span>
-                  Allows minimized finding metadata to be sent to the assist
-                  gateway from the review screen.
+                  Allows minimized finding metadata to be sent through the
+                  Remote assist gateway from the review screen.
                 </span>
               </span>
             </label>
@@ -587,7 +587,7 @@ export default function RecordingView() {
                 <span className="status-chip">
                   {recentSession.session.consent.remoteAssistAllowed
                     ? "Remote assist allowed"
-                    : "Assist local-only"}
+                    : "Remote assist disabled"}
                 </span>
               </div>
             </div>
