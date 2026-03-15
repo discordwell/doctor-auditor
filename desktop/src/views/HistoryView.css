@@ -59,6 +59,12 @@
   border: 1px solid rgba(96, 165, 250, 0.28);
 }
 
+.history-shell__button--danger {
+  background: rgba(239, 68, 68, 0.14);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+}
+
 .history-shell__summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -179,9 +185,18 @@
 .history-shell__alert {
   padding: 14px 16px;
   border-radius: 14px;
+}
+
+.history-shell__alert--warning {
   border: 1px solid rgba(245, 158, 11, 0.28);
   background: rgba(245, 158, 11, 0.08);
   color: #fcd34d;
+}
+
+.history-shell__alert--success {
+  border: 1px solid rgba(34, 197, 94, 0.24);
+  background: rgba(34, 197, 94, 0.08);
+  color: #bbf7d0;
 }
 
 .history-shell__results-copy {
@@ -367,6 +382,12 @@
   line-height: 1.5;
 }
 
+.history-shell__card-action-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .history-shell__state {
   background:
     linear-gradient(180deg, rgba(96, 165, 250, 0.06), rgba(15, 23, 42, 0.9)),
@@ -421,6 +442,10 @@
   .history-shell__card-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .history-shell__card-action-buttons {
+    width: 100%;
   }
 
   .history-shell__state-pill {

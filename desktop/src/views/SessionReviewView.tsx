@@ -43,23 +43,31 @@ export default function SessionReviewView({
 
   useEffect(() => {
     let isCancelled = false;
+    let requestSequence = 0;
 
-    async function loadSession(): Promise<void> {
+    async function loadSession(
+      mode: "initial" | "refresh" = "initial"
+    ): Promise<void> {
+      const requestId = requestSequence + 1;
+      requestSequence = requestId;
+
       if (!window.doctorAuditor) {
         setLoadState("error");
         setErrorMessage("Desktop session API unavailable.");
         return;
       }
 
-      setLoadState("loading");
-      setErrorMessage("");
-      setActionErrorMessage("");
-      setActionInfoMessage("");
+      if (mode === "initial") {
+        setLoadState("loading");
+        setErrorMessage("");
+        setActionErrorMessage("");
+        setActionInfoMessage("");
+      }
 
       try {
         const nextBundle = await window.doctorAuditor.session.get(sessionId);
 
-        if (isCancelled) {
+        if (isCancelled || requestId !== requestSequence) {
           return;
         }
 
@@ -72,23 +80,48 @@ export default function SessionReviewView({
         setBundle(nextBundle);
         setLoadState("ready");
       } catch (error) {
-        if (isCancelled) {
+        if (isCancelled || requestId !== requestSequence) {
           return;
         }
 
-        setLoadState("error");
-        setErrorMessage(
+        const message =
           error instanceof Error
             ? error.message
-            : "Unable to load the selected review session."
+            : "Unable to load the selected review session.";
+
+        if (mode === "initial") {
+          setLoadState("error");
+          setErrorMessage(message);
+          return;
+        }
+
+        setActionErrorMessage(
+          `Unable to refresh the latest session state: ${message}`
         );
       }
     }
 
     void loadSession();
 
+    if (!window.doctorAuditor) {
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    const unsubscribe = window.doctorAuditor.session.onSessionChanged(
+      (sessionSummary) => {
+        if (sessionSummary.session.id !== sessionId) {
+          return;
+        }
+
+        void loadSession("refresh");
+      }
+    );
+
     return () => {
       isCancelled = true;
+      unsubscribe();
     };
   }, [sessionId]);
 

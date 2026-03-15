@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import type {
   ModelAssistReceipt,
   ModelAssistRequest,
@@ -342,6 +343,171 @@ describe("LocalDatabase review artifacts", () => {
     db.close();
   });
 
+  it("deletes local sessions and clears persisted review artifacts", () => {
+    const { db, dbPath } = createDatabaseFixture();
+    const capturedAt = "2026-03-15T09:45:00Z";
+    const session = db.createImportedSession({
+      clinicianId: "clinician-delete",
+      recordedWithConsent: true,
+      exportAllowed: true,
+      remoteAssistAllowed: true,
+      policyVersion: "policy-v1",
+      audioPath: "/tmp/delete-session.wav",
+      capturedAt,
+      sourceFileName: "delete-session.wav",
+    });
+    const sessionId = session.session.id;
+
+    db.replaceTranscriptSegments(sessionId, [
+      {
+        id: "segment-delete-001",
+        sessionId,
+        speakerLabel: "patient",
+        text: "I missed the refill because I was testing the local archive.",
+        startOffsetMs: 0,
+        endOffsetMs: 2900,
+        source: "audio_import",
+      },
+    ]);
+
+    db.replaceFindings(sessionId, [
+      {
+        id: "finding-delete-001",
+        sessionId,
+        code: "archive-cleanup",
+        title: "Archive cleanup test finding",
+        summary: "The local delete flow should remove all persisted review data.",
+        status: "pending_review",
+        confidence: 0.74,
+        evidenceSpans: [
+          {
+            id: "evidence-delete-001",
+            transcriptSegmentId: "segment-delete-001",
+            excerpt: "I missed the refill because I was testing the local archive.",
+            startOffsetMs: 0,
+            endOffsetMs: 2900,
+          },
+        ],
+        detectedBy: "rules",
+        createdAt: capturedAt,
+        updatedAt: capturedAt,
+      },
+    ]);
+
+    const reviewedBundle = db.saveReviewDecision({
+      sessionId,
+      findingId: "finding-delete-001",
+      outcome: "accepted",
+      reviewedBy: "reviewer-delete",
+    });
+    const reviewDecisionId = reviewedBundle?.reviewDecisions[0]?.id;
+
+    db.saveApprovedExport({
+      id: "export-delete-001",
+      sessionId,
+      status: "approved",
+      summary: "Delete test export.",
+      findings: [
+        {
+          findingId: "finding-delete-001",
+          code: "archive-cleanup",
+          title: "Archive cleanup test finding",
+          summary: "The export exists only to verify delete cleanup.",
+          reviewDecisionId: reviewDecisionId ?? "missing-review-decision",
+          evidenceExcerpts: [
+            {
+              sourceEvidenceSpanId: "evidence-delete-001",
+              sourceTranscriptSegmentId: "segment-delete-001",
+              excerpt:
+                "I missed the refill because I was testing the local archive.",
+              startOffsetMs: 0,
+              endOffsetMs: 2900,
+            },
+          ],
+        },
+      ],
+      approvedBy: "quality-delete",
+      approvedAt: "2026-03-15T09:46:00Z",
+      destination: "delete-test",
+    });
+
+    const request: ModelAssistRequest = {
+      id: "assist-request-delete-001",
+      sessionId,
+      findingId: "finding-delete-001",
+      requestedBy: "reviewer-delete",
+      requestedAt: "2026-03-15T09:47:00Z",
+      policyVersion: "policy-v1",
+      policyMode: "minimized_no_raw_phi",
+      concern: {
+        findingCode: "archive-cleanup",
+        findingStatus: "accepted",
+        findingConfidence: 0.74,
+        evidenceSpanCount: 1,
+        speakerLabels: ["patient"],
+        captureMode: "audio_import",
+      },
+    };
+
+    db.recordModelAssistRequested(request);
+    db.saveModelAssistReceipt({
+      request,
+      receipt: {
+        id: "assist-receipt-delete-001",
+        requestId: request.id,
+        sessionId,
+        findingId: "finding-delete-001",
+        status: "completed",
+        policyMode: request.policyMode,
+        requestedAt: request.requestedAt,
+        completedAt: "2026-03-15T09:47:01Z",
+        latencyMs: 240,
+        reviewerAction: "not_applied",
+        assessment: {
+          disposition: "routine_review",
+          confidence: 0.7,
+          rationale: "This receipt exists only to exercise local delete cleanup.",
+          limitations: ["Synthetic test request."],
+          provider: "test-provider",
+          model: "test-model",
+          assessedAt: "2026-03-15T09:47:01Z",
+        },
+      } satisfies ModelAssistReceipt,
+    });
+
+    const deletedSession = db.deleteSession(sessionId);
+
+    expect(deletedSession).toEqual({
+      sessionId,
+      audioPath: "/tmp/delete-session.wav",
+    });
+    expect(db.getSession(sessionId)).toBeNull();
+    expect(db.getSessionSummary(sessionId)).toBeNull();
+    expect(db.getAllSessions()).toEqual([]);
+
+    db.close();
+
+    const rawDb = new Database(dbPath, { readonly: true });
+    const tableNames = [
+      "sessions",
+      "transcript_segments",
+      "findings",
+      "review_decisions",
+      "approved_exports",
+      "model_assist_receipts",
+      "audit_log",
+    ] as const;
+
+    for (const tableName of tableNames) {
+      const row = rawDb
+        .prepare(`SELECT COUNT(*) AS row_count FROM ${tableName}`)
+        .get() as { row_count: number };
+      expect(row.row_count).toBe(0);
+    }
+
+    rawDb.close();
+  });
+
   it("persists findings, review decisions, and approved exports locally", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-15T10:05:00Z"));
@@ -564,11 +730,23 @@ describe("LocalDatabase review artifacts", () => {
 });
 
 function createDatabase(seedDemoData = false): LocalDatabase {
+  return createDatabaseFixture(seedDemoData).db;
+}
+
+function createDatabaseFixture(seedDemoData = false): {
+  db: LocalDatabase;
+  dbPath: string;
+} {
   const directory = mkdtempSync(
     path.join(tmpdir(), "doctor-auditor-database-test-")
   );
   cleanupPaths.push(directory);
-  return new LocalDatabase(path.join(directory, "doctor-auditor.sqlite"), {
-    seedDemoData,
-  });
+  const dbPath = path.join(directory, "doctor-auditor.sqlite");
+
+  return {
+    db: new LocalDatabase(dbPath, {
+      seedDemoData,
+    }),
+    dbPath,
+  };
 }

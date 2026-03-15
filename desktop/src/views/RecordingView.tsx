@@ -424,31 +424,195 @@ export default function RecordingView() {
         : isRecording
           ? `Recording from the default microphone - ${formatDuration(duration)}`
           : "Start a new recording here. If you already have audio, load it in the next section.";
+  const trimmedClinicianId = clinicianId.trim();
+  const setupReady = trimmedClinicianId.length > 0 && recordedWithConsent;
+  const setupSummaryHeading = setupReady
+    ? "Session setup complete"
+    : "Complete the required setup";
+  const setupSummaryMessage = setupReady
+    ? "Recording and import are both ready. Choose the capture method that matches this encounter."
+    : "Add a clinician label and confirm recorded consent before starting a new session.";
+  const recordActionLabel =
+    captureTransition === "starting"
+      ? "Starting..."
+      : captureTransition === "stopping"
+        ? "Saving..."
+        : isRecording
+          ? "Stop recording"
+          : "Start recording";
+  const transportDisplay =
+    captureTransition === "starting"
+      ? "ARMING"
+      : captureTransition === "stopping"
+        ? "SAVING"
+        : isRecording
+          ? formatDuration(duration)
+          : "00:00";
+  const setupItems = [
+    {
+      label: "Clinician label",
+      status: trimmedClinicianId ? "Ready" : "Required",
+      detail: trimmedClinicianId || "Name the clinician before capture starts.",
+      tone: trimmedClinicianId ? "ready" : "pending",
+    },
+    {
+      label: "Recorded consent",
+      status: recordedWithConsent ? "Confirmed" : "Required",
+      detail: recordedWithConsent
+        ? "The session can be stored locally."
+        : "This must be checked before recording or import is enabled.",
+      tone: recordedWithConsent ? "ready" : "pending",
+    },
+    {
+      label: "Export permission",
+      status: exportAllowed ? "Allowed" : "Local only",
+      detail: exportAllowed
+        ? "The review can be approved for export later."
+        : "The encounter stays local unless this is enabled.",
+      tone: exportAllowed ? "ready" : "neutral",
+    },
+    {
+      label: "Remote assist",
+      status: remoteAssistAllowed ? "Allowed" : "Off",
+      detail: remoteAssistAllowed
+        ? "Minimized finding metadata can be sent from review."
+        : "Remote assist requests stay disabled for this session.",
+      tone: remoteAssistAllowed ? "ready" : "neutral",
+    },
+  ] as const;
 
   return (
     <div className="recording-view">
-      <div className="recording-hero">
-        <div className="recording-status recording-status-primary">
-          <span className="section-kicker">Live recording</span>
-          <h2>Start a new recording</h2>
+      <header className="capture-shell">
+        <div className="capture-shell__intro">
+          <span className="section-kicker">Capture workspace</span>
+          <h2>Start a new encounter session</h2>
           <p>
-            Record from the default microphone. If you already have session
-            audio, load it in the next section.
+            Set the session details once, then either record live from the
+            default microphone or import an existing audio file. New sessions
+            update here as transcription lands.
           </p>
         </div>
 
         <div
-          className={`capture-status-card ${
-            liveCaptureUnavailable ? "error" : ""
+          className={`capture-shell__readiness ${
+            setupReady ? "ready" : "pending"
           }`}
         >
-          <div className="capture-status-header">
+          <span className="capture-shell__readiness-label">
+            {setupSummaryHeading}
+          </span>
+          <p>{setupSummaryMessage}</p>
+        </div>
+      </header>
+
+      <section className="session-setup">
+        <div className="session-setup__header">
+          <div>
+            <span className="section-kicker">Session setup</span>
+            <h3>Prepare the encounter</h3>
+            <p>
+              These settings apply to both live recording and imported audio.
+            </p>
+          </div>
+        </div>
+
+        <div className="session-setup__grid">
+          <div className="session-setup__form">
+            <div className="input-grid">
+              <label className="field-label" htmlFor="clinician-label">
+                Clinician label
+              </label>
+              <input
+                id="clinician-label"
+                className="text-input"
+                value={clinicianId}
+                onChange={(event) => setClinicianId(event.target.value)}
+                placeholder="Dr. Morales"
+                disabled={inputsLocked}
+              />
+              <p className="field-help">
+                This label is attached to the local review session and shown in
+                history.
+              </p>
+            </div>
+
+            <div className="checkbox-group">
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={recordedWithConsent}
+                  onChange={(event) =>
+                    setRecordedWithConsent(event.target.checked)
+                  }
+                  disabled={inputsLocked}
+                />
+                <span className="checkbox-copy">
+                  <strong>Recorded with consent</strong>
+                  <span>
+                    Required before a local review session can be created.
+                  </span>
+                </span>
+              </label>
+
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={exportAllowed}
+                  onChange={(event) => setExportAllowed(event.target.checked)}
+                  disabled={inputsLocked}
+                />
+                <span className="checkbox-copy">
+                  <strong>Export permitted</strong>
+                  <span>
+                    Marks the session as eligible for later approved export.
+                  </span>
+                </span>
+              </label>
+
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={remoteAssistAllowed}
+                  onChange={(event) =>
+                    setRemoteAssistAllowed(event.target.checked)
+                  }
+                  disabled={inputsLocked}
+                />
+                <span className="checkbox-copy">
+                  <strong>Remote assist permitted</strong>
+                  <span>
+                    Allows minimized finding metadata to be sent from the review
+                    screen.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div className="setup-summary">
+            {setupItems.map((item) => (
+              <div
+                key={item.label}
+                className={`setup-item setup-item--${item.tone}`}
+              >
+                <div>
+                  <p className="setup-item__label">{item.label}</p>
+                  <p className="setup-item__detail">{item.detail}</p>
+                </div>
+                <span className="setup-item__status">{item.status}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="capture-grid">
+        <article className="capture-card capture-card--primary">
+          <div className="capture-card__header">
             <div>
-              <h3>
-                {liveCaptureAvailable
-                  ? "Live recording ready"
-                  : "Live recording unavailable"}
-              </h3>
+              <span className="section-kicker">Live capture</span>
+              <h3>{liveCaptureHeading}</h3>
               <p>{captureStatusSummary}</p>
             </div>
             <button
@@ -459,153 +623,81 @@ export default function RecordingView() {
                 isLoadingLiveCaptureStatus || captureTransition !== "idle"
               }
             >
-              {isLoadingLiveCaptureStatus ? "Checking..." : "Refresh status"}
+              {isLoadingLiveCaptureStatus ? "Checking..." : "Refresh"}
             </button>
           </div>
 
-          {liveCaptureStatus && (
-            <>
-              <div className="capture-status-meta">
-                <span className="status-chip">
-                  {liveCaptureStatus.recorder
-                    ? `Recorder ${liveCaptureStatus.recorder}`
-                    : "Recorder missing"}
-                </span>
-                <span className="status-chip">
-                  {formatMicrophoneAccess(liveCaptureStatus.microphoneAccess)}
-                </span>
-                <span className="status-chip">Default mic</span>
-              </div>
-
-              {liveCaptureStatus.issues.length > 0 && (
-                <ul className="capture-status-list capture-status-list--issues">
-                  {liveCaptureStatus.issues.map((issue) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              )}
-
-              {liveCaptureStatus.notes.length > 0 && (
-                <ul className="capture-status-list">
-                  {liveCaptureStatus.notes.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="recording-status">
-        <h2>{liveCaptureHeading}</h2>
-        <p>{liveCaptureDescription}</p>
-        <div
-          className={`capture-notice ${
-            liveCaptureNotice.tone === "active"
-              ? "active"
-              : liveCaptureNotice.tone
-          }`}
-        >
-          {liveCaptureNotice.message}
-        </div>
-      </div>
-
-      <button
-        className={`record-button ${isRecording ? "recording" : ""}`}
-        onClick={toggleRecording}
-        disabled={
-          isImporting ||
-          captureTransition !== "idle" ||
-          (!isRecording && liveCaptureUnavailable)
-        }
-      >
-        <div className="record-button-inner" />
-      </button>
-
-      <div className="waveform">
-        {audioLevels.map((level, index) => (
-          <div
-            key={index}
-            className="waveform-bar"
-            style={{ height: `${Math.max(4, level * 70)}px` }}
-          />
-        ))}
-      </div>
-
-      <div className="recording-hero">
-        <div className="recording-status recording-status-primary">
-          <span className="section-kicker">Load session audio</span>
-          <h2>Use an existing recording</h2>
-          <p>
-            Choose a local audio file to create a review session and start
-            transcription.
-          </p>
-        </div>
-
-        <div className="intake-panel">
-          <div className="input-grid">
-            <label className="field-label" htmlFor="clinician-label">
-              Clinician label
-            </label>
-            <input
-              id="clinician-label"
-              className="text-input"
-              value={clinicianId}
-              onChange={(event) => setClinicianId(event.target.value)}
-              placeholder="Dr. Morales"
-              disabled={inputsLocked}
-            />
+          <div className="capture-card__meta">
+            <span className="status-chip">
+              {liveCaptureStatus?.recorder
+                ? `Recorder ${liveCaptureStatus.recorder}`
+                : "Recorder missing"}
+            </span>
+            <span className="status-chip">
+              {liveCaptureStatus
+                ? formatMicrophoneAccess(liveCaptureStatus.microphoneAccess)
+                : "Checking microphone"}
+            </span>
+            <span className="status-chip">Default microphone</span>
           </div>
 
-          <div className="checkbox-group">
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={recordedWithConsent}
-                onChange={(event) =>
-                  setRecordedWithConsent(event.target.checked)
-                }
-                disabled={inputsLocked}
-              />
-              <span className="checkbox-copy">
-                <strong>Recorded with consent</strong>
-                <span>Required before a local review session can be created.</span>
-              </span>
-            </label>
+          <div className="transport-panel">
+            <div className="transport-panel__display">{transportDisplay}</div>
+            <p className="transport-panel__copy">{liveCaptureDescription}</p>
+            <button
+              type="button"
+              className={`transport-button ${isRecording ? "recording" : ""}`}
+              onClick={toggleRecording}
+              disabled={
+                isImporting ||
+                captureTransition !== "idle" ||
+                (!isRecording && liveCaptureUnavailable)
+              }
+            >
+              <span className="transport-button__icon" aria-hidden="true" />
+              <span>{recordActionLabel}</span>
+            </button>
+          </div>
 
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={exportAllowed}
-                onChange={(event) => setExportAllowed(event.target.checked)}
-                disabled={inputsLocked}
+          <div className="waveform" aria-hidden="true">
+            {audioLevels.map((level, index) => (
+              <div
+                key={index}
+                className="waveform-bar"
+                style={{ height: `${Math.max(6, level * 78)}px` }}
               />
-              <span className="checkbox-copy">
-                <strong>Export permitted</strong>
-                <span>
-                  Marks the session as eligible for later approved export.
-                </span>
-              </span>
-            </label>
+            ))}
+          </div>
 
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={remoteAssistAllowed}
-                onChange={(event) =>
-                  setRemoteAssistAllowed(event.target.checked)
-                }
-                disabled={inputsLocked}
-              />
-              <span className="checkbox-copy">
-                <strong>Remote assist permitted</strong>
-                <span>
-                  Allows minimized finding metadata to be sent through the
-                  Remote assist gateway from the review screen.
-                </span>
-              </span>
-            </label>
+          <div
+            className={`capture-notice ${
+              liveCaptureNotice.tone === "active"
+                ? "active"
+                : liveCaptureNotice.tone
+            }`}
+            role="status"
+          >
+            {liveCaptureNotice.message}
+          </div>
+
+          {liveCaptureStatus?.issues.length ? (
+            <ul className="capture-inline-list capture-inline-list--issues">
+              {liveCaptureStatus.issues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          ) : null}
+        </article>
+
+        <article className="capture-card">
+          <div className="capture-card__header">
+            <div>
+              <span className="section-kicker">Audio import</span>
+              <h3>Use an existing file</h3>
+              <p>
+                Import local audio when the encounter was recorded elsewhere.
+              </p>
+            </div>
           </div>
 
           <div className="intake-actions">
@@ -614,11 +706,11 @@ export default function RecordingView() {
               onClick={importAudio}
               disabled={!canImport}
             >
-              {isImporting ? "Loading audio..." : "Load Audio File"}
+              {isImporting ? "Loading audio..." : "Choose audio file"}
             </button>
             <p className="intake-helper">
-              Supports common local audio formats. The file is copied into app
-              storage so the session stays available locally.
+              Supports common audio formats. The file is copied into app storage
+              so the review session remains available locally.
             </p>
           </div>
 
@@ -633,12 +725,12 @@ export default function RecordingView() {
           >
             <div className="import-status-header">
               <div>
-                <h3>Load status</h3>
+                <h3>Import status</h3>
                 <p>{importState.message}</p>
               </div>
-              {importState.fileName && (
+              {importState.fileName ? (
                 <span className="status-chip">{importState.fileName}</span>
-              )}
+              ) : null}
             </div>
 
             <div className="import-step-list">
@@ -660,44 +752,44 @@ export default function RecordingView() {
               })}
             </div>
           </div>
+        </article>
+      </section>
 
-          {recentSession && (
-            <div className="import-result-card">
-              <div>
-                <span className="section-kicker">Latest review session</span>
-                <h3>{formatClinicianLabel(recentSession.session.clinicianId)}</h3>
-                <p>
-                  {formatCaptureMode(recentSession.session.captureMode)} /
-                  Transcript {formatTranscriptStatus(
-                    recentSession.session.transcriptStatus
-                  ).toLowerCase()} /
-                  Review {formatReviewStatus(
-                    recentSession.session.reviewStatus
-                  ).toLowerCase()}.
-                </p>
-              </div>
-              <div className="import-result-meta">
-                <span className="status-chip">
-                  {getFileName(recentSession.audioPath)}
-                </span>
-                <span className="status-chip">
-                  {recentSession.transcriptSegmentCount} segments
-                </span>
-                <span className="status-chip">
-                  {recentSession.session.consent.exportAllowed
-                    ? "Export allowed"
-                    : "Local review only"}
-                </span>
-                <span className="status-chip">
-                  {recentSession.session.consent.remoteAssistAllowed
-                    ? "Remote assist allowed"
-                    : "Remote assist disabled"}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      {recentSession ? (
+        <section className="latest-session-card">
+          <div className="latest-session-card__summary">
+            <span className="section-kicker">Latest review session</span>
+            <h3>{formatClinicianLabel(recentSession.session.clinicianId)}</h3>
+            <p>
+              {formatCaptureMode(recentSession.session.captureMode)} /
+              Transcript{" "}
+              {formatTranscriptStatus(
+                recentSession.session.transcriptStatus
+              ).toLowerCase()}{" "}
+              / Review{" "}
+              {formatReviewStatus(
+                recentSession.session.reviewStatus
+              ).toLowerCase()}.
+            </p>
+          </div>
+          <div className="latest-session-card__meta">
+            <span className="status-chip">{getFileName(recentSession.audioPath)}</span>
+            <span className="status-chip">
+              {recentSession.transcriptSegmentCount} segments
+            </span>
+            <span className="status-chip">
+              {recentSession.session.consent.exportAllowed
+                ? "Export allowed"
+                : "Local review only"}
+            </span>
+            <span className="status-chip">
+              {recentSession.session.consent.remoteAssistAllowed
+                ? "Remote assist allowed"
+                : "Remote assist disabled"}
+            </span>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
   session: {
     getAll: () => ipcRenderer.invoke("session:get-all"),
     get: (sessionId: string) => ipcRenderer.invoke("session:get", sessionId),
+    delete: (sessionId: string) => ipcRenderer.invoke("session:delete", sessionId),
     saveReviewDecision: (request: PersistReviewDecisionRequest) =>
       ipcRenderer.invoke("session:save-review-decision", request),
     requestSeriousnessAssist: (request: RequestSeriousnessAssistRequest) =>

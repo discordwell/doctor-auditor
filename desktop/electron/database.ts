@@ -30,6 +30,11 @@ interface LocalDatabaseOptions {
   seedDemoData?: boolean;
 }
 
+interface DeletedSessionRecord {
+  sessionId: string;
+  audioPath?: string;
+}
+
 export class LocalDatabase {
   private db: Database.Database;
 
@@ -627,6 +632,33 @@ export class LocalDatabase {
       audioPath: normalizeString(row.audio_path),
       transcriptSegmentCount: normalizeNumber(row.transcript_segment_count) ?? 0,
     }));
+  }
+
+  deleteSession(sessionId: string): DeletedSessionRecord | null {
+    const sessionSummary = this.getSessionSummary(sessionId);
+    if (!sessionSummary) {
+      return null;
+    }
+
+    const deleteSessionTransaction = this.db.transaction(
+      (targetSessionId: string) => {
+        this.clearDerivedReviewArtifacts(targetSessionId);
+        this.db
+          .prepare("DELETE FROM transcript_segments WHERE session_id = ?")
+          .run(targetSessionId);
+        this.db
+          .prepare("DELETE FROM audit_log WHERE session_id = ?")
+          .run(targetSessionId);
+        this.db.prepare("DELETE FROM sessions WHERE id = ?").run(targetSessionId);
+      }
+    );
+
+    deleteSessionTransaction(sessionId);
+
+    return {
+      sessionId,
+      audioPath: sessionSummary.audioPath,
+    };
   }
 
   close(): void {

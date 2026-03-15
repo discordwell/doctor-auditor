@@ -113,6 +113,9 @@ async function initializeServices(): Promise<void> {
       if (!db) {
         return;
       }
+      if (!hasPersistedSession(job.sessionId)) {
+        return;
+      }
 
       db.replaceTranscriptSegments(job.sessionId, segments);
 
@@ -132,6 +135,9 @@ async function initializeServices(): Promise<void> {
       if (!db) {
         return;
       }
+      if (!hasPersistedSession(job.sessionId)) {
+        return;
+      }
 
       db.replaceFindings(job.sessionId, findings);
       const sessionSummary = db.getSessionSummary(job.sessionId);
@@ -143,10 +149,14 @@ async function initializeServices(): Promise<void> {
   reviewRuntime.on(
     "analysis-failed",
     ({ error, job }: ReviewRuntimeAnalysisFailed) => {
-      console.error("Transcript analysis pipeline failed:", error);
       if (!db) {
         return;
       }
+      if (!hasPersistedSession(job.sessionId)) {
+        return;
+      }
+
+      console.error("Transcript analysis pipeline failed:", error);
 
       const sessionSummary = db.updateSession(job.sessionId, {
         reviewStatus: "not_started",
@@ -159,10 +169,14 @@ async function initializeServices(): Promise<void> {
   reviewRuntime.on(
     "transcription-failed",
     ({ error, job }: ReviewRuntimeTranscriptionFailed) => {
-      console.error("Transcription pipeline failed:", error);
       if (!db) {
         return;
       }
+      if (!hasPersistedSession(job.sessionId)) {
+        return;
+      }
+
+      console.error("Transcription pipeline failed:", error);
 
       const failedSummary = db.updateSession(job.sessionId, {
         transcriptStatus: "failed",
@@ -290,6 +304,14 @@ function getSessionBundleOrThrow(sessionId: string): DesktopSessionBundle {
   }
 
   return bundle;
+}
+
+function hasPersistedSession(sessionId: string): boolean {
+  if (!db) {
+    return false;
+  }
+
+  return db.getSessionSummary(sessionId) !== null;
 }
 
 function getFindingOrThrow(
@@ -654,6 +676,26 @@ function registerIpcHandlers(): void {
   ipcMain.handle("session:get", async (_event, sessionId: string) => {
     if (!db) throw new Error("Database not initialized");
     return db.getSession(sessionId);
+  });
+
+  ipcMain.handle("session:delete", async (_event, sessionId: string) => {
+    if (!db) throw new Error("Database not initialized");
+    if (activeRecordingSessionId === sessionId) {
+      throw new Error("Stop the active recording before deleting this session.");
+    }
+
+    const deletedSession = db.deleteSession(sessionId);
+    if (!deletedSession) {
+      throw new Error("The selected review session no longer exists.");
+    }
+
+    if (deletedSession.audioPath) {
+      try {
+        await fs.rm(deletedSession.audioPath, { force: true });
+      } catch (error) {
+        console.warn("Unable to remove deleted session audio:", error);
+      }
+    }
   });
 
   ipcMain.handle(

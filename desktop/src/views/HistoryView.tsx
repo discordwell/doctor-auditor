@@ -12,6 +12,7 @@ type HistoryFilter = "all" | "review" | "transcript" | "attention";
 type LoadState = "loading" | "ready" | "error";
 type SessionTone = "active" | "ready" | "warning";
 type BadgeTone = "active" | "ready" | "warning" | "neutral";
+type ArchiveActionTone = "success" | "warning";
 
 interface SessionState {
   label: string;
@@ -48,9 +49,16 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
   const [sessions, setSessions] = useState<DesktopSessionSummary[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
+  const [archiveActionMessage, setArchiveActionMessage] = useState<{
+    tone: ArchiveActionTone;
+    text: string;
+  } | null>(null);
   const [selectedFilter, setSelectedFilter] = useState<HistoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<
+    string | null
+  >(null);
 
   const loadSessions = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -102,6 +110,60 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
       void loadSessions("refresh");
     });
   }, [loadSessions]);
+
+  const deleteSession = useCallback(async (sessionSummary: DesktopSessionSummary) => {
+    if (!window.doctorAuditor) {
+      setArchiveActionMessage({
+        tone: "warning",
+        text: "Desktop session API unavailable.",
+      });
+      return;
+    }
+
+    const { session } = sessionSummary;
+    const confirmation = window.confirm(
+      [
+        "Delete this local session?",
+        "",
+        `Clinician: ${formatClinicianLabel(session.clinicianId)}`,
+        `Session: ${session.id}`,
+        "",
+        "This removes the local audio, transcript data, review findings, and export artifacts from this device.",
+      ].join("\n")
+    );
+
+    if (!confirmation) {
+      return;
+    }
+
+    setArchiveActionMessage(null);
+    setPendingDeleteSessionId(session.id);
+
+    try {
+      await window.doctorAuditor.session.delete(session.id);
+      setSessions((currentSessions) =>
+        currentSessions.filter(
+          (currentSession) => currentSession.session.id !== session.id
+        )
+      );
+      setArchiveActionMessage({
+        tone: "success",
+        text: `Deleted local session ${session.id.slice(0, 8).toUpperCase()}.`,
+      });
+    } catch (error) {
+      setArchiveActionMessage({
+        tone: "warning",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete the selected local session.",
+      });
+    } finally {
+      setPendingDeleteSessionId((currentSessionId) =>
+        currentSessionId === session.id ? null : currentSessionId
+      );
+    }
+  }, []);
 
   const filteredSessions = sessions.filter((session) => {
     return (
@@ -256,9 +318,17 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
             </label>
           </section>
 
-          {errorMessage && (
-            <div className="history-shell__alert" role="status">
-              Latest refresh failed: {errorMessage}
+          {(errorMessage || archiveActionMessage) && (
+            <div
+              className={`history-shell__alert ${
+                archiveActionMessage?.tone === "success"
+                  ? "history-shell__alert--success"
+                  : "history-shell__alert--warning"
+              }`}
+              role="status"
+            >
+              {archiveActionMessage?.text ??
+                `Latest refresh failed: ${errorMessage}`}
             </div>
           )}
 
@@ -296,6 +366,7 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
               {filteredSessions.map((sessionSummary) => {
                 const sessionState = getSessionState(sessionSummary);
                 const { session } = sessionSummary;
+                const isDeleting = pendingDeleteSessionId === session.id;
 
                 return (
                   <article key={session.id} className="history-shell__card">
@@ -414,13 +485,24 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
                             : "Open the session to inspect current status and any persisted review data."}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        className="history-shell__button"
-                        onClick={() => onOpenSession(session.id)}
-                      >
-                        Open review
-                      </button>
+                      <div className="history-shell__card-action-buttons">
+                        <button
+                          type="button"
+                          className="history-shell__button history-shell__button--secondary"
+                          onClick={() => onOpenSession(session.id)}
+                          disabled={isDeleting}
+                        >
+                          Open review
+                        </button>
+                        <button
+                          type="button"
+                          className="history-shell__button history-shell__button--danger"
+                          onClick={() => void deleteSession(sessionSummary)}
+                          disabled={isDeleting}
+                        >
+                          {isDeleting ? "Deleting..." : "Delete session"}
+                        </button>
+                      </div>
                     </div>
                   </article>
                 );

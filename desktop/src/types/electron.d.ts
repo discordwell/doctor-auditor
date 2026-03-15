@@ -141,6 +141,7 @@ export interface DoctorAuditorAPI {
   session: {
     getAll: () => Promise<DesktopSessionSummary[]>;
     get: (sessionId: string) => Promise<DesktopSessionBundle | null>;
+    delete: (sessionId: string) => Promise<void>;
     saveReviewDecision: (
       request: PersistReviewDecisionRequest
     ) => Promise<DesktopSessionBundle | null>;
