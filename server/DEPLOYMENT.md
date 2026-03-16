@@ -66,3 +66,25 @@ The root `docker-compose.yml` and `dashboard/nginx.conf` are local container/dev
 - FastAPI at `/api`
 - PostgreSQL private
 - TLS at the edge
+
+## Production checkout
+
+Production now expects `/opt/doctor-auditor-api` to be a git checkout of this repo.
+
+- keep the production compose file in `ops/ovh2/compose.yml`
+- keep the production `.env` untracked in the repo root on the host
+- let Caddy serve `dashboard/dist` and proxy `/api` to the compose-managed server port
+
+The one-time host conversion is:
+
+```bash
+./scripts/bootstrap-docaudit-prod-git.sh
+```
+
+The normal deploy path after that is:
+
+```bash
+./scripts/deploy-docaudit-prod.sh
+```
+
+That deploy script performs a remote `git pull`, installs workspace dependencies, rebuilds the dashboard, and rebuilds the FastAPI container with `ops/ovh2/compose.yml`.

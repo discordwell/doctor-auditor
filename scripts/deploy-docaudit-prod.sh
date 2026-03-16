@@ -3,42 +3,34 @@ set -euo pipefail
 
 HOST_ALIAS="${HOST_ALIAS:-ovh2}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/doctor-auditor-api}"
+BRANCH="${BRANCH:-main}"
+PUBLIC_URL="${PUBLIC_URL:-https://docaudit.discordwell.com}"
 
-echo "Building dashboard bundle"
-npm run build --workspace=dashboard
+echo "Deploying ${BRANCH} to ${HOST_ALIAS}:${REMOTE_ROOT}"
+ssh -o BatchMode=yes "$HOST_ALIAS" "
+  set -euo pipefail
+  cd '$REMOTE_ROOT'
 
-echo "Creating remote backup"
-ssh -o BatchMode=yes "$HOST_ALIAS" '
-  set -eu
-  ts=$(date -u +%Y%m%dT%H%M%SZ)
-  backup="'"$REMOTE_ROOT"'/backups/$ts"
-  mkdir -p "$backup/server/app/api" "$backup/server/app/models" "$backup/server/app/services" "$backup/dashboard"
-  cp "'"$REMOTE_ROOT"'/server/app/api/cloud_models.py" "$backup/server/app/api/cloud_models.py"
-  cp "'"$REMOTE_ROOT"'/server/app/models/schemas.py" "$backup/server/app/models/schemas.py"
-  cp "'"$REMOTE_ROOT"'/server/app/services/cloud_repository.py" "$backup/server/app/services/cloud_repository.py"
-  tar -C "'"$REMOTE_ROOT"'/dashboard" -czf "$backup/dashboard/dist.tgz" dist
-  printf "Backup: %s\n" "$backup"
-'
+  if [ ! -d .git ]; then
+    echo 'Remote root is not a git checkout. Run scripts/bootstrap-docaudit-prod-git.sh first.' >&2
+    exit 1
+  fi
 
-echo "Syncing server runtime files"
-rsync -av server/app/api/cloud_models.py "$HOST_ALIAS:$REMOTE_ROOT/server/app/api/cloud_models.py"
-rsync -av server/app/models/schemas.py "$HOST_ALIAS:$REMOTE_ROOT/server/app/models/schemas.py"
-rsync -av server/app/services/cloud_repository.py "$HOST_ALIAS:$REMOTE_ROOT/server/app/services/cloud_repository.py"
+  current_branch=\$(git branch --show-current || true)
+  if [ -n \"\$current_branch\" ] && [ \"\$current_branch\" != '$BRANCH' ]; then
+    git checkout '$BRANCH'
+  fi
 
-echo "Syncing dashboard dist"
-rsync -av --delete dashboard/dist/ "$HOST_ALIAS:$REMOTE_ROOT/dashboard/dist/"
-
-echo "Adding assessment column for existing databases"
-ssh -o BatchMode=yes "$HOST_ALIAS" \
-  "docker exec doctor-auditor-api-db-1 psql -U doctor_auditor -d doctor_auditor -c 'ALTER TABLE IF EXISTS ops_events ADD COLUMN IF NOT EXISTS assessment_payload JSON;'"
-
-echo "Rebuilding and restarting API"
-ssh -o BatchMode=yes "$HOST_ALIAS" \
-  "cd '$REMOTE_ROOT' && docker compose -f compose.yml up -d --build server"
+  git fetch origin '$BRANCH'
+  git pull --ff-only origin '$BRANCH'
+  npm ci
+  npm run build --workspace=dashboard
+  docker compose --env-file .env -f ops/ovh2/compose.yml up -d --build server
+"
 
 echo "Health check"
-curl -fsS https://docaudit.discordwell.com/api/health
+curl -fsS "$PUBLIC_URL/api/health"
 echo
 
 echo "Current dashboard assets"
-curl -fsS https://docaudit.discordwell.com/ | grep -Eo '/assets/[^\" ]+' | sort -u
+curl -fsS "$PUBLIC_URL/" | grep -Eo '/assets/[^\" ]+' | sort -u

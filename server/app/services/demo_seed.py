@@ -11,8 +11,8 @@ from app.services.cloud_repository import ingest_approved_export, ingest_ops_eve
 DEMO_ORGANIZATION_ID = "demo-health"
 DEMO_POLICY_VERSION = "demo-policy-2026.03"
 DEMO_CLIENT_VERSION = "desktop-demo-2026.3.0"
-ASSIST_PROVIDER = "doctor-auditor-assist-gateway"
-ASSIST_MODEL = "policy-heuristic-v1"
+ASSIST_PROVIDER = "openai"
+ASSIST_MODEL = "gpt-5.4-2026-03-05"
 ASSIST_POLICY_MODE = "minimized_no_raw_phi"
 ASSIST_LIMITATIONS = [
     "Only minimized structured context was provided.",

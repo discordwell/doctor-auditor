@@ -1,12 +1,21 @@
+import logging
+import time
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect
 
 from app.api import approved_exports, assist_gateway, auth, demo, ops_events
-from app.models.database import engine, Base
+from app.config import settings
+from app.models.database import Base, engine
+from app.observability import configure_logging, log_json, set_request_id
 import app.models.schemas  # noqa: F401 — register models with Base
+
+configure_logging(settings.log_level)
+logger = logging.getLogger(__name__)
+settings.validate_deployment()
 
 
 def _sync_ops_event_schema(connection) -> None:
@@ -38,11 +47,47 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request.state.request_id = request_id
+    set_request_id(request_id)
+    started_at = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        log_json(
+            logger,
+            "http.request.failed",
+            method=request.method,
+            path=request.url.path,
+            client=request.client.host if request.client else None,
+            durationMs=round((time.perf_counter() - started_at) * 1000),
+        )
+        set_request_id(None)
+        raise
+
+    response.headers["X-Request-ID"] = request_id
+    log_json(
+        logger,
+        "http.request.completed",
+        method=request.method,
+        path=request.url.path,
+        statusCode=response.status_code,
+        client=request.client.host if request.client else None,
+        durationMs=round((time.perf_counter() - started_at) * 1000),
+    )
+    set_request_id(None)
+    return response
+
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
@@ -65,4 +110,10 @@ async def health_check():
         "status": "ok",
         "service": "doctor-auditor-api",
         "surface": ["auth", "approved-exports", "ops-events", "assist-gateway"],
+        "assistGateway": {
+            "enabled": settings.assist_gateway_enabled,
+            "configured": bool(settings.openai_api_key),
+            "model": settings.assist_gateway_model,
+            "promptVersion": settings.assist_gateway_prompt_version,
+        },
     }

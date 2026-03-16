@@ -1,8 +1,17 @@
-from datetime import datetime, timezone
+from math import ceil
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.cloud_models import AssistGatewayRequestModel, SeriousnessAssessmentModel
+from app.services.assist_gateway_service import (
+    AssistGatewayError,
+    AssistGatewayRateLimitError,
+    AssistGatewayService,
+    AssistGatewayUnavailableError,
+    AssistGatewayUpstreamError,
+    AssistGatewayValidationError,
+    get_assist_gateway_service,
+)
 
 router = APIRouter()
 
@@ -13,42 +22,20 @@ router = APIRouter()
 )
 async def create_seriousness_assessment(
     payload: AssistGatewayRequestModel,
+    service: AssistGatewayService = Depends(get_assist_gateway_service),
 ):
-    disposition = "routine_review"
-    confidence = 0.41
-    rationale = (
-        "The minimized packet does not indicate a pattern that needs expedited "
-        "human review."
-    )
-    limitations = [
-        "Only minimized structured context was provided.",
-        "No raw audio, full transcript, or free-text evidence was available.",
-    ]
-
-    if payload.concern.evidenceSpanCount == 0:
-        disposition = "insufficient_context"
-        confidence = 0.18
-        rationale = (
-            "The minimized packet does not include enough evidence structure to "
-            "support a stronger seriousness recommendation."
-        )
-    elif payload.concern.findingCode in {
-        "medication-risk",
-        "abrupt-session-termination",
-    }:
-        disposition = "expedited_human_review"
-        confidence = 0.79
-        rationale = (
-            "The finding code maps to a higher-acuity review lane and should be "
-            "triaged by a human reviewer."
-        )
-
-    return SeriousnessAssessmentModel(
-        disposition=disposition,
-        confidence=confidence,
-        rationale=rationale,
-        limitations=limitations,
-        provider="doctor-auditor-assist-gateway",
-        model="policy-heuristic-v1",
-        assessedAt=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    )
+    try:
+        return await service.assess(payload)
+    except AssistGatewayRateLimitError as exc:
+        headers = None
+        if exc.retry_after_seconds is not None:
+            headers = {"Retry-After": str(max(1, ceil(exc.retry_after_seconds)))}
+        raise HTTPException(status_code=429, detail=str(exc), headers=headers) from exc
+    except AssistGatewayUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AssistGatewayValidationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except AssistGatewayUpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except AssistGatewayError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

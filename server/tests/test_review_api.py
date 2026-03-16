@@ -14,8 +14,10 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
 atexit.register(shutil.rmtree, TEST_DATABASE_DIR, True)
 
 from app.auth.jwt import create_access_token
+from app.api.cloud_models import AssistGatewayRequestModel, SeriousnessAssessmentModel
 from app.main import app
 from app.models.database import Base, engine
+from app.services.assist_gateway_service import get_assist_gateway_service
 
 
 def reset_database() -> None:
@@ -46,6 +48,37 @@ def auth_headers(client: TestClient) -> dict[str, str]:
 
 def bearer_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+class StubAssistGatewayService:
+    async def assess(
+        self, payload: AssistGatewayRequestModel
+    ) -> SeriousnessAssessmentModel:
+        disposition = "routine_review"
+        confidence = 0.41
+        rationale = "The minimized packet supports routine review."
+
+        if payload.concern.evidenceSpanCount == 0:
+            disposition = "insufficient_context"
+            confidence = 0.18
+            rationale = "The minimized packet does not include enough evidence."
+        elif payload.concern.findingCode == "medication-risk":
+            disposition = "expedited_human_review"
+            confidence = 0.79
+            rationale = "The minimized packet indicates a higher-acuity medication risk."
+
+        return SeriousnessAssessmentModel(
+            disposition=disposition,
+            confidence=confidence,
+            rationale=rationale,
+            limitations=[
+                "Only minimized structured context was provided.",
+                "No raw audio or transcript excerpts were available.",
+            ],
+            provider="openai",
+            model="gpt-5.4-test",
+            assessedAt="2026-03-15T10:29:00Z",
+        )
 
 
 def approved_export_envelope_payload() -> dict:
@@ -111,8 +144,8 @@ def ops_event_payload() -> dict:
         "type": "assist_completed",
         "recordedAt": "2026-03-15T10:29:00Z",
         "actorId": "reviewer-1",
-        "provider": "doctor-auditor-assist-gateway",
-        "model": "policy-heuristic-v1",
+        "provider": "openai",
+        "model": "gpt-5.4-2026-03-05",
         "policyMode": "minimized_no_raw_phi",
         "latencyMs": 812,
         "assessment": {
@@ -126,8 +159,8 @@ def ops_event_payload() -> dict:
                 "Only minimized structured context was provided.",
                 "No raw audio, full transcript, or free-text evidence was available.",
             ],
-            "provider": "doctor-auditor-assist-gateway",
-            "model": "policy-heuristic-v1",
+            "provider": "openai",
+            "model": "gpt-5.4-2026-03-05",
             "assessedAt": "2026-03-15T10:29:00Z",
         },
     }
@@ -458,17 +491,22 @@ def test_ops_summary_includes_sent_export_latency_and_assist_usage() -> None:
 
 def test_assist_gateway_returns_structured_assessment() -> None:
     reset_database()
+    app.dependency_overrides[get_assist_gateway_service] = StubAssistGatewayService
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/assist-gateway/seriousness-assessments",
-            json=assist_gateway_payload(),
-        )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/assist-gateway/seriousness-assessments",
+                json=assist_gateway_payload(),
+            )
 
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["disposition"] == "expedited_human_review"
-        assert body["provider"] == "doctor-auditor-assist-gateway"
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["disposition"] == "expedited_human_review"
+            assert body["provider"] == "openai"
+    finally:
+        app.dependency_overrides.pop(get_assist_gateway_service, None)
+
 
 def test_assist_gateway_rejects_raw_transcript_fields() -> None:
     reset_database()
@@ -496,20 +534,24 @@ def test_assist_gateway_rejects_raw_transcript_fields() -> None:
 
 def test_assist_gateway_handles_insufficient_context() -> None:
     reset_database()
+    app.dependency_overrides[get_assist_gateway_service] = StubAssistGatewayService
 
-    with TestClient(app) as client:
-        payload = assist_gateway_payload()
-        payload["concern"]["evidenceSpanCount"] = 0
+    try:
+        with TestClient(app) as client:
+            payload = assist_gateway_payload()
+            payload["concern"]["evidenceSpanCount"] = 0
 
-        response = client.post(
-            "/api/assist-gateway/seriousness-assessments",
-            json=payload,
-        )
+            response = client.post(
+                "/api/assist-gateway/seriousness-assessments",
+                json=payload,
+            )
 
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["disposition"] == "insufficient_context"
-        assert body["provider"] == "doctor-auditor-assist-gateway"
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["disposition"] == "insufficient_context"
+            assert body["provider"] == "openai"
+    finally:
+        app.dependency_overrides.pop(get_assist_gateway_service, None)
 
 
 def test_protected_routes_reject_tokens_without_organization_claims() -> None:
