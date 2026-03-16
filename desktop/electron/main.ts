@@ -488,6 +488,7 @@ function buildOpsEvent(payload: {
   latencyMs?: number;
   errorCode?: string;
   reviewerAction?: string;
+  assessment?: OpsEvent["assessment"];
 }): OpsEvent {
   return {
     id: `ops-${randomUUID()}`,
@@ -503,6 +504,7 @@ function buildOpsEvent(payload: {
     latencyMs: payload.latencyMs,
     errorCode: payload.errorCode,
     reviewerAction: payload.reviewerAction,
+    assessment: payload.assessment,
   };
 }
 
@@ -824,6 +826,7 @@ function registerIpcHandlers(): void {
             model: assessment.model,
             policyMode: receipt.policyMode,
             latencyMs: receipt.latencyMs,
+            assessment,
           })
         );
         if (completedSyncError) {

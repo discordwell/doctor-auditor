@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { OperationsSnapshot } from "./opsDashboard";
 import {
+  buildAssistAssessmentCards,
   buildOverviewModel,
+  formatAssistDisposition,
+  formatLatency,
   formatStatusLabel,
   getExportTone,
   getOpsTone,
@@ -134,13 +137,39 @@ const sampleSnapshot: OperationsSnapshot = {
       organizationId: "demo-health",
       localSessionId: "session-demo-002",
       assistReceiptId: "assist-demo-001",
+      type: "assist_completed",
+      recordedAt: "2026-03-09T11:01:00Z",
+      actorId: "reviewer-1",
+      provider: "doctor-auditor-assist-gateway",
+      model: "policy-heuristic-v1",
+      policyMode: "minimized_no_raw_phi",
+      latencyMs: 712,
+      assessment: {
+        disposition: "expedited_human_review",
+        confidence: 0.79,
+        rationale:
+          "The finding code maps to a higher-acuity review lane and should be triaged by a human reviewer.",
+        limitations: [
+          "Only minimized structured context was provided.",
+          "No raw audio, full transcript, or free-text evidence was available.",
+        ],
+        provider: "doctor-auditor-assist-gateway",
+        model: "policy-heuristic-v1",
+        assessedAt: "2026-03-09T11:01:00Z",
+      },
+    },
+    {
+      id: "ops-demo-003",
+      organizationId: "demo-health",
+      localSessionId: "session-demo-002",
+      assistReceiptId: "assist-demo-001",
       type: "assist_overridden",
       recordedAt: "2026-03-09T11:10:00Z",
       actorId: "quality-lead-1",
       reviewerAction: "dismissed",
     },
     {
-      id: "ops-demo-003",
+      id: "ops-demo-004",
       organizationId: "demo-health",
       localSessionId: "session-demo-004",
       type: "redaction_blocked",
@@ -149,12 +178,17 @@ const sampleSnapshot: OperationsSnapshot = {
       errorCode: "manual-redaction-required",
     },
     {
-      id: "ops-demo-004",
+      id: "ops-demo-005",
       organizationId: "demo-health",
       localSessionId: "session-demo-004",
+      assistReceiptId: "assist-demo-004",
       type: "assist_failed",
       recordedAt: "2026-03-15T08:12:00Z",
       actorId: "quality-lead-2",
+      provider: "doctor-auditor-assist-gateway",
+      model: "policy-heuristic-v1",
+      policyMode: "minimized_no_raw_phi",
+      latencyMs: 1180,
       errorCode: "gateway-timeout",
     },
   ],
@@ -188,12 +222,33 @@ describe("opsDashboard helpers", () => {
   it("sorts ops events newest first", () => {
     const opsEvents = sortOpsEvents(sampleSnapshot.opsEvents);
 
-    expect(opsEvents[0]?.id).toBe("ops-demo-004");
+    expect(opsEvents[0]?.id).toBe("ops-demo-005");
     expect(opsEvents[opsEvents.length - 1]?.id).toBe("ops-demo-001");
+  });
+
+  it("builds assist assessment cards with overrides and failures", () => {
+    const cards = buildAssistAssessmentCards(sampleSnapshot.opsEvents);
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toMatchObject({
+      id: "ops-demo-005",
+      status: "failed",
+      tone: "attention",
+    });
+    expect(cards[1]).toMatchObject({
+      id: "ops-demo-002",
+      disposition: "expedited_human_review",
+      reviewerAction: "dismissed",
+      tone: "attention",
+    });
   });
 
   it("normalizes labels and tones consistently", () => {
     expect(formatStatusLabel("assist_requested")).toBe("Remote assist requested");
+    expect(formatAssistDisposition("insufficient_context")).toBe(
+      "Insufficient context"
+    );
+    expect(formatLatency(712)).toBe("712 ms");
     expect(getExportTone("approved")).toBe("attention");
     expect(getOpsTone("assist_completed")).toBe("active");
   });

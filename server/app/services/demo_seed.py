@@ -14,6 +14,10 @@ DEMO_CLIENT_VERSION = "desktop-demo-2026.3.0"
 ASSIST_PROVIDER = "doctor-auditor-assist-gateway"
 ASSIST_MODEL = "policy-heuristic-v1"
 ASSIST_POLICY_MODE = "minimized_no_raw_phi"
+ASSIST_LIMITATIONS = [
+    "Only minimized structured context was provided.",
+    "No raw audio, full transcript, or free-text evidence was available.",
+]
 
 
 class DemoSeedError(Exception):
@@ -135,6 +139,7 @@ def _ops_event(
     latency_ms: int | None = None,
     error_code: str | None = None,
     reviewer_action: str | None = None,
+    assessment: dict | None = None,
 ) -> OpsEventModel:
     payload = {
         "id": event_id,
@@ -157,8 +162,27 @@ def _ops_event(
                 "policyMode": ASSIST_POLICY_MODE,
             }
         )
+    if assessment is not None:
+        payload["assessment"] = assessment
 
     return OpsEventModel.model_validate(payload)
+
+
+def _assessment(
+    disposition: str,
+    confidence: float,
+    rationale: str,
+    assessed_at: str,
+) -> dict:
+    return {
+        "disposition": disposition,
+        "confidence": confidence,
+        "rationale": rationale,
+        "limitations": ASSIST_LIMITATIONS,
+        "provider": ASSIST_PROVIDER,
+        "model": ASSIST_MODEL,
+        "assessedAt": assessed_at,
+    }
 
 
 def _demo_export_envelopes() -> list[ApprovedExportEnvelopeModel]:
@@ -479,6 +503,12 @@ def _demo_ops_events() -> list[OpsEventModel]:
             "reviewer-maya",
             assist_receipt_id="assist-demo-001",
             latency_ms=641,
+            assessment=_assessment(
+                "routine_review",
+                0.41,
+                "The minimized packet did not indicate a pattern that required expedited human review.",
+                "2026-02-09T17:04:01Z",
+            ),
         ),
         _ops_event(
             "ops-demo-003",
@@ -530,6 +560,12 @@ def _demo_ops_events() -> list[OpsEventModel]:
             "reviewer-nia",
             assist_receipt_id="assist-demo-002b",
             latency_ms=955,
+            assessment=_assessment(
+                "insufficient_context",
+                0.18,
+                "The minimized packet did not include enough evidence structure to support a stronger seriousness recommendation.",
+                "2026-02-17T20:51:01Z",
+            ),
         ),
         _ops_event(
             "ops-demo-009",
@@ -571,6 +607,12 @@ def _demo_ops_events() -> list[OpsEventModel]:
             "reviewer-cam",
             assist_receipt_id="assist-demo-004",
             latency_ms=702,
+            assessment=_assessment(
+                "expedited_human_review",
+                0.79,
+                "The finding code mapped to a higher-acuity review lane and was routed for human triage.",
+                "2026-03-04T09:12:01Z",
+            ),
         ),
         _ops_event(
             "ops-demo-014",
@@ -621,6 +663,12 @@ def _demo_ops_events() -> list[OpsEventModel]:
             "reviewer-maya",
             assist_receipt_id="assist-demo-006",
             latency_ms=588,
+            assessment=_assessment(
+                "routine_review",
+                0.41,
+                "The minimized packet did not indicate a pattern that required expedited human review.",
+                "2026-03-15T08:31:01Z",
+            ),
         ),
         _ops_event(
             "ops-demo-020",

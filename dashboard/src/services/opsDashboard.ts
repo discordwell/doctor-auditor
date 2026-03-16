@@ -69,6 +69,25 @@ export type ActivityFeedItem = {
   tone: StatusTone;
 };
 
+export type AssistAssessmentCard = {
+  id: string;
+  assistReceiptId: string;
+  localSessionId: string;
+  actorId: string | null;
+  recordedAt: string;
+  status: "completed" | "failed";
+  disposition: NonNullable<OpsEvent["assessment"]>["disposition"] | null;
+  confidence: number | null;
+  rationale: string;
+  limitations: string[];
+  provider: string | null;
+  model: string | null;
+  policyMode: string | null;
+  latencyMs: number | null;
+  reviewerAction: string | null;
+  tone: StatusTone;
+};
+
 export type OperationsSnapshot = {
   approvedExports: ApprovedExportEnvelope[];
   opsEvents: OpsEvent[];
@@ -180,6 +199,19 @@ export function formatStatusLabel(value: string): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+export function formatAssistDisposition(
+  value: NonNullable<OpsEvent["assessment"]>["disposition"]
+): string {
+  switch (value) {
+    case "routine_review":
+      return "Routine review";
+    case "expedited_human_review":
+      return "Expedited human review";
+    case "insufficient_context":
+      return "Insufficient context";
+  }
+}
+
 export function getExportTone(
   status: ApprovedExportEnvelope["export"]["status"]
 ): StatusTone {
@@ -210,6 +242,35 @@ export function getOpsTone(eventType: OpsEvent["type"]): StatusTone {
   return "success";
 }
 
+export function formatLatency(latencyMs: number | null | undefined): string {
+  if (latencyMs === null || latencyMs === undefined) {
+    return "Latency unavailable";
+  }
+
+  if (latencyMs < 1000) {
+    return `${latencyMs} ms`;
+  }
+
+  const seconds = latencyMs / 1000;
+  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`;
+}
+
+function getAssistAssessmentTone(event: OpsEvent): StatusTone {
+  if (event.type === "assist_failed") {
+    return "attention";
+  }
+
+  if (event.assessment?.disposition === "expedited_human_review") {
+    return "attention";
+  }
+
+  if (event.assessment?.disposition === "insufficient_context") {
+    return "neutral";
+  }
+
+  return "active";
+}
+
 export function sortApprovedExports(
   approvedExports: ApprovedExportEnvelope[],
   filter: "all" | ApprovedExportEnvelope["export"]["status"] = "all"
@@ -228,6 +289,77 @@ export function sortOpsEvents(
   return opsEvents
     .filter((item) => (filter === "all" ? true : item.type === filter))
     .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt));
+}
+
+export function buildAssistAssessmentCards(
+  opsEvents: OpsEvent[]
+): AssistAssessmentCard[] {
+  const reviewerActionsByReceipt = new Map<string, string>();
+  const cards: AssistAssessmentCard[] = [];
+
+  sortOpsEvents(opsEvents)
+    .filter((item) => item.type === "assist_overridden" && item.assistReceiptId)
+    .forEach((item) => {
+      if (!item.assistReceiptId || reviewerActionsByReceipt.has(item.assistReceiptId)) {
+        return;
+      }
+
+      reviewerActionsByReceipt.set(
+        item.assistReceiptId,
+        item.reviewerAction ?? "overridden"
+      );
+    });
+
+  sortOpsEvents(opsEvents).forEach((item) => {
+    if (item.type === "assist_completed" && item.assessment && item.assistReceiptId) {
+      cards.push({
+        id: item.id,
+        assistReceiptId: item.assistReceiptId,
+        localSessionId: item.localSessionId,
+        actorId: item.actorId ?? null,
+        recordedAt: item.recordedAt,
+        status: "completed",
+        disposition: item.assessment.disposition,
+        confidence: item.assessment.confidence,
+        rationale: item.assessment.rationale,
+        limitations: item.assessment.limitations,
+        provider: item.provider ?? item.assessment.provider,
+        model: item.model ?? item.assessment.model,
+        policyMode: item.policyMode ?? null,
+        latencyMs: item.latencyMs ?? null,
+        reviewerAction:
+          reviewerActionsByReceipt.get(item.assistReceiptId) ?? item.reviewerAction ?? null,
+        tone: getAssistAssessmentTone(item),
+      });
+      return;
+    }
+
+    if (item.type === "assist_failed" && item.assistReceiptId) {
+      cards.push({
+        id: item.id,
+        assistReceiptId: item.assistReceiptId,
+        localSessionId: item.localSessionId,
+        actorId: item.actorId ?? null,
+        recordedAt: item.recordedAt,
+        status: "failed",
+        disposition: null,
+        confidence: null,
+        rationale: item.errorCode
+          ? `The assist request failed before an assessment was returned: ${item.errorCode}.`
+          : "The assist request failed before an assessment was returned.",
+        limitations: [],
+        provider: item.provider ?? null,
+        model: item.model ?? null,
+        policyMode: item.policyMode ?? null,
+        latencyMs: item.latencyMs ?? null,
+        reviewerAction:
+          reviewerActionsByReceipt.get(item.assistReceiptId) ?? item.reviewerAction ?? null,
+        tone: "attention",
+      });
+    }
+  });
+
+  return cards;
 }
 
 export async function loadApprovedExports(
@@ -548,16 +680,27 @@ function buildActivityFeed(snapshot: OperationsSnapshot): ActivityFeedItem[] {
     label: formatStatusLabel(item.type),
     title: item.localSessionId,
     detail:
-      [
-        item.actorId,
-        item.errorCode,
-        item.provider,
-        item.reviewerAction,
-      ]
-        .filter(Boolean)
-        .join(" · ") || "System event",
+      item.type === "assist_completed" && item.assessment
+        ? [
+            formatAssistDisposition(item.assessment.disposition),
+            item.actorId,
+            item.assessment.rationale,
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        : [
+            item.actorId,
+            item.errorCode,
+            item.provider,
+            item.reviewerAction,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "System event",
     timestamp: item.recordedAt,
-    tone: getOpsTone(item.type),
+    tone:
+      item.type === "assist_completed"
+        ? getAssistAssessmentTone(item)
+        : getOpsTone(item.type),
   }));
 
   return [...exportItems, ...opsItems]

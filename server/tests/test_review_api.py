@@ -115,6 +115,21 @@ def ops_event_payload() -> dict:
         "model": "policy-heuristic-v1",
         "policyMode": "minimized_no_raw_phi",
         "latencyMs": 812,
+        "assessment": {
+            "disposition": "expedited_human_review",
+            "confidence": 0.79,
+            "rationale": (
+                "The finding code maps to a higher-acuity review lane and should be "
+                "triaged by a human reviewer."
+            ),
+            "limitations": [
+                "Only minimized structured context was provided.",
+                "No raw audio, full transcript, or free-text evidence was available.",
+            ],
+            "provider": "doctor-auditor-assist-gateway",
+            "model": "policy-heuristic-v1",
+            "assessedAt": "2026-03-15T10:29:00Z",
+        },
     }
 
 
@@ -167,6 +182,10 @@ def test_export_and_ops_round_trip() -> None:
         )
         assert created_event.status_code == 200, created_event.text
         assert created_event.json()["type"] == "assist_completed"
+        assert (
+            created_event.json()["assessment"]["disposition"]
+            == "expedited_human_review"
+        )
 
         listed_events = client.get("/api/ops-events/", headers=headers)
         assert listed_events.status_code == 200, listed_events.text
@@ -419,6 +438,7 @@ def test_ops_summary_includes_sent_export_latency_and_assist_usage() -> None:
         requested_event["id"] = "ops-event-requested-001"
         requested_event["type"] = "assist_requested"
         requested_event["latencyMs"] = None
+        requested_event.pop("assessment")
 
         created_event = client.post(
             "/api/ops-events/",
@@ -449,6 +469,28 @@ def test_assist_gateway_returns_structured_assessment() -> None:
         body = response.json()
         assert body["disposition"] == "expedited_human_review"
         assert body["provider"] == "doctor-auditor-assist-gateway"
+
+
+def test_completed_ops_event_requires_assessment() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = ops_event_payload()
+        payload.pop("assessment")
+
+        response = client.post(
+            "/api/ops-events/",
+            json=payload,
+            headers=headers,
+        )
+
+        assert response.status_code == 422, response.text
+        assert any(
+            error["loc"] == ["body"]
+            and "assessment is required" in error["msg"]
+            for error in response.json()["detail"]
+        )
 
 
 def test_assist_gateway_rejects_raw_transcript_fields() -> None:
