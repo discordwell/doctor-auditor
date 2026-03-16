@@ -25,6 +25,7 @@ ssh -o BatchMode=yes "$HOST_ALIAS" "
   sudo mv '$REMOTE_ROOT' \"\$backup\"
   sudo mv \"\$tmp_checkout\" '$REMOTE_ROOT'
   sudo chown -R \"\$owner\" '$REMOTE_ROOT'
+  sudo chmod 755 '$REMOTE_ROOT'
 
   echo \"Previous manual deploy preserved at \$backup\"
 "
