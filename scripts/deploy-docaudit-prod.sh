@@ -42,4 +42,15 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 echo "Current dashboard assets"
-curl -fsS "$PUBLIC_URL/" | grep -Eo '/assets/[^\" ]+' | sort -u
+ssh -o BatchMode=yes "$HOST_ALIAS" "
+  set -euo pipefail
+  cd '$REMOTE_ROOT'
+  ls -1 dashboard/dist/assets
+"
+
+echo "Dashboard assessment strings"
+ssh -o BatchMode=yes "$HOST_ALIAS" "
+  set -euo pipefail
+  cd '$REMOTE_ROOT'
+  grep -R -E -o 'Actual gateway assessments|Assessment spotlight|Latest gateway assessments|Remote assist and delivery activity' dashboard/dist/assets | sort -u
+"
