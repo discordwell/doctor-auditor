@@ -29,8 +29,17 @@ ssh -o BatchMode=yes "$HOST_ALIAS" "
 "
 
 echo "Health check"
-curl -fsS "$PUBLIC_URL/api/health"
-echo
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS "$PUBLIC_URL/api/health"; then
+    echo
+    break
+  fi
+  if [ "$attempt" -eq 10 ]; then
+    echo "Public health check failed after ${attempt} attempts" >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 echo "Current dashboard assets"
 curl -fsS "$PUBLIC_URL/" | grep -Eo '/assets/[^\" ]+' | sort -u
