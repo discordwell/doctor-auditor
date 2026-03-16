@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -216,6 +217,65 @@ async def ingest_approved_export(
     refreshed = await get_approved_export(db, organization_id, payload.id)
     if refreshed is None:
         raise RuntimeError("approved export could not be reloaded after persistence")
+    return refreshed
+
+
+async def release_approved_export(
+    db: AsyncSession,
+    organization_id: str,
+    export_id: str,
+    actor_id: str | None = None,
+) -> ApprovedExportEnvelopeModel:
+    result = await db.execute(
+        select(ApprovedExportRecord).where(
+            ApprovedExportRecord.id == export_id,
+            ApprovedExportRecord.organization_id == organization_id,
+        )
+    )
+    record = result.scalar_one_or_none()
+
+    if record is None:
+        raise ApprovedExportIngestError(
+            status_code=404,
+            detail=f"Approved export '{export_id}' was not found",
+        )
+
+    if record.export_status == "sent":
+        return _approved_export_model(record)
+
+    if record.export_status != "approved":
+        raise ApprovedExportIngestError(
+            status_code=409,
+            detail="only approved exports can be released",
+        )
+
+    sent_at = datetime.now(timezone.utc)
+    record.export_status = "sent"
+    record.export_sent_at = sent_at
+    db.add(
+        OpsEventRecord(
+            id=f"ops-release-{uuid4()}",
+            organization_id=organization_id,
+            local_session_id=record.local_session_id,
+            export_id=record.id,
+            assist_receipt_id=None,
+            event_type="export_sent",
+            recorded_at=sent_at,
+            actor_id=actor_id,
+            provider=None,
+            model_name=None,
+            policy_mode=None,
+            latency_ms=None,
+            error_code=None,
+            reviewer_action=None,
+            assessment_payload=None,
+        )
+    )
+
+    await db.commit()
+    refreshed = await get_approved_export(db, organization_id, export_id)
+    if refreshed is None:
+        raise RuntimeError("approved export could not be reloaded after release")
     return refreshed
 
 

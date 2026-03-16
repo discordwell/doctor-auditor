@@ -3,15 +3,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import { describeDashboardLoadIssue, type OpsEvent } from "../services/api";
 import {
   buildAssistAssessmentCards,
+  buildSessionActivityGroups,
   EMPTY_OPERATIONS_SNAPSHOT,
   formatAssistDisposition,
   formatDateTime,
   formatLatency,
   formatStatusLabel,
-  getOpsTone,
+  getExportTone,
   loadOperationsSnapshot,
-  sortOpsEvents,
   type OperationsSnapshot,
+  type SessionActivityGroup,
 } from "../services/opsDashboard";
 
 type OpsFilter = "all" | OpsEvent["type"];
@@ -41,7 +42,62 @@ function formatReviewerAction(value: string): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
-function matchesQuery(item: OpsEvent, query: string): boolean {
+function formatEncounterWindow(group: SessionActivityGroup): string | null {
+  if (!group.encounterStartedAt) {
+    return null;
+  }
+
+  const start = new Date(group.encounterStartedAt);
+  const end = group.encounterEndedAt ? new Date(group.encounterEndedAt) : null;
+  const startLabel = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(start);
+
+  if (!end) {
+    return startLabel;
+  }
+
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  const endLabel = new Intl.DateTimeFormat("en-US", {
+    ...(sameDay ? {} : { month: "short", day: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(end);
+
+  return `${startLabel} to ${endLabel}`;
+}
+
+function getLatestAssistBadgeLabel(group: SessionActivityGroup): string | null {
+  if (group.latestAssistStatus === "failed") {
+    return "Assist failed";
+  }
+
+  if (group.latestAssistDisposition) {
+    return formatAssistDisposition(group.latestAssistDisposition);
+  }
+
+  if (group.latestAssistStatus === "completed") {
+    return "Assist returned";
+  }
+
+  return null;
+}
+
+function matchesSessionGroup(
+  group: SessionActivityGroup,
+  filter: OpsFilter,
+  query: string
+): boolean {
+  if (filter !== "all" && !group.eventTypes.includes(filter)) {
+    return false;
+  }
+
   if (!query) {
     return true;
   }
@@ -49,48 +105,29 @@ function matchesQuery(item: OpsEvent, query: string): boolean {
   const normalizedQuery = query.toLowerCase();
 
   return [
-    item.id,
-    item.localSessionId,
-    item.exportId,
-    item.assistReceiptId,
-    item.actorId,
-    item.provider,
-    item.model,
-    item.policyMode,
-    item.errorCode,
-    item.reviewerAction,
-    item.type,
-    item.assessment?.disposition,
-    item.assessment?.rationale,
-    ...(item.assessment?.limitations ?? []),
+    group.localSessionId,
+    group.clinicianId,
+    group.captureMode,
+    group.exportStatus,
+    group.exportSummary,
+    group.destination,
+    group.approvedBy,
+    group.reviewedBy,
+    group.latestAssistDisposition,
+    group.latestAssistRationale,
+    group.latestAssistProvider,
+    group.latestAssistModel,
+    group.latestAssistPolicyMode,
+    group.latestAssistReviewerAction,
+    group.latestAssistErrorCode,
+    ...group.latestAssistLimitations,
+    ...group.findings.map((item) => item.title),
+    ...group.findings.map((item) => item.summary),
+    ...group.activity.map((item) => item.label),
+    ...group.activity.map((item) => item.detail),
   ]
     .filter((value): value is string => typeof value === "string")
     .some((value) => value.toLowerCase().includes(normalizedQuery));
-}
-
-function buildDetails(item: OpsEvent): string {
-  if (item.assessment) {
-    return [
-      `${formatAssistDisposition(item.assessment.disposition)} · ${Math.round(
-        item.assessment.confidence * 100
-      )}% confidence`,
-      item.assessment.rationale,
-    ].join(" · ");
-  }
-
-  return (
-    [
-      item.provider,
-      item.model,
-      item.policyMode,
-      item.errorCode,
-      item.reviewerAction,
-      item.exportId,
-      item.assistReceiptId,
-    ]
-      .filter(Boolean)
-      .join(" · ") || "No extra details"
-  );
 }
 
 export default function OperationsView() {
@@ -131,17 +168,24 @@ export default function OperationsView() {
   }, []);
 
   const loadIssue = error ? describeDashboardLoadIssue(error) : null;
-  const filteredEvents = useMemo(
+  const sessionGroups = useMemo(
+    () => buildSessionActivityGroups(snapshot),
+    [snapshot]
+  );
+  const filteredGroups = useMemo(
     () =>
-      sortOpsEvents(
-        snapshot.opsEvents,
-        selectedFilter === "all" ? "all" : selectedFilter
-      ).filter((item) => matchesQuery(item, query)),
-    [query, selectedFilter, snapshot.opsEvents]
+      sessionGroups.filter((group) =>
+        matchesSessionGroup(group, selectedFilter, query)
+      ),
+    [query, selectedFilter, sessionGroups]
   );
   const assistCards = useMemo(
     () => buildAssistAssessmentCards(snapshot.opsEvents),
     [snapshot.opsEvents]
+  );
+  const groupedEventCount = useMemo(
+    () => filteredGroups.reduce((total, group) => total + group.eventCount, 0),
+    [filteredGroups]
   );
   const spotlightCard = useMemo(
     () =>
@@ -187,9 +231,9 @@ export default function OperationsView() {
           <p className="section-kicker">Operations</p>
           <h2>Remote assist and delivery activity</h2>
           <p className="page-copy">
-            Actual gateway assessments are shown below exactly as they were
-            returned for minimized assist requests. No raw transcript or audio is
-            present in this view.
+            Each session card groups related assist and export actions together,
+            then pairs the reviewed session summary with the latest gateway
+            response. No raw transcript or audio is present in this view.
           </p>
         </div>
         {spotlightCard ? (
@@ -312,6 +356,18 @@ export default function OperationsView() {
       </section>
 
       <section className="panel-card">
+        <div className="panel-header">
+          <div>
+            <p className="section-kicker">Session Activity</p>
+            <h3>Grouped assist and export activity</h3>
+          </div>
+          <p>
+            Related actions collapse into one session card so you can see the
+            reviewed session context, the latest LLM response, and the event
+            timeline together.
+          </p>
+        </div>
+
         <div className="table-toolbar">
           <div className="filter-row">
             {FILTERS.map((filter) => (
@@ -328,7 +384,7 @@ export default function OperationsView() {
             ))}
           </div>
           <p className="view-status-copy">
-            {filteredEvents.length} events shown · {assistCards.length} assist results
+            {filteredGroups.length} sessions shown · {groupedEventCount} grouped events
           </p>
         </div>
 
@@ -337,52 +393,187 @@ export default function OperationsView() {
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search session, model, disposition, rationale, error code"
-          aria-label="Search operations events"
+          placeholder="Search session, clinician, summary, finding, model, rationale, error code"
+          aria-label="Search grouped operations sessions"
         />
 
-        {filteredEvents.length === 0 ? (
+        {filteredGroups.length === 0 ? (
           <div className="empty-state compact">
-            No operations events matched the current filter.
+            No grouped sessions matched the current filter.
           </div>
         ) : (
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>Session</th>
-                  <th>Actor</th>
-                  <th>Assessment or detail</th>
-                  <th>Recorded</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEvents.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <div className="table-stack">
-                        <span className={`status-badge ${getOpsTone(item.type)}`}>
-                          {formatStatusLabel(item.type)}
+          <div className="session-activity-grid">
+            {filteredGroups.map((group) => {
+              const encounterWindow = formatEncounterWindow(group);
+              const latestAssistBadge = getLatestAssistBadgeLabel(group);
+
+              return (
+                <article
+                  key={group.id}
+                  className={`session-activity-card ${group.tone}`}
+                >
+                  <div className="session-activity-card__top">
+                    <div>
+                      <span className="assist-card__eyebrow">
+                        {group.clinicianId ?? "Clinician unavailable"} ·{" "}
+                        {group.localSessionId}
+                      </span>
+                      <h4>
+                        {group.exportSummary ??
+                          "No reviewed export summary is available for this session yet."}
+                      </h4>
+                    </div>
+                    <div className="session-activity-card__badges">
+                      {group.exportStatus ? (
+                        <span
+                          className={`status-badge ${getExportTone(group.exportStatus)}`}
+                        >
+                          {formatStatusLabel(group.exportStatus)}
                         </span>
-                        <span className="mono-code">{item.id}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="table-stack">
-                        <strong>{item.localSessionId}</strong>
-                        <span className="table-meta">
-                          {item.exportId ?? item.assistReceiptId ?? "No linked record"}
+                      ) : null}
+                      {latestAssistBadge ? (
+                        <span
+                          className={`status-badge ${
+                            group.latestAssistStatus === "failed"
+                              ? "attention"
+                              : group.tone
+                          }`}
+                        >
+                          {latestAssistBadge}
                         </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <section className="session-activity-section">
+                    <div className="session-activity-section__header">
+                      <span className="session-activity-section__label">
+                        Session context
+                      </span>
+                    </div>
+                    <div className="session-activity-card__meta">
+                      {group.captureMode ? (
+                        <span>{formatStatusLabel(group.captureMode)}</span>
+                      ) : null}
+                      {encounterWindow ? <span>{encounterWindow}</span> : null}
+                      {group.destination ? <span>{group.destination}</span> : null}
+                      {group.reviewedBy ? (
+                        <span>Reviewed by {group.reviewedBy}</span>
+                      ) : null}
+                    </div>
+                    {group.findings.length > 0 ? (
+                      <div className="session-activity-card__findings">
+                        {group.findings.slice(0, 3).map((item) => (
+                          <span
+                            key={item.findingId}
+                            className="assist-chip"
+                            title={item.summary}
+                          >
+                            {item.title}
+                          </span>
+                        ))}
+                        {group.findings.length > 3 ? (
+                          <span className="assist-chip">
+                            +{group.findings.length - 3} more findings
+                          </span>
+                        ) : null}
                       </div>
-                    </td>
-                    <td>{item.actorId ?? "System"}</td>
-                    <td>{buildDetails(item)}</td>
-                    <td>{formatDateTime(item.recordedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    ) : null}
+                  </section>
+
+                  {group.latestAssistStatus ? (
+                    <section className="session-activity-section">
+                      <div className="session-activity-section__header">
+                        <span className="session-activity-section__label">
+                          LLM response
+                        </span>
+                        {group.latestAssistRecordedAt ? (
+                          <time>{formatDateTime(group.latestAssistRecordedAt)}</time>
+                        ) : null}
+                      </div>
+                      <p className="session-activity-card__copy">
+                        {group.latestAssistRationale ??
+                          "No assessment text was returned for this session."}
+                      </p>
+                      <div className="session-activity-card__meta">
+                        {group.latestAssistDisposition ? (
+                          <span>
+                            {formatAssistDisposition(group.latestAssistDisposition)}
+                          </span>
+                        ) : null}
+                        {group.latestAssistConfidence !== null ? (
+                          <span>
+                            {formatConfidence(group.latestAssistConfidence)}
+                          </span>
+                        ) : null}
+                        {group.latestAssistLatencyMs !== null ? (
+                          <span>{formatLatency(group.latestAssistLatencyMs)}</span>
+                        ) : null}
+                        {group.latestAssistProvider ? (
+                          <span>{group.latestAssistProvider}</span>
+                        ) : null}
+                        {group.latestAssistModel ? (
+                          <span>{group.latestAssistModel}</span>
+                        ) : null}
+                        {group.latestAssistPolicyMode ? (
+                          <span>{group.latestAssistPolicyMode}</span>
+                        ) : null}
+                        {group.latestAssistReviewerAction ? (
+                          <span>
+                            Reviewer:{" "}
+                            {formatReviewerAction(group.latestAssistReviewerAction)}
+                          </span>
+                        ) : null}
+                        {group.latestAssistErrorCode ? (
+                          <span>Error: {group.latestAssistErrorCode}</span>
+                        ) : null}
+                      </div>
+                      {group.latestAssistLimitations.length > 0 ? (
+                        <div className="assist-card__limitations">
+                          {group.latestAssistLimitations.map((item) => (
+                            <span key={item} className="assist-chip">
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  <section className="session-activity-section">
+                    <div className="session-activity-section__header">
+                      <span className="session-activity-section__label">
+                        Timeline
+                      </span>
+                      <span className="view-status-copy">
+                        {group.eventCount} events
+                      </span>
+                    </div>
+                    {group.activity.length === 0 ? (
+                      <p className="session-timeline__empty">
+                        No assist or delivery events have been recorded for this
+                        session yet.
+                      </p>
+                    ) : (
+                      <div className="session-timeline">
+                        {group.activity.map((item) => (
+                          <div key={item.id} className="session-timeline__item">
+                            <div className="session-timeline__top">
+                              <div className="session-timeline__label">
+                                <span className={`status-dot ${item.tone}`} />
+                                <strong>{item.label}</strong>
+                              </div>
+                              <time>{formatDateTime(item.timestamp)}</time>
+                            </div>
+                            {item.detail ? <p>{item.detail}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

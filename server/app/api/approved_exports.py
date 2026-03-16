@@ -10,6 +10,7 @@ from app.services.cloud_repository import (
     get_approved_export as get_approved_export_model,
     ingest_approved_export as ingest_approved_export_record,
     list_approved_exports as list_approved_export_models,
+    release_approved_export as release_approved_export_record,
 )
 
 router = APIRouter()
@@ -60,6 +61,28 @@ async def ingest_approved_export(
     organization_id = current_organization_id(token)
     try:
         return await ingest_approved_export_record(db, organization_id, payload)
+    except ApprovedExportIngestError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
+
+
+@router.post("/{export_id}/release", response_model=ApprovedExportEnvelopeModel)
+async def release_approved_export(
+    export_id: str,
+    db: AsyncSession = Depends(get_db),
+    token: dict = Depends(verify_token),
+):
+    organization_id = current_organization_id(token)
+    actor_id = token.get("email") or token.get("sub")
+    try:
+        return await release_approved_export_record(
+            db,
+            organization_id,
+            export_id,
+            str(actor_id) if actor_id is not None else None,
+        )
     except ApprovedExportIngestError as exc:
         raise HTTPException(
             status_code=exc.status_code,

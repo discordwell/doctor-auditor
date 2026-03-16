@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 import {
+  api,
   describeDashboardLoadIssue,
   type ApprovedExportEnvelope,
 } from "../services/api";
@@ -10,6 +11,7 @@ import {
   formatStatusLabel,
   getExportTone,
   loadApprovedExports,
+  sortApprovedExports,
 } from "../services/opsDashboard";
 
 type ExportFilter = "all" | ApprovedExportEnvelope["export"]["status"];
@@ -55,6 +57,9 @@ export default function ApprovedExportsView() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [releasingExportId, setReleasingExportId] = useState<string | null>(null);
+  const [actionInfoMessage, setActionInfoMessage] = useState("");
+  const [actionErrorMessage, setActionErrorMessage] = useState("");
   const loadIssue = error ? describeDashboardLoadIssue(error) : null;
 
   useEffect(() => {
@@ -84,6 +89,35 @@ export default function ApprovedExportsView() {
       active = false;
     };
   }, []);
+
+  async function releaseExport(item: ApprovedExportEnvelope): Promise<void> {
+    setActionInfoMessage("");
+    setActionErrorMessage("");
+    setReleasingExportId(item.id);
+
+    try {
+      const releasedExport = await api.releaseApprovedExport(item.id);
+      setAllExports((current) =>
+        sortApprovedExports(
+          current.map((entry) =>
+            entry.id === releasedExport.id ? releasedExport : entry
+          )
+        )
+      );
+      setActionInfoMessage(
+        releasedExport.export.sentAt
+          ? `${releasedExport.id} was released at ${formatDateTime(
+              releasedExport.export.sentAt
+            )}.`
+          : `${releasedExport.id} was released.`
+      );
+    } catch (actionError) {
+      const issue = describeDashboardLoadIssue(actionError);
+      setActionErrorMessage(issue.detail);
+    } finally {
+      setReleasingExportId((current) => (current === item.id ? null : current));
+    }
+  }
 
   const filteredExports = useMemo(
     () =>
@@ -169,6 +203,20 @@ export default function ApprovedExportsView() {
           <p className="view-status-copy">{filteredExports.length} exports shown</p>
         </div>
 
+        {actionInfoMessage ? (
+          <section className="load-issue success">
+            <strong>Export released</strong>
+            <p>{actionInfoMessage}</p>
+          </section>
+        ) : null}
+
+        {actionErrorMessage ? (
+          <section className="load-issue attention">
+            <strong>Release failed</strong>
+            <p>{actionErrorMessage}</p>
+          </section>
+        ) : null}
+
         {loadIssue ? (
           <section className={`load-issue ${loadIssue.tone}`}>
             <strong>{loadIssue.title}</strong>
@@ -189,6 +237,7 @@ export default function ApprovedExportsView() {
                   <th>Owner</th>
                   <th>Destination</th>
                   <th>Updated</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -236,6 +285,28 @@ export default function ApprovedExportsView() {
                           <span className="table-meta">
                             {formatRelativeAge(updatedAt)}
                           </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="table-actions">
+                          {item.export.status === "approved" ? (
+                            <button
+                              type="button"
+                              className="action-button primary"
+                              onClick={() => void releaseExport(item)}
+                              disabled={releasingExportId !== null}
+                            >
+                              {releasingExportId === item.id
+                                ? "Sending..."
+                                : "Send now"}
+                            </button>
+                          ) : (
+                            <span className="table-meta">
+                              {item.export.status === "sent"
+                                ? "Already released"
+                                : "Awaiting approval"}
+                            </span>
+                          )}
                         </div>
                       </td>
                     </tr>

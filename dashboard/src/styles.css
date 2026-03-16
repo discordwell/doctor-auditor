@@ -212,6 +212,12 @@ button {
   background: #fff7f2;
 }
 
+.status-banner.success,
+.load-issue.success {
+  border-color: rgba(4, 120, 87, 0.18);
+  background: #f2fff8;
+}
+
 .dashboard-content {
   max-width: 1400px;
   margin: 0 auto;
@@ -585,6 +591,10 @@ h4 {
   line-height: 1.4;
 }
 
+.queue-row__action {
+  margin-top: 12px;
+}
+
 .issue-row {
   display: grid;
   gap: 10px;
@@ -738,6 +748,152 @@ h4 {
   line-height: 1.45;
 }
 
+.session-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.session-activity-card {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid #dfe7f1;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f4f8fd 100%);
+}
+
+.session-activity-card.active {
+  border-color: rgba(37, 99, 235, 0.18);
+}
+
+.session-activity-card.attention {
+  border-color: rgba(194, 65, 12, 0.18);
+  background: linear-gradient(180deg, #fffaf7 0%, #fff4ed 100%);
+}
+
+.session-activity-card.success {
+  border-color: rgba(4, 120, 87, 0.18);
+  background: linear-gradient(180deg, #f8fffc 0%, #edf9f3 100%);
+}
+
+.session-activity-card.neutral {
+  border-color: rgba(100, 116, 139, 0.18);
+  background: linear-gradient(180deg, #fcfdff 0%, #f7f9fc 100%);
+}
+
+.session-activity-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.session-activity-card__top h4 {
+  margin-top: 8px;
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.session-activity-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.session-activity-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(214, 222, 232, 0.9);
+}
+
+.session-activity-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-activity-section__label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.session-activity-section__header time {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-activity-card__copy,
+.session-timeline__item p,
+.session-timeline__empty {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+
+.session-activity-card__meta,
+.session-activity-card__findings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.session-activity-card__meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-timeline {
+  display: grid;
+  gap: 10px;
+}
+
+.session-timeline__item {
+  padding: 12px 14px;
+  border: 1px solid #e3eaf2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.session-timeline__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-timeline__label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.session-timeline__item time {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-timeline__item p {
+  margin-top: 10px;
+}
+
 .table-toolbar {
   display: flex;
   align-items: center;
@@ -808,6 +964,44 @@ h4 {
   color: var(--text-tertiary);
   font-size: 13px;
   font-weight: 600;
+}
+
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 98px;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+  cursor: pointer;
+}
+
+.action-button.primary {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.action-button.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.action-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
 }
 
 .table-wrapper {
@@ -953,7 +1147,10 @@ h4 {
   }
 
   .workload-row__meta,
-  .issue-row__top {
+  .issue-row__top,
+  .session-activity-card__top,
+  .session-activity-section__header,
+  .session-timeline__top {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -967,6 +1164,10 @@ h4 {
   .page-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .queue-row__action {
+    width: 100%;
   }
 }
 

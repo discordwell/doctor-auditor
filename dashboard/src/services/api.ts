@@ -503,6 +503,10 @@ export const api = {
         clinician_id: params?.clinicianId,
       })}`
     ),
+  releaseApprovedExport: (exportId: string) =>
+    request<ApprovedExportEnvelope>(`/approved-exports/${exportId}/release`, {
+      method: "POST",
+    }),
   getOpsEvents: (params?: {
     localSessionId?: string;
     eventType?: string;

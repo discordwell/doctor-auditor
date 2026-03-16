@@ -230,6 +230,99 @@ def test_export_and_ops_round_trip() -> None:
         assert summary.json()["assistUsageCount"] == 0
 
 
+def test_release_endpoint_marks_export_sent_and_records_ops_event() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        created_export = client.post(
+            "/api/approved-exports/",
+            json=approved_export_envelope_payload(),
+            headers=headers,
+        )
+        assert created_export.status_code == 201, created_export.text
+
+        released_export = client.post(
+            "/api/approved-exports/export-integration-001/release",
+            headers=headers,
+        )
+        assert released_export.status_code == 200, released_export.text
+        released_body = released_export.json()
+        assert released_body["export"]["status"] == "sent"
+        assert released_body["export"]["sentAt"] is not None
+
+        export_sent_events = client.get(
+            "/api/ops-events/?event_type=export_sent",
+            headers=headers,
+        )
+        assert export_sent_events.status_code == 200, export_sent_events.text
+        events = export_sent_events.json()
+        assert len(events) == 1
+        assert events[0]["exportId"] == "export-integration-001"
+        assert events[0]["actorId"] == "reviewer@demo-health.local"
+
+
+def test_release_endpoint_is_idempotent_for_sent_exports() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        created_export = client.post(
+            "/api/approved-exports/",
+            json=approved_export_envelope_payload(),
+            headers=headers,
+        )
+        assert created_export.status_code == 201, created_export.text
+
+        first_release = client.post(
+            "/api/approved-exports/export-integration-001/release",
+            headers=headers,
+        )
+        assert first_release.status_code == 200, first_release.text
+
+        second_release = client.post(
+            "/api/approved-exports/export-integration-001/release",
+            headers=headers,
+        )
+        assert second_release.status_code == 200, second_release.text
+        assert second_release.json()["export"]["status"] == "sent"
+
+        export_sent_events = client.get(
+            "/api/ops-events/?event_type=export_sent",
+            headers=headers,
+        )
+        assert export_sent_events.status_code == 200, export_sent_events.text
+        assert len(export_sent_events.json()) == 1
+
+
+def test_release_endpoint_rejects_non_approved_exports() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = approved_export_envelope_payload()
+        payload["export"]["status"] = "draft"
+
+        created_export = client.post(
+            "/api/approved-exports/",
+            json=payload,
+            headers=headers,
+        )
+        assert created_export.status_code == 201, created_export.text
+
+        release_response = client.post(
+            "/api/approved-exports/export-integration-001/release",
+            headers=headers,
+        )
+        assert release_response.status_code == 409, release_response.text
+        assert (
+            release_response.json()["detail"]
+            == "only approved exports can be released"
+        )
+
+
 def test_sessions_and_findings_routes_are_removed() -> None:
     reset_database()
 

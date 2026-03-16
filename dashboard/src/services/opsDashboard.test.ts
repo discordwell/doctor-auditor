@@ -4,6 +4,7 @@ import type { OperationsSnapshot } from "./opsDashboard";
 import {
   buildAssistAssessmentCards,
   buildOverviewModel,
+  buildSessionActivityGroups,
   formatAssistDisposition,
   formatLatency,
   formatStatusLabel,
@@ -210,6 +211,12 @@ describe("opsDashboard helpers", () => {
     expect(model.queueLanes.map((lane) => lane.count)).toEqual([1, 1, 1]);
     expect(model.weeklyActivity).toHaveLength(6);
     expect(model.averageSendLatencyMs).toBe(35 * 60 * 1000);
+    expect(model.activityFeed).toHaveLength(3);
+    expect(model.activityFeed[0]).toMatchObject({
+      id: "session-demo-004",
+      title: "Approved export packet for the updated handoff summary.",
+      label: "Export approved",
+    });
   });
 
   it("sorts approved exports newest first", () => {
@@ -240,6 +247,48 @@ describe("opsDashboard helpers", () => {
       disposition: "expedited_human_review",
       reviewerAction: "dismissed",
       tone: "attention",
+    });
+  });
+
+  it("compresses activity into grouped session cards with session context", () => {
+    const groups = buildSessionActivityGroups(sampleSnapshot);
+
+    expect(groups).toHaveLength(3);
+
+    const sentSession = groups.find(
+      (item) => item.localSessionId === "session-demo-002"
+    );
+    expect(sentSession).toMatchObject({
+      exportSummary:
+        "Final export covering the reviewed empathy acknowledgement.",
+      latestAssistStatus: "completed",
+      latestAssistDisposition: "expedited_human_review",
+      latestAssistReviewerAction: "Dismissed",
+      eventCount: 5,
+    });
+    expect(sentSession?.activity.map((item) => item.label)).toEqual([
+      "Export sent",
+      "Export approved",
+      "Remote assist overridden",
+      "Remote assist completed",
+      "Remote assist requested",
+    ]);
+
+    const failedSession = groups.find(
+      (item) => item.localSessionId === "session-demo-004"
+    );
+    expect(failedSession).toMatchObject({
+      latestAssistStatus: "failed",
+      latestAssistErrorCode: "gateway-timeout",
+      eventCount: 3,
+    });
+
+    const draftSession = groups.find(
+      (item) => item.localSessionId === "session-demo-005"
+    );
+    expect(draftSession).toMatchObject({
+      exportStatus: "draft",
+      eventCount: 0,
     });
   });
 

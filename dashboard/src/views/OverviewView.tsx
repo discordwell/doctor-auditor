@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { describeDashboardLoadIssue } from "../services/api";
+import { api, describeDashboardLoadIssue } from "../services/api";
 import {
   buildOverviewModel,
   EMPTY_OPERATIONS_SNAPSHOT,
@@ -28,6 +28,9 @@ export default function OverviewView() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [releasingExportId, setReleasingExportId] = useState<string | null>(null);
+  const [actionInfoMessage, setActionInfoMessage] = useState("");
+  const [actionErrorMessage, setActionErrorMessage] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -59,6 +62,24 @@ export default function OverviewView() {
 
   const overview = useMemo(() => buildOverviewModel(snapshot), [snapshot]);
   const loadIssue = error ? describeDashboardLoadIssue(error) : null;
+
+  async function releaseExport(exportId: string): Promise<void> {
+    setActionInfoMessage("");
+    setActionErrorMessage("");
+    setReleasingExportId(exportId);
+
+    try {
+      await api.releaseApprovedExport(exportId);
+      const nextSnapshot = await loadOperationsSnapshot();
+      setSnapshot(nextSnapshot);
+      setActionInfoMessage(`${exportId} was released to its downstream queue.`);
+    } catch (actionError) {
+      const issue = describeDashboardLoadIssue(actionError);
+      setActionErrorMessage(issue.detail);
+    } finally {
+      setReleasingExportId((current) => (current === exportId ? null : current));
+    }
+  }
 
   if (loading) {
     return <div className="empty-state">Loading dashboard data...</div>;
@@ -102,6 +123,20 @@ export default function OverviewView() {
           </div>
         </div>
       </section>
+
+      {actionInfoMessage ? (
+        <section className="load-issue success">
+          <strong>Export released</strong>
+          <p>{actionInfoMessage}</p>
+        </section>
+      ) : null}
+
+      {actionErrorMessage ? (
+        <section className="load-issue attention">
+          <strong>Release failed</strong>
+          <p>{actionErrorMessage}</p>
+        </section>
+      ) : null}
 
       <section className="stats-grid">
         <article className="stat-card">
@@ -292,6 +327,16 @@ export default function OverviewView() {
                     <span>
                       {item.status === "approved" ? "Since approval" : "Since review"}
                     </span>
+                    {item.status === "approved" ? (
+                      <button
+                        type="button"
+                        className="action-button primary queue-row__action"
+                        onClick={() => void releaseExport(item.id)}
+                        disabled={releasingExportId !== null}
+                      >
+                        {releasingExportId === item.id ? "Sending..." : "Send now"}
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -337,9 +382,9 @@ export default function OverviewView() {
         <div className="panel-header">
           <div>
             <p className="section-kicker">Recent activity</p>
-            <h3>Latest export and ops events</h3>
+            <h3>Latest session activity</h3>
           </div>
-          <p>Newest queue changes.</p>
+          <p>Newest grouped queue changes.</p>
         </div>
         <div className="activity-list">
           {overview.activityFeed.map((item) => (

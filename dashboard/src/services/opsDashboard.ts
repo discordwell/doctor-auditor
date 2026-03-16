@@ -69,6 +69,49 @@ export type ActivityFeedItem = {
   tone: StatusTone;
 };
 
+export type SessionActivityEvent = {
+  id: string;
+  type: OpsEvent["type"];
+  label: string;
+  detail: string;
+  timestamp: string;
+  tone: StatusTone;
+};
+
+export type SessionActivityGroup = {
+  id: string;
+  localSessionId: string;
+  clinicianId: string | null;
+  captureMode: ApprovedExportEnvelope["session"]["captureMode"] | null;
+  encounterStartedAt: string | null;
+  encounterEndedAt: string | null;
+  exportStatus: ApprovedExportEnvelope["export"]["status"] | null;
+  exportSummary: string | null;
+  destination: string | null;
+  findings: ApprovedExportEnvelope["export"]["findings"];
+  approvedBy: string | null;
+  reviewedBy: string | null;
+  latestTimestamp: string;
+  tone: StatusTone;
+  eventTypes: OpsEvent["type"][];
+  eventCount: number;
+  activity: SessionActivityEvent[];
+  latestAssistStatus: "completed" | "failed" | null;
+  latestAssistDisposition:
+    | NonNullable<OpsEvent["assessment"]>["disposition"]
+    | null;
+  latestAssistConfidence: number | null;
+  latestAssistRationale: string | null;
+  latestAssistLimitations: string[];
+  latestAssistProvider: string | null;
+  latestAssistModel: string | null;
+  latestAssistPolicyMode: string | null;
+  latestAssistLatencyMs: number | null;
+  latestAssistReviewerAction: string | null;
+  latestAssistRecordedAt: string | null;
+  latestAssistErrorCode: string | null;
+};
+
 export type AssistAssessmentCard = {
   id: string;
   assistReceiptId: string;
@@ -269,6 +312,30 @@ function getAssistAssessmentTone(event: OpsEvent): StatusTone {
   }
 
   return "active";
+}
+
+function formatReviewerActionLabel(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function getTimestampValue(value: string | null | undefined): number {
+  const timestamp = Date.parse(value ?? "");
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function getTonePriority(tone: StatusTone): number {
+  switch (tone) {
+    case "attention":
+      return 3;
+    case "active":
+      return 2;
+    case "success":
+      return 1;
+    case "neutral":
+      return 0;
+  }
 }
 
 export function sortApprovedExports(
@@ -650,61 +717,347 @@ function buildOpsIssues(
     .slice(0, 5);
 }
 
-function buildActivityFeed(snapshot: OperationsSnapshot): ActivityFeedItem[] {
-  const exportItems = snapshot.approvedExports.map((item) => {
-    const updatedAt = getExportUpdatedAt(item);
+type SessionActivityGroupDraft = Omit<
+  SessionActivityGroup,
+  "eventTypes" | "eventCount" | "tone"
+> & {
+  eventTypes: Set<OpsEvent["type"]>;
+};
 
-    return {
-      id: `export-${item.id}`,
-      label:
-        item.export.status === "sent"
-          ? "Export sent"
-          : item.export.status === "approved"
-            ? "Ready to send"
-            : "In review",
-      title: item.export.summary,
-      detail: [
-        item.session.clinicianId,
-        item.session.localSessionId,
-        item.export.destination,
-      ]
-        .filter(Boolean)
-        .join(" · "),
-      timestamp: updatedAt,
-      tone: getExportTone(item.export.status),
-    };
-  });
+function buildOpsActivityDetail(
+  item: OpsEvent,
+  reviewerActionsByReceipt: Map<string, string>
+): string {
+  if (item.type === "assist_completed" && item.assessment) {
+    return [
+      formatAssistDisposition(item.assessment.disposition),
+      item.assessment.rationale,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
 
-  const opsItems = snapshot.opsEvents.map((item) => ({
+  if (item.type === "assist_requested") {
+    return [
+      item.actorId ? `Requested by ${item.actorId}` : null,
+      item.provider,
+      item.model,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (item.type === "assist_overridden") {
+    return [
+      item.reviewerAction
+        ? `Reviewer action: ${formatReviewerActionLabel(item.reviewerAction)}`
+        : null,
+      item.actorId,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (item.type === "assist_failed") {
+    return [
+      item.errorCode ? `Reason: ${item.errorCode}` : null,
+      reviewerActionsByReceipt.get(item.assistReceiptId ?? "") ?? null,
+      item.provider,
+      item.model,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (item.type === "redaction_blocked") {
+    return [
+      item.errorCode ? `Reason: ${item.errorCode}` : null,
+      item.actorId,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (item.type === "export_approved") {
+    return [item.actorId, item.exportId].filter(Boolean).join(" · ");
+  }
+
+  if (item.type === "export_sent") {
+    return [item.actorId, item.exportId].filter(Boolean).join(" · ");
+  }
+
+  return "System event";
+}
+
+function buildOpsActivityEvent(
+  item: OpsEvent,
+  reviewerActionsByReceipt: Map<string, string>
+): SessionActivityEvent {
+  return {
     id: `ops-${item.id}`,
+    type: item.type,
     label: formatStatusLabel(item.type),
-    title: item.localSessionId,
-    detail:
-      item.type === "assist_completed" && item.assessment
-        ? [
-            formatAssistDisposition(item.assessment.disposition),
-            item.actorId,
-            item.assessment.rationale,
-          ]
-            .filter(Boolean)
-            .join(" · ")
-        : [
-            item.actorId,
-            item.errorCode,
-            item.provider,
-            item.reviewerAction,
-          ]
-            .filter(Boolean)
-            .join(" · ") || "System event",
+    detail: buildOpsActivityDetail(item, reviewerActionsByReceipt),
     timestamp: item.recordedAt,
     tone:
       item.type === "assist_completed"
         ? getAssistAssessmentTone(item)
         : getOpsTone(item.type),
-  }));
+  };
+}
 
-  return [...exportItems, ...opsItems]
-    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+function addSessionActivity(
+  group: SessionActivityGroupDraft,
+  activity: SessionActivityEvent
+) {
+  group.activity.push(activity);
+  group.eventTypes.add(activity.type);
+
+  if (getTimestampValue(activity.timestamp) > getTimestampValue(group.latestTimestamp)) {
+    group.latestTimestamp = activity.timestamp;
+  }
+}
+
+function buildSyntheticExportEvents(
+  item: ApprovedExportEnvelope
+): SessionActivityEvent[] {
+  const events: SessionActivityEvent[] = [];
+
+  if (item.export.status === "approved" || item.export.status === "sent") {
+    events.push({
+      id: `export-approved-${item.id}`,
+      type: "export_approved",
+      label: formatStatusLabel("export_approved"),
+      detail: [
+        `Approved by ${item.export.approvedBy}`,
+        item.export.destination,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      timestamp: item.export.approvedAt,
+      tone: getExportTone("approved"),
+    });
+  }
+
+  if (item.export.status === "sent" && item.export.sentAt) {
+    events.push({
+      id: `export-sent-${item.id}`,
+      type: "export_sent",
+      label: formatStatusLabel("export_sent"),
+      detail: [item.export.destination, item.export.approvedBy]
+        .filter(Boolean)
+        .join(" · "),
+      timestamp: item.export.sentAt,
+      tone: getExportTone("sent"),
+    });
+  }
+
+  return events;
+}
+
+export function buildSessionActivityGroups(
+  snapshot: OperationsSnapshot
+): SessionActivityGroup[] {
+  const reviewerActionsByReceipt = new Map<string, string>();
+  const latestExportBySession = new Map<string, ApprovedExportEnvelope>();
+  const groups = new Map<string, SessionActivityGroupDraft>();
+
+  sortOpsEvents(snapshot.opsEvents)
+    .filter((item) => item.type === "assist_overridden" && item.assistReceiptId)
+    .forEach((item) => {
+      if (!item.assistReceiptId || reviewerActionsByReceipt.has(item.assistReceiptId)) {
+        return;
+      }
+
+      reviewerActionsByReceipt.set(
+        item.assistReceiptId,
+        item.reviewerAction
+          ? formatReviewerActionLabel(item.reviewerAction)
+          : "Overridden"
+      );
+    });
+
+  snapshot.approvedExports.forEach((item) => {
+    const existing = latestExportBySession.get(item.session.localSessionId);
+
+    if (
+      !existing ||
+      getTimestampValue(getExportUpdatedAt(item)) >
+        getTimestampValue(getExportUpdatedAt(existing))
+    ) {
+      latestExportBySession.set(item.session.localSessionId, item);
+    }
+  });
+
+  function ensureGroup(localSessionId: string): SessionActivityGroupDraft {
+    const existing = groups.get(localSessionId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const exportEnvelope = latestExportBySession.get(localSessionId);
+    const nextGroup: SessionActivityGroupDraft = {
+      id: localSessionId,
+      localSessionId,
+      clinicianId: exportEnvelope?.session.clinicianId ?? null,
+      captureMode: exportEnvelope?.session.captureMode ?? null,
+      encounterStartedAt: exportEnvelope?.session.encounterStartedAt ?? null,
+      encounterEndedAt: exportEnvelope?.session.encounterEndedAt ?? null,
+      exportStatus: exportEnvelope?.export.status ?? null,
+      exportSummary: exportEnvelope?.export.summary ?? null,
+      destination: exportEnvelope?.export.destination ?? null,
+      findings: exportEnvelope?.export.findings ?? [],
+      approvedBy: exportEnvelope?.export.approvedBy ?? null,
+      reviewedBy: exportEnvelope?.attestation.reviewedBy ?? null,
+      latestTimestamp: exportEnvelope ? getExportUpdatedAt(exportEnvelope) : "",
+      eventTypes: new Set<OpsEvent["type"]>(),
+      activity: [],
+      latestAssistStatus: null,
+      latestAssistDisposition: null,
+      latestAssistConfidence: null,
+      latestAssistRationale: null,
+      latestAssistLimitations: [],
+      latestAssistProvider: null,
+      latestAssistModel: null,
+      latestAssistPolicyMode: null,
+      latestAssistLatencyMs: null,
+      latestAssistReviewerAction: null,
+      latestAssistRecordedAt: null,
+      latestAssistErrorCode: null,
+    };
+
+    groups.set(localSessionId, nextGroup);
+    return nextGroup;
+  }
+
+  latestExportBySession.forEach((_, localSessionId) => {
+    ensureGroup(localSessionId);
+  });
+
+  sortOpsEvents(snapshot.opsEvents).forEach((item) => {
+    const group = ensureGroup(item.localSessionId);
+    addSessionActivity(group, buildOpsActivityEvent(item, reviewerActionsByReceipt));
+
+    if (
+      item.type !== "assist_completed" &&
+      item.type !== "assist_failed"
+    ) {
+      return;
+    }
+
+    if (
+      group.latestAssistRecordedAt &&
+      getTimestampValue(item.recordedAt) <=
+        getTimestampValue(group.latestAssistRecordedAt)
+    ) {
+      return;
+    }
+
+    if (item.type === "assist_completed" && item.assessment) {
+      group.latestAssistStatus = "completed";
+      group.latestAssistDisposition = item.assessment.disposition;
+      group.latestAssistConfidence = item.assessment.confidence;
+      group.latestAssistRationale = item.assessment.rationale;
+      group.latestAssistLimitations = item.assessment.limitations;
+      group.latestAssistProvider = item.provider ?? item.assessment.provider;
+      group.latestAssistModel = item.model ?? item.assessment.model;
+      group.latestAssistPolicyMode = item.policyMode ?? null;
+      group.latestAssistLatencyMs = item.latencyMs ?? null;
+      group.latestAssistReviewerAction =
+        reviewerActionsByReceipt.get(item.assistReceiptId ?? "") ??
+        (item.reviewerAction
+          ? formatReviewerActionLabel(item.reviewerAction)
+          : null);
+      group.latestAssistRecordedAt = item.recordedAt;
+      group.latestAssistErrorCode = null;
+      return;
+    }
+
+    if (item.type === "assist_failed") {
+      group.latestAssistStatus = "failed";
+      group.latestAssistDisposition = null;
+      group.latestAssistConfidence = null;
+      group.latestAssistRationale = item.errorCode
+        ? `The assist request failed before an assessment was returned: ${item.errorCode}.`
+        : "The assist request failed before an assessment was returned.";
+      group.latestAssistLimitations = [];
+      group.latestAssistProvider = item.provider ?? null;
+      group.latestAssistModel = item.model ?? null;
+      group.latestAssistPolicyMode = item.policyMode ?? null;
+      group.latestAssistLatencyMs = item.latencyMs ?? null;
+      group.latestAssistReviewerAction =
+        reviewerActionsByReceipt.get(item.assistReceiptId ?? "") ??
+        (item.reviewerAction
+          ? formatReviewerActionLabel(item.reviewerAction)
+          : null);
+      group.latestAssistRecordedAt = item.recordedAt;
+      group.latestAssistErrorCode = item.errorCode ?? null;
+    }
+  });
+
+  latestExportBySession.forEach((item, localSessionId) => {
+    const group = ensureGroup(localSessionId);
+
+    buildSyntheticExportEvents(item).forEach((event) => {
+      if (group.eventTypes.has(event.type)) {
+        return;
+      }
+
+      addSessionActivity(group, event);
+    });
+  });
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const activity = [...group.activity].sort(
+        (left, right) =>
+          getTimestampValue(right.timestamp) - getTimestampValue(left.timestamp)
+      );
+      const tone = activity.reduce<StatusTone>(
+        (current, item) =>
+          getTonePriority(item.tone) > getTonePriority(current) ? item.tone : current,
+        group.exportStatus ? getExportTone(group.exportStatus) : "neutral"
+      );
+
+      return {
+        ...group,
+        latestTimestamp:
+          activity[0]?.timestamp ?? group.latestTimestamp ?? group.latestAssistRecordedAt ?? "",
+        tone,
+        eventTypes: Array.from(group.eventTypes),
+        eventCount: activity.length,
+        activity,
+      };
+    })
+    .sort(
+      (left, right) =>
+        getTimestampValue(right.latestTimestamp) - getTimestampValue(left.latestTimestamp)
+    );
+}
+
+function buildActivityFeed(snapshot: OperationsSnapshot): ActivityFeedItem[] {
+  return buildSessionActivityGroups(snapshot)
+    .map((group) => {
+      const latestActivity = group.activity[0];
+
+      return {
+        id: group.id,
+        label:
+          latestActivity?.label ??
+          (group.exportStatus ? formatStatusLabel(group.exportStatus) : "Session activity"),
+        title: group.exportSummary ?? group.localSessionId,
+        detail: [
+          group.clinicianId,
+          group.localSessionId,
+          latestActivity?.detail ?? group.destination,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        timestamp: group.latestTimestamp,
+        tone: latestActivity?.tone ?? group.tone,
+      };
+    })
     .slice(0, 8);
 }
 
