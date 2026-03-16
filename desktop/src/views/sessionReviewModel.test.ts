@@ -2,6 +2,7 @@ import type { DesktopSessionBundle } from "../types/electron";
 import { describe, expect, it } from "vitest";
 import {
   buildReviewWorkspace,
+  getApprovedExportActionState,
   getPersistedOutcome,
 } from "./sessionReviewModel";
 
@@ -107,6 +108,65 @@ describe("getPersistedOutcome", () => {
     expect(
       getPersistedOutcome(bundle.findings[0], bundle.reviewDecisions)
     ).toBe("accepted");
+  });
+});
+
+describe("getApprovedExportActionState", () => {
+  it("enables approval only when export has not already been created", () => {
+    const baseSession = createBundle({}).session;
+    const bundle = createBundle({
+      session: {
+        ...baseSession,
+        reviewStatus: "completed",
+        exportStatus: "not_requested",
+        consent: {
+          ...baseSession.consent,
+          exportAllowed: true,
+        },
+      },
+    });
+
+    expect(
+      getApprovedExportActionState(bundle.session, false)
+    ).toEqual({
+      disabled: false,
+      label: "Approve export envelope",
+    });
+  });
+
+  it("shows approved exports as a disabled status action", () => {
+    const baseSession = createBundle({}).session;
+    const bundle = createBundle({
+      session: {
+        ...baseSession,
+        reviewStatus: "completed",
+        exportStatus: "approved",
+      },
+    });
+
+    expect(
+      getApprovedExportActionState(bundle.session, false)
+    ).toEqual({
+      disabled: true,
+      label: "Export envelope approved",
+    });
+  });
+
+  it("shows in-flight export creation as saving", () => {
+    const baseSession = createBundle({}).session;
+    const bundle = createBundle({
+      session: {
+        ...baseSession,
+        reviewStatus: "completed",
+      },
+    });
+
+    expect(
+      getApprovedExportActionState(bundle.session, true)
+    ).toEqual({
+      disabled: true,
+      label: "Saving export...",
+    });
   });
 });
 

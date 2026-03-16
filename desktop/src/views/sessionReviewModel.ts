@@ -1,4 +1,5 @@
 import type {
+  ExportStatus,
   Finding,
   ReviewDecision,
   ReviewDecisionOutcome,
@@ -10,6 +11,11 @@ export interface ReviewWorkspace {
   findings: Finding[];
   hasTranscript: boolean;
   hasFindings: boolean;
+}
+
+export interface ApprovedExportActionState {
+  disabled: boolean;
+  label: string;
 }
 
 export function buildReviewWorkspace(
@@ -47,4 +53,41 @@ export function getPersistedOutcome(
     default:
       return undefined;
   }
+}
+
+export function getApprovedExportActionState(
+  session: DesktopSessionBundle["session"],
+  isCreatingExport: boolean
+): ApprovedExportActionState {
+  if (isCreatingExport) {
+    return {
+      disabled: true,
+      label: "Saving export...",
+    };
+  }
+
+  switch (session.exportStatus) {
+    case "approved":
+      return {
+        disabled: true,
+        label: "Export envelope approved",
+      };
+    case "sent":
+      return {
+        disabled: true,
+        label: "Export envelope sent",
+      };
+    default:
+      return {
+        disabled:
+          !canCreateApprovedExport(session.exportStatus) ||
+          session.reviewStatus !== "completed" ||
+          !session.consent.exportAllowed,
+        label: "Approve export envelope",
+      };
+  }
+}
+
+function canCreateApprovedExport(exportStatus: ExportStatus): boolean {
+  return exportStatus === "not_requested" || exportStatus === "draft";
 }

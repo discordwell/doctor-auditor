@@ -13,6 +13,7 @@ import type {
 import type { DesktopSessionBundle } from "../types/electron";
 import {
   buildReviewWorkspace,
+  getApprovedExportActionState,
   getPersistedOutcome,
 } from "./sessionReviewModel";
 import "./SessionReviewView.css";
@@ -264,6 +265,15 @@ export default function SessionReviewView({
       return;
     }
 
+    if (
+      bundle.session.exportStatus === "approved" ||
+      bundle.session.exportStatus === "sent"
+    ) {
+      setActionErrorMessage("");
+      setActionInfoMessage("This session already has an approved export envelope.");
+      return;
+    }
+
     setActionErrorMessage("");
     setActionInfoMessage("");
     setIsCreatingExport(true);
@@ -294,6 +304,9 @@ export default function SessionReviewView({
   }
 
   const workspace = bundle ? buildReviewWorkspace(bundle) : null;
+  const approvedExportAction = bundle
+    ? getApprovedExportActionState(bundle.session, isCreatingExport)
+    : null;
   const findings = workspace?.findings ?? [];
   const transcriptSegments = workspace?.transcriptSegments ?? [];
   const modelAssistReceipts = bundle?.modelAssistReceipts ?? [];
@@ -400,13 +413,9 @@ export default function SessionReviewView({
           type="button"
           className="session-review__button"
           onClick={() => void createApprovedExport()}
-          disabled={
-            isCreatingExport ||
-            bundle.session.reviewStatus !== "completed" ||
-            !bundle.session.consent.exportAllowed
-          }
+          disabled={approvedExportAction?.disabled ?? true}
         >
-          {isCreatingExport ? "Saving export..." : "Approve export envelope"}
+          {approvedExportAction?.label ?? "Approve export envelope"}
         </button>
       </div>
 
