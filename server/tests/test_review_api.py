@@ -470,29 +470,6 @@ def test_assist_gateway_returns_structured_assessment() -> None:
         assert body["disposition"] == "expedited_human_review"
         assert body["provider"] == "doctor-auditor-assist-gateway"
 
-
-def test_completed_ops_event_requires_assessment() -> None:
-    reset_database()
-
-    with TestClient(app) as client:
-        headers = auth_headers(client)
-        payload = ops_event_payload()
-        payload.pop("assessment")
-
-        response = client.post(
-            "/api/ops-events/",
-            json=payload,
-            headers=headers,
-        )
-
-        assert response.status_code == 422, response.text
-        assert any(
-            error["loc"] == ["body"]
-            and "assessment is required" in error["msg"]
-            for error in response.json()["detail"]
-        )
-
-
 def test_assist_gateway_rejects_raw_transcript_fields() -> None:
     reset_database()
 

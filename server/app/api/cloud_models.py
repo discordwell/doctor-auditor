@@ -194,8 +194,6 @@ class OpsEventModel(StrictCloudModel):
             raise ValueError("assistReceiptId is required for assist events")
         if self.type in {"export_approved", "export_sent"} and not self.exportId:
             raise ValueError("exportId is required for export events")
-        if self.type == "assist_completed" and self.assessment is None:
-            raise ValueError("assessment is required for assist_completed events")
         if self.type != "assist_completed" and self.assessment is not None:
             raise ValueError("assessment is only allowed for assist_completed events")
         return self
