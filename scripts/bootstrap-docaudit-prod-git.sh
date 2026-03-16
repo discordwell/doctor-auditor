@@ -17,10 +17,14 @@ ssh -o BatchMode=yes "$HOST_ALIAS" "
 
   ts=\$(date -u +%Y%m%dT%H%M%SZ)
   backup='${REMOTE_ROOT}-manual-'\$ts
+  tmp_checkout=\$(mktemp -d /tmp/doctor-auditor-api-bootstrap-XXXXXX)
+  owner=\$(id -un):\$(id -gn)
 
-  mv '$REMOTE_ROOT' \"\$backup\"
-  git clone --branch '$BRANCH' '$ORIGIN_URL' '$REMOTE_ROOT'
-  cp \"\$backup/.env\" '$REMOTE_ROOT/.env'
+  git clone --branch '$BRANCH' '$ORIGIN_URL' \"\$tmp_checkout\"
+  cp '$REMOTE_ROOT/.env' \"\$tmp_checkout/.env\"
+  sudo mv '$REMOTE_ROOT' \"\$backup\"
+  sudo mv \"\$tmp_checkout\" '$REMOTE_ROOT'
+  sudo chown -R \"\$owner\" '$REMOTE_ROOT'
 
   echo \"Previous manual deploy preserved at \$backup\"
 "
