@@ -40,6 +40,10 @@ import type {
   SessionIntakeRequest,
   UpdateModelAssistActionRequest,
 } from "./review-models";
+import {
+  canAutoRecoverTranscription,
+  canManuallyRetryTranscription,
+} from "./transcription-recovery";
 
 const DESKTOP_REVIEWER_ID = "desktop";
 
@@ -269,6 +273,114 @@ function queueTranscription(
   });
 
   return queuedSummary;
+}
+
+function getTranscriptSource(
+  sessionSummary: DesktopSessionSummary
+): TranscriptSegment["source"] {
+  return sessionSummary.session.captureMode === "live_capture"
+    ? "live_capture"
+    : "audio_import";
+}
+
+function markTranscriptFailure(
+  sessionId: string,
+  error?: unknown
+): DesktopSessionSummary | null {
+  if (!db) {
+    return null;
+  }
+
+  if (error) {
+    console.error("Transcription recovery failed:", error);
+  }
+
+  const failedSummary = db.updateSession(sessionId, {
+    transcriptStatus: "failed",
+  });
+
+  if (failedSummary) {
+    emitSessionChanged(failedSummary);
+  }
+
+  return failedSummary;
+}
+
+async function resolveSessionAudioPath(
+  sessionSummary: DesktopSessionSummary
+): Promise<string> {
+  if (!sessionSummary.audioPath) {
+    throw new Error("This session no longer has local audio to transcribe.");
+  }
+
+  try {
+    await fs.access(sessionSummary.audioPath);
+  } catch {
+    throw new Error("The local audio file for this session is missing.");
+  }
+
+  return sessionSummary.audioPath;
+}
+
+async function retrySessionTranscription(
+  sessionId: string
+): Promise<DesktopSessionSummary | null> {
+  if (!db) {
+    throw new Error("Database not initialized");
+  }
+
+  const sessionSummary = db.getSessionSummary(sessionId);
+  if (!sessionSummary) {
+    throw new Error("The selected review session no longer exists.");
+  }
+
+  if (!canManuallyRetryTranscription(sessionSummary)) {
+    throw new Error(
+      "Only failed sessions with saved local audio can be retried."
+    );
+  }
+
+  const audioPath = await resolveSessionAudioPath(sessionSummary);
+  return queueTranscription(
+    sessionId,
+    audioPath,
+    getTranscriptSource(sessionSummary)
+  );
+}
+
+async function resumePendingTranscriptions(): Promise<void> {
+  if (!db) {
+    return;
+  }
+
+  const userDataPath = app.getPath("userData");
+  const recoverableSessions = db
+    .getAllSessions()
+    .filter((sessionSummary) =>
+      canAutoRecoverTranscription(sessionSummary, userDataPath)
+    )
+    .sort((left, right) => {
+      return (
+        Date.parse(left.session.createdAt) - Date.parse(right.session.createdAt)
+      );
+    });
+
+  for (const sessionSummary of recoverableSessions) {
+    try {
+      const audioPath = await resolveSessionAudioPath(sessionSummary);
+      queueTranscription(
+        sessionSummary.session.id,
+        audioPath,
+        getTranscriptSource(sessionSummary)
+      );
+    } catch (error) {
+      console.warn(
+        `Unable to resume transcript processing for ${sessionSummary.session.id}:`,
+        error
+      );
+      markTranscriptFailure(sessionSummary.session.id, error);
+    }
+  }
 }
 
 function getValidatedIntake(
@@ -616,6 +728,13 @@ function registerIpcHandlers(): void {
     return db.getSession(sessionId);
   });
 
+  ipcMain.handle(
+    "session:retry-transcription",
+    async (_event, sessionId: string) => {
+      return retrySessionTranscription(sessionId);
+    }
+  );
+
   ipcMain.handle("session:delete", async (_event, sessionId: string) => {
     if (!db) throw new Error("Database not initialized");
     if (activeRecordingSessionId === sessionId) {
@@ -949,6 +1068,7 @@ app.whenReady()
     await initializeServices();
     registerIpcHandlers();
     createWindow();
+    void resumePendingTranscriptions();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

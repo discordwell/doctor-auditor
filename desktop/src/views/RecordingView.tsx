@@ -76,6 +76,7 @@ export default function RecordingView() {
     useState<CaptureTransition>("idle");
   const [recentSession, setRecentSession] =
     useState<DesktopSessionSummary | null>(null);
+  const [isRetryingRecentSession, setIsRetryingRecentSession] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshLiveCaptureStatus = useCallback(async () => {
@@ -379,6 +380,49 @@ export default function RecordingView() {
       setIsImporting(false);
     }
   }, [clinicianId, exportAllowed, remoteAssistAllowed, recordedWithConsent]);
+
+  const retryRecentSession = useCallback(async () => {
+    if (!window.doctorAuditor || !recentSession) {
+      return;
+    }
+
+    if (!canRetryTranscription(recentSession) || isRetryingRecentSession) {
+      return;
+    }
+
+    setIsRetryingRecentSession(true);
+    setLiveCaptureNotice({
+      tone: "active",
+      message: `Retrying transcript processing for ${formatClinicianLabel(
+        recentSession.session.clinicianId
+      )}.`,
+    });
+
+    try {
+      const nextSession = await window.doctorAuditor.session.retryTranscription(
+        recentSession.session.id
+      );
+
+      if (nextSession) {
+        setRecentSession(nextSession);
+      }
+
+      setLiveCaptureNotice({
+        tone: "success",
+        message: "Transcript processing restarted for the latest session.",
+      });
+    } catch (error) {
+      setLiveCaptureNotice({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Transcript processing could not be restarted.",
+      });
+    } finally {
+      setIsRetryingRecentSession(false);
+    }
+  }, [isRetryingRecentSession, recentSession]);
 
   const completedImportSteps =
     importState.stage === "idle" ||
@@ -733,6 +777,16 @@ export default function RecordingView() {
             <span className="status-chip">
               Remote assist available
             </span>
+            {canRetryTranscription(recentSession) ? (
+              <button
+                type="button"
+                className="capture-status-button"
+                onClick={() => void retryRecentSession()}
+                disabled={isRetryingRecentSession}
+              >
+                {isRetryingRecentSession ? "Retrying..." : "Retry transcript"}
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -864,4 +918,14 @@ function getFileName(filePath?: string): string {
 
   const parts = filePath.split(/[/\\]/);
   return parts[parts.length - 1] || "Local audio";
+}
+
+function canRetryTranscription(
+  sessionSummary: DesktopSessionSummary
+): boolean {
+  return (
+    Boolean(sessionSummary.audioPath) &&
+    sessionSummary.transcriptSegmentCount === 0 &&
+    sessionSummary.session.transcriptStatus === "failed"
+  );
 }

@@ -542,6 +542,7 @@ def transcribe_with_faster_whisper(request: Dict[str, Any]) -> Any:
     from faster_whisper import WhisperModel
 
     model_reference = resolve_python_model_reference(request)
+    session_token = normalize_identifier(request["sessionId"])
     device = os.environ.get("DOCTOR_AUDITOR_REVIEW_ML_DEVICE", "auto")
     compute_type = os.environ.get("DOCTOR_AUDITOR_REVIEW_ML_COMPUTE_TYPE", "default")
     download_root = resolve_download_root(request)
@@ -560,7 +561,7 @@ def transcribe_with_faster_whisper(request: Dict[str, Any]) -> Any:
 
     return [
         {
-            "id": f"segment-{index}",
+            "id": f"segment-{session_token}-{index}",
             "sessionId": request["sessionId"],
             "speakerLabel": "unknown",
             "text": (segment.text or "").strip(),
@@ -578,6 +579,7 @@ def transcribe_with_openai_whisper(request: Dict[str, Any]) -> Any:
     import whisper
 
     model_reference = resolve_python_model_reference(request)
+    session_token = normalize_identifier(request["sessionId"])
     download_root = resolve_download_root(request)
     model = whisper.load_model(model_reference, download_root=download_root)
     result = model.transcribe(
@@ -588,7 +590,7 @@ def transcribe_with_openai_whisper(request: Dict[str, Any]) -> Any:
 
     return [
         {
-            "id": f"segment-{index}",
+            "id": f"segment-{session_token}-{index}",
             "sessionId": request["sessionId"],
             "speakerLabel": "unknown",
             "text": (segment.get("text") or "").strip(),

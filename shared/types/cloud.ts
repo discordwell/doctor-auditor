@@ -64,6 +64,19 @@ export type OpsEventType =
   | "export_approved"
   | "export_sent";
 
+export interface AssistAssessmentSnapshot {
+  disposition:
+    | "routine_review"
+    | "expedited_human_review"
+    | "insufficient_context";
+  confidence: number;
+  rationale: string;
+  limitations: string[];
+  provider: string;
+  model: string;
+  assessedAt: ISO8601Timestamp;
+}
+
 export interface OpsEvent {
   id: string;
   organizationId?: string;
@@ -79,6 +92,7 @@ export interface OpsEvent {
   latencyMs?: number;
   errorCode?: string;
   reviewerAction?: string;
+  assessment?: AssistAssessmentSnapshot;
 }
 
 export interface OpsSummary {

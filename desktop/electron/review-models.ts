@@ -28,6 +28,8 @@ export interface DesktopSessionBundle extends SessionBundle {
   audioPath?: string;
 }
 
+export type RetryTranscriptionResult = DesktopSessionSummary | null;
+
 export interface PersistReviewDecisionRequest {
   sessionId: string;
   findingId: string;

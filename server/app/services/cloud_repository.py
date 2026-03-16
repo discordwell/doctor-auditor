@@ -106,6 +106,7 @@ def _ops_event_model(record: OpsEventRecord) -> OpsEventModel:
         latencyMs=record.latency_ms,
         errorCode=record.error_code,
         reviewerAction=record.reviewer_action,
+        assessment=record.assessment_payload,
     )
 
 
@@ -277,6 +278,9 @@ async def ingest_ops_event(
     record.latency_ms = payload.latencyMs
     record.error_code = payload.errorCode
     record.reviewer_action = payload.reviewerAction
+    record.assessment_payload = (
+        payload.assessment.model_dump() if payload.assessment is not None else None
+    )
 
     await db.commit()
     await db.refresh(record)

@@ -146,6 +146,21 @@ class ApprovedExportEnvelopeModel(StrictCloudModel):
         return self
 
 
+class AssistAssessmentSnapshotModel(StrictCloudModel):
+    disposition: SeriousnessDisposition
+    confidence: float = Field(ge=0, le=1)
+    rationale: str = Field(min_length=1)
+    limitations: list[str] = Field(default_factory=list)
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    assessedAt: str
+
+    @field_validator("assessedAt")
+    @classmethod
+    def validate_timestamps(cls, value: str) -> str:
+        return _validate_iso8601_timestamp(value) or value
+
+
 class OpsEventModel(StrictCloudModel):
     id: str = Field(min_length=1)
     organizationId: str | None = None
@@ -161,6 +176,7 @@ class OpsEventModel(StrictCloudModel):
     latencyMs: int | None = None
     errorCode: str | None = None
     reviewerAction: str | None = None
+    assessment: AssistAssessmentSnapshotModel | None = None
 
     @field_validator("recordedAt")
     @classmethod
@@ -178,6 +194,10 @@ class OpsEventModel(StrictCloudModel):
             raise ValueError("assistReceiptId is required for assist events")
         if self.type in {"export_approved", "export_sent"} and not self.exportId:
             raise ValueError("exportId is required for export events")
+        if self.type == "assist_completed" and self.assessment is None:
+            raise ValueError("assessment is required for assist_completed events")
+        if self.type != "assist_completed" and self.assessment is not None:
+            raise ValueError("assessment is only allowed for assist_completed events")
         return self
 
 
@@ -217,16 +237,5 @@ class AssistGatewayRequestModel(StrictCloudModel):
         return _validate_iso8601_timestamp(value) or value
 
 
-class SeriousnessAssessmentModel(StrictCloudModel):
-    disposition: SeriousnessDisposition
-    confidence: float = Field(ge=0, le=1)
-    rationale: str = Field(min_length=1)
-    limitations: list[str] = Field(default_factory=list)
-    provider: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    assessedAt: str
-
-    @field_validator("assessedAt")
-    @classmethod
-    def validate_timestamps(cls, value: str) -> str:
-        return _validate_iso8601_timestamp(value) or value
+class SeriousnessAssessmentModel(AssistAssessmentSnapshotModel):
+    pass

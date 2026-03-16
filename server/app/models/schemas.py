@@ -111,3 +111,4 @@ class OpsEventRecord(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     reviewer_action: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    assessment_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)

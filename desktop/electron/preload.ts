@@ -9,6 +9,7 @@ import type {
   PersistReviewDecisionRequest,
   RequestSeriousnessAssistRequest,
   RequestSeriousnessAssistResult,
+  RetryTranscriptionResult,
   SessionImportProgress,
   SessionIntakeRequest,
   StartRecordingResult,
@@ -59,6 +60,11 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
   session: {
     getAll: () => ipcRenderer.invoke("session:get-all"),
     get: (sessionId: string) => ipcRenderer.invoke("session:get", sessionId),
+    retryTranscription: (sessionId: string) =>
+      ipcRenderer.invoke(
+        "session:retry-transcription",
+        sessionId
+      ) as Promise<RetryTranscriptionResult>,
     delete: (sessionId: string) => ipcRenderer.invoke("session:delete", sessionId),
     saveReviewDecision: (request: PersistReviewDecisionRequest) =>
       ipcRenderer.invoke("session:save-review-decision", request),

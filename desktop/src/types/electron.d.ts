@@ -25,6 +25,8 @@ export interface DesktopSessionBundle extends SessionBundle {
   audioPath?: string;
 }
 
+export type RetryTranscriptionResult = DesktopSessionSummary | null;
+
 export interface PersistReviewDecisionRequest {
   sessionId: string;
   findingId: string;
@@ -141,6 +143,9 @@ export interface DoctorAuditorAPI {
   session: {
     getAll: () => Promise<DesktopSessionSummary[]>;
     get: (sessionId: string) => Promise<DesktopSessionBundle | null>;
+    retryTranscription: (
+      sessionId: string
+    ) => Promise<RetryTranscriptionResult>;
     delete: (sessionId: string) => Promise<void>;
     saveReviewDecision: (
       request: PersistReviewDecisionRequest

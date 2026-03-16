@@ -59,6 +59,9 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<
     string | null
   >(null);
+  const [pendingRetrySessionId, setPendingRetrySessionId] = useState<
+    string | null
+  >(null);
 
   const loadSessions = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -164,6 +167,67 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
       );
     }
   }, []);
+
+  const retryTranscription = useCallback(
+    async (sessionSummary: DesktopSessionSummary) => {
+      if (!window.doctorAuditor) {
+        setArchiveActionMessage({
+          tone: "warning",
+          text: "Desktop session API unavailable.",
+        });
+        return;
+      }
+
+      if (!canRetryTranscription(sessionSummary)) {
+        setArchiveActionMessage({
+          tone: "warning",
+          text: "Only failed sessions with saved local audio can be retried.",
+        });
+        return;
+      }
+
+      setArchiveActionMessage(null);
+      setPendingRetrySessionId(sessionSummary.session.id);
+
+      try {
+        const nextSession = await window.doctorAuditor.session.retryTranscription(
+          sessionSummary.session.id
+        );
+
+        if (nextSession) {
+          setSessions((currentSessions) =>
+            currentSessions.map((currentSession) =>
+              currentSession.session.id === nextSession.session.id
+                ? nextSession
+                : currentSession
+            )
+          );
+        }
+
+        setArchiveActionMessage({
+          tone: "success",
+          text: `Transcript retry started for ${formatClinicianLabel(
+            sessionSummary.session.clinicianId
+          )}.`,
+        });
+      } catch (error) {
+        setArchiveActionMessage({
+          tone: "warning",
+          text:
+            error instanceof Error
+              ? error.message
+              : "Unable to retry the selected transcript.",
+        });
+      } finally {
+        setPendingRetrySessionId((currentSessionId) =>
+          currentSessionId === sessionSummary.session.id
+            ? null
+            : currentSessionId
+        );
+      }
+    },
+    []
+  );
 
   const filteredSessions = sessions.filter((session) => {
     return (
@@ -367,6 +431,8 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
                 const sessionState = getSessionState(sessionSummary);
                 const { session } = sessionSummary;
                 const isDeleting = pendingDeleteSessionId === session.id;
+                const isRetrying = pendingRetrySessionId === session.id;
+                const canRetry = canRetryTranscription(sessionSummary);
 
                 return (
                   <article key={session.id} className="history-shell__card">
@@ -486,11 +552,21 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
                         </span>
                       </div>
                       <div className="history-shell__card-action-buttons">
+                        {canRetry ? (
+                          <button
+                            type="button"
+                            className="history-shell__button"
+                            onClick={() => void retryTranscription(sessionSummary)}
+                            disabled={isDeleting || isRetrying}
+                          >
+                            {isRetrying ? "Retrying..." : "Retry transcript"}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="history-shell__button history-shell__button--secondary"
                           onClick={() => onOpenSession(session.id)}
-                          disabled={isDeleting}
+                          disabled={isDeleting || isRetrying}
                         >
                           Open review
                         </button>
@@ -498,7 +574,7 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
                           type="button"
                           className="history-shell__button history-shell__button--danger"
                           onClick={() => void deleteSession(sessionSummary)}
-                          disabled={isDeleting}
+                          disabled={isDeleting || isRetrying}
                         >
                           {isDeleting ? "Deleting..." : "Delete session"}
                         </button>
@@ -653,7 +729,9 @@ function getSessionState(sessionSummary: DesktopSessionSummary): SessionState {
       label: "Needs follow-up",
       tone: "warning",
       detail:
-        "Recording or transcription failed for this encounter. Check the local audio file before continuing review.",
+        audioPath
+          ? "Recording or transcription failed for this encounter. Retry transcript processing after confirming the saved local audio is intact."
+          : "Recording or transcription failed for this encounter. Check the local audio file before continuing review.",
     };
   }
 
@@ -766,4 +844,14 @@ function getExportBadgeTone(value: ExportStatus): BadgeTone {
     case "not_requested":
       return "neutral";
   }
+}
+
+function canRetryTranscription(
+  sessionSummary: DesktopSessionSummary
+): boolean {
+  return (
+    Boolean(sessionSummary.audioPath) &&
+    sessionSummary.transcriptSegmentCount === 0 &&
+    sessionSummary.session.transcriptStatus === "failed"
+  );
 }

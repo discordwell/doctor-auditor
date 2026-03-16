@@ -231,6 +231,57 @@ describe("PythonReviewMlClient", () => {
     );
   });
 
+  it("generates transcript segment ids that stay unique across sessions", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-auditor-review-ml-"));
+    const modelPath = path.join(tempDir, "model.bin");
+    const stubModulePath = path.join(tempDir, "faster_whisper.py");
+
+    fs.writeFileSync(modelPath, "");
+    fs.writeFileSync(
+      stubModulePath,
+      [
+        "class Segment:",
+        "    def __init__(self, text, start, end):",
+        "        self.text = text",
+        "        self.start = start",
+        "        self.end = end",
+        "",
+        "class WhisperModel:",
+        "    def __init__(self, *args, **kwargs):",
+        "        pass",
+        "",
+        "    def transcribe(self, audio_path, language=None, word_timestamps=False):",
+        "        return ([Segment(f'stub:{audio_path}', 0, 1)], None)",
+      ].join("\n")
+    );
+
+    client = new PythonReviewMlClient({
+      modelPath,
+      pythonExecutable: "python3",
+      workerEnv: {
+        ...process.env,
+        DOCTOR_AUDITOR_REVIEW_ML_PROVIDER: "faster_whisper",
+        PYTHONPATH: tempDir,
+      },
+      workerPath,
+    });
+
+    const first = await client.transcribeFile(
+      "alpha.wav",
+      "session-alpha",
+      "audio_import"
+    );
+    const second = await client.transcribeFile(
+      "beta.wav",
+      "session-beta",
+      "audio_import"
+    );
+
+    expect(first[0]?.id).toBe("segment-sessionalpha-1");
+    expect(second[0]?.id).toBe("segment-sessionbeta-1");
+    expect(first[0]?.id).not.toBe(second[0]?.id);
+  });
+
   it("generates finding ids that stay unique across sessions", async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-auditor-review-ml-"));
     const modelPath = path.join(tempDir, "model.bin");
