@@ -1,8 +1,10 @@
 import type {
+  EvidenceSpan,
   ExportStatus,
   Finding,
   ReviewDecision,
   ReviewDecisionOutcome,
+  TranscriptSegment,
 } from "@doctor-auditor/shared/local-review";
 import type { DesktopSessionBundle } from "../types/electron";
 
@@ -33,14 +35,10 @@ export function getPersistedOutcome(
   finding: Finding,
   reviewDecisions: ReviewDecision[]
 ): ReviewDecisionOutcome | undefined {
-  if (finding.reviewDecisionId) {
-    const matchingDecision = reviewDecisions.find(
-      (decision) => decision.id === finding.reviewDecisionId
-    );
+  const matchingDecision = findReviewDecision(finding, reviewDecisions);
 
-    if (matchingDecision) {
-      return matchingDecision.outcome;
-    }
+  if (matchingDecision) {
+    return matchingDecision.outcome;
   }
 
   switch (finding.status) {
@@ -53,6 +51,68 @@ export function getPersistedOutcome(
     default:
       return undefined;
   }
+}
+
+export function getApprovedEvidenceSpans(
+  finding: Finding,
+  reviewDecisions: ReviewDecision[]
+): EvidenceSpan[] {
+  const matchingDecision = findReviewDecision(finding, reviewDecisions);
+  return matchingDecision?.approvedEvidenceSpans ?? finding.evidenceSpans;
+}
+
+export function toggleTranscriptSegmentSelection(
+  finding: Finding,
+  transcriptSegment: TranscriptSegment,
+  approvedEvidenceSpans: EvidenceSpan[]
+): EvidenceSpan[] {
+  if (
+    approvedEvidenceSpans.some(
+      (span) => span.transcriptSegmentId === transcriptSegment.id
+    )
+  ) {
+    return approvedEvidenceSpans.filter(
+      (span) => span.transcriptSegmentId !== transcriptSegment.id
+    );
+  }
+
+  const suggestedEvidenceSpans = finding.evidenceSpans.filter(
+    (span) => span.transcriptSegmentId === transcriptSegment.id
+  );
+
+  if (suggestedEvidenceSpans.length > 0) {
+    return mergeEvidenceSpans(approvedEvidenceSpans, suggestedEvidenceSpans);
+  }
+
+  return mergeEvidenceSpans(approvedEvidenceSpans, [
+    createManualEvidenceSpan(finding.id, transcriptSegment),
+  ]);
+}
+
+export function hasApprovedEvidenceSelectionChanges(
+  approvedEvidenceSpans: EvidenceSpan[],
+  persistedApprovedEvidenceSpans: EvidenceSpan[]
+): boolean {
+  const currentKeys = approvedEvidenceSpans
+    .map(getEvidenceSpanKey)
+    .sort(compareKeys);
+  const persistedKeys = persistedApprovedEvidenceSpans
+    .map(getEvidenceSpanKey)
+    .sort(compareKeys);
+
+  if (currentKeys.length !== persistedKeys.length) {
+    return true;
+  }
+
+  return currentKeys.some((key, index) => key !== persistedKeys[index]);
+}
+
+export function countSelectedTranscriptSections(
+  approvedEvidenceSpans: EvidenceSpan[]
+): number {
+  return new Set(
+    approvedEvidenceSpans.map((span) => span.transcriptSegmentId)
+  ).size;
 }
 
 export function getApprovedExportActionState(
@@ -90,4 +150,72 @@ export function getApprovedExportActionState(
 
 function canCreateApprovedExport(exportStatus: ExportStatus): boolean {
   return exportStatus === "not_requested" || exportStatus === "draft";
+}
+
+function findReviewDecision(
+  finding: Finding,
+  reviewDecisions: ReviewDecision[]
+): ReviewDecision | undefined {
+  if (finding.reviewDecisionId) {
+    return reviewDecisions.find((decision) => decision.id === finding.reviewDecisionId);
+  }
+
+  return reviewDecisions.find((decision) => decision.findingId === finding.id);
+}
+
+function createManualEvidenceSpan(
+  findingId: string,
+  transcriptSegment: TranscriptSegment
+): EvidenceSpan {
+  return {
+    id: `manual-${findingId}-${transcriptSegment.id}`,
+    transcriptSegmentId: transcriptSegment.id,
+    excerpt: transcriptSegment.text,
+    startOffsetMs: transcriptSegment.startOffsetMs,
+    endOffsetMs: transcriptSegment.endOffsetMs,
+    startTextOffset: 0,
+    endTextOffset: transcriptSegment.text.length,
+  };
+}
+
+function mergeEvidenceSpans(
+  currentEvidenceSpans: EvidenceSpan[],
+  nextEvidenceSpans: EvidenceSpan[]
+): EvidenceSpan[] {
+  const existingKeys = new Set(currentEvidenceSpans.map(getEvidenceSpanKey));
+  const mergedEvidenceSpans = [...currentEvidenceSpans];
+
+  nextEvidenceSpans.forEach((span) => {
+    const spanKey = getEvidenceSpanKey(span);
+    if (!existingKeys.has(spanKey)) {
+      existingKeys.add(spanKey);
+      mergedEvidenceSpans.push(span);
+    }
+  });
+
+  return mergedEvidenceSpans;
+}
+
+function getEvidenceSpanKey(span: EvidenceSpan): string {
+  return [
+    span.id,
+    span.transcriptSegmentId,
+    span.startOffsetMs,
+    span.endOffsetMs,
+    span.startTextOffset ?? "",
+    span.endTextOffset ?? "",
+    span.excerpt,
+  ].join("|");
+}
+
+function compareKeys(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+
+  if (left > right) {
+    return 1;
+  }
+
+  return 0;
 }

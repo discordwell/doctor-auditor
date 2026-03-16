@@ -13,8 +13,12 @@ import type {
 import type { DesktopSessionBundle } from "../types/electron";
 import {
   buildReviewWorkspace,
+  countSelectedTranscriptSections,
+  getApprovedEvidenceSpans,
   getApprovedExportActionState,
+  hasApprovedEvidenceSelectionChanges,
   getPersistedOutcome,
+  toggleTranscriptSegmentSelection,
 } from "./sessionReviewModel";
 import "./SessionReviewView.css";
 
@@ -37,6 +41,9 @@ export default function SessionReviewView({
   const [actionErrorMessage, setActionErrorMessage] = useState("");
   const [actionInfoMessage, setActionInfoMessage] = useState("");
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [approvedEvidenceDrafts, setApprovedEvidenceDrafts] = useState<
+    Record<string, EvidenceSpan[]>
+  >({});
   const [savingFindingId, setSavingFindingId] = useState<string | null>(null);
   const [requestingAssistTarget, setRequestingAssistTarget] = useState<
     string | null
@@ -129,10 +136,23 @@ export default function SessionReviewView({
 
   useEffect(() => {
     if (!bundle) {
+      setApprovedEvidenceDrafts({});
       return;
     }
 
     const workspace = buildReviewWorkspace(bundle);
+    const findingIds = new Set(workspace.findings.map((finding) => finding.id));
+
+    setApprovedEvidenceDrafts((currentDrafts) => {
+      const nextDrafts = Object.fromEntries(
+        Object.entries(currentDrafts).filter(([findingId]) => findingIds.has(findingId))
+      );
+
+      return Object.keys(nextDrafts).length === Object.keys(currentDrafts).length
+        ? currentDrafts
+        : nextDrafts;
+    });
+
     setSelectedFindingId((current) => {
       if (current && workspace.findings.some((finding) => finding.id === current)) {
         return current;
@@ -144,7 +164,9 @@ export default function SessionReviewView({
 
   async function saveReviewDecision(
     findingId: string,
-    outcome: ReviewDecisionOutcome
+    outcome: ReviewDecisionOutcome,
+    approvedEvidenceSpans?: EvidenceSpan[],
+    successMessage?: string
   ): Promise<void> {
     if (!window.doctorAuditor || !bundle) {
       setActionErrorMessage("Desktop review persistence is unavailable.");
@@ -160,13 +182,26 @@ export default function SessionReviewView({
         sessionId: bundle.session.id,
         findingId,
         outcome,
+        approvedEvidenceSpans,
       });
 
       if (!nextBundle) {
         throw new Error("The selected finding could not be saved.");
       }
 
+      setApprovedEvidenceDrafts((currentDrafts) => {
+        if (!(findingId in currentDrafts)) {
+          return currentDrafts;
+        }
+
+        const nextDrafts = { ...currentDrafts };
+        delete nextDrafts[findingId];
+        return nextDrafts;
+      });
       setBundle(nextBundle);
+      if (successMessage) {
+        setActionInfoMessage(successMessage);
+      }
     } catch (error) {
       setActionErrorMessage(
         error instanceof Error
@@ -312,6 +347,46 @@ export default function SessionReviewView({
   const modelAssistReceipts = bundle?.modelAssistReceipts ?? [];
   const selectedFinding =
     findings.find((finding) => finding.id === selectedFindingId) ?? findings[0];
+  const persistedApprovedEvidenceSpans =
+    selectedFinding && bundle
+      ? getApprovedEvidenceSpans(selectedFinding, bundle.reviewDecisions)
+      : [];
+  const selectedEvidenceSpans = selectedFinding
+    ? approvedEvidenceDrafts[selectedFinding.id] ?? persistedApprovedEvidenceSpans
+    : [];
+  const selectedTranscriptSectionCount =
+    countSelectedTranscriptSections(selectedEvidenceSpans);
+  const suggestedTranscriptSectionCount = selectedFinding
+    ? countSelectedTranscriptSections(selectedFinding.evidenceSpans)
+    : 0;
+  const hasUnsavedEvidenceSelectionChanges =
+    selectedFinding && bundle
+      ? hasApprovedEvidenceSelectionChanges(
+          selectedEvidenceSpans,
+          persistedApprovedEvidenceSpans
+        )
+      : false;
+  const selectedTranscriptSections = selectedFinding
+    ? transcriptSegments.flatMap((segment) => {
+        const sectionEvidenceSpans = selectedEvidenceSpans.filter(
+          (span) => span.transcriptSegmentId === segment.id
+        );
+
+        if (sectionEvidenceSpans.length === 0) {
+          return [];
+        }
+
+        return [
+          {
+            segment,
+            evidenceSpans: sectionEvidenceSpans,
+            ruleEvidenceSpans: selectedFinding.evidenceSpans.filter(
+              (span) => span.transcriptSegmentId === segment.id
+            ),
+          },
+        ];
+      })
+    : [];
   const selectedOutcome =
     selectedFinding && bundle
       ? getPersistedOutcome(selectedFinding, bundle.reviewDecisions)
@@ -344,6 +419,93 @@ export default function SessionReviewView({
     }
 
     element.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function updateApprovedEvidenceDraft(
+    finding: Finding,
+    nextApprovedEvidenceSpans: EvidenceSpan[]
+  ): void {
+    if (!bundle) {
+      return;
+    }
+
+    const persistedSelection = getApprovedEvidenceSpans(
+      finding,
+      bundle.reviewDecisions
+    );
+    const hasChanges = hasApprovedEvidenceSelectionChanges(
+      nextApprovedEvidenceSpans,
+      persistedSelection
+    );
+
+    setApprovedEvidenceDrafts((currentDrafts) => {
+      if (!hasChanges) {
+        if (!(finding.id in currentDrafts)) {
+          return currentDrafts;
+        }
+
+        const nextDrafts = { ...currentDrafts };
+        delete nextDrafts[finding.id];
+        return nextDrafts;
+      }
+
+      return {
+        ...currentDrafts,
+        [finding.id]: nextApprovedEvidenceSpans,
+      };
+    });
+  }
+
+  function toggleApprovedTranscriptSection(segment: TranscriptSegment): void {
+    if (!selectedFinding) {
+      return;
+    }
+
+    updateApprovedEvidenceDraft(
+      selectedFinding,
+      toggleTranscriptSegmentSelection(
+        selectedFinding,
+        segment,
+        selectedEvidenceSpans
+      )
+    );
+  }
+
+  function restoreRuleSuggestedSections(): void {
+    if (!selectedFinding) {
+      return;
+    }
+
+    updateApprovedEvidenceDraft(selectedFinding, selectedFinding.evidenceSpans);
+  }
+
+  function revertApprovedEvidenceDraft(): void {
+    if (!selectedFinding) {
+      return;
+    }
+
+    updateApprovedEvidenceDraft(selectedFinding, persistedApprovedEvidenceSpans);
+  }
+
+  async function saveApprovedEvidenceSelection(): Promise<void> {
+    if (!selectedFinding) {
+      return;
+    }
+
+    if (!selectedOutcome) {
+      setActionErrorMessage(
+        "Choose a review outcome before saving selected transcript sections."
+      );
+      setActionInfoMessage("");
+      return;
+    }
+
+    await saveReviewDecision(
+      selectedFinding.id,
+      selectedOutcome,
+      selectedEvidenceSpans,
+      "Transcript section selection saved locally."
+    );
   }
 
   if (loadState === "loading") {
@@ -382,9 +544,13 @@ export default function SessionReviewView({
   const noFindingsMessage = getNoFindingsMessage(bundle);
   const findingsSummaryCaption = getFindingsSummaryCaption(bundle, workspace);
   const transcriptPanelNote = selectedFinding
-    ? `${selectedFinding.evidenceSpans.length} evidence span(s) highlighted for the selected finding.`
+    ? buildTranscriptPanelNote({
+        hasUnsavedEvidenceSelectionChanges,
+        selectedTranscriptSectionCount,
+        suggestedTranscriptSectionCount,
+      })
     : workspace.hasFindings
-      ? "Select a finding to highlight linked evidence spans."
+      ? "Select a finding to review and adjust transcript sections."
       : "No findings are available for evidence highlighting.";
 
   return (
@@ -517,18 +683,29 @@ export default function SessionReviewView({
           <div className="session-review__transcript-list">
             {transcriptSegments.length > 0 ? (
               transcriptSegments.map((segment) => {
-                const linkedEvidence = selectedFinding
+                const selectedSectionEvidence = selectedFinding
+                  ? selectedEvidenceSpans.filter(
+                      (span) => span.transcriptSegmentId === segment.id
+                    )
+                  : [];
+                const suggestedEvidence = selectedFinding
                   ? selectedFinding.evidenceSpans.filter(
                       (span) => span.transcriptSegmentId === segment.id
                     )
                   : [];
+                const isSelectedSection = selectedSectionEvidence.length > 0;
+                const isSuggestedSection = suggestedEvidence.length > 0;
+                const isManualSelection =
+                  isSelectedSection && suggestedEvidence.length === 0;
 
                 return (
                   <article
                     key={segment.id}
                     id={getTranscriptSegmentElementId(segment.id)}
                     className={`session-review__segment ${
-                      linkedEvidence.length > 0 ? "is-highlighted" : ""
+                      isSelectedSection ? "is-highlighted" : ""
+                    } ${
+                      !isSelectedSection && isSuggestedSection ? "is-suggested" : ""
                     }`}
                   >
                     <div className="session-review__segment-meta">
@@ -543,30 +720,54 @@ export default function SessionReviewView({
                           {formatSpeakerLabel(segment.speakerLabel)}
                         </p>
                       </div>
-                      <div className="session-review__confidence">
-                        <span>
-                          Transcript {formatConfidence(segment.transcriptConfidence)}
-                        </span>
-                        <span>
-                          Speaker {formatConfidence(segment.speakerConfidence)}
-                        </span>
+                      <div className="session-review__segment-tools">
+                        <div className="session-review__confidence">
+                          <span>
+                            Transcript {formatConfidence(segment.transcriptConfidence)}
+                          </span>
+                          <span>
+                            Speaker {formatConfidence(segment.speakerConfidence)}
+                          </span>
+                        </div>
+                        {selectedFinding ? (
+                          <button
+                            type="button"
+                            className={`session-review__segment-toggle ${
+                              isSelectedSection ? "is-active" : ""
+                            }`}
+                            onClick={() => toggleApprovedTranscriptSection(segment)}
+                          >
+                            {isSelectedSection
+                              ? "Remove section"
+                              : isSuggestedSection
+                                ? "Restore suggestion"
+                                : "Add section"}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
 
                     <p className="session-review__segment-text">
-                      {renderSegmentText(segment.text, linkedEvidence)}
+                      {renderSegmentText(segment.text, selectedSectionEvidence)}
                     </p>
 
-                    {linkedEvidence.length > 0 && (
+                    {(isSelectedSection || isSuggestedSection) && (
                       <div className="session-review__evidence-row">
-                        {linkedEvidence.map((span) => (
-                          <span
-                            key={span.id}
-                            className="session-review__evidence-chip"
-                          >
-                            {span.excerpt}
+                        {isSelectedSection ? (
+                          <span className="session-review__evidence-chip session-review__evidence-chip--selected">
+                            Selected for review
                           </span>
-                        ))}
+                        ) : null}
+                        {isSuggestedSection ? (
+                          <span className="session-review__evidence-chip">
+                            Rule suggestion
+                          </span>
+                        ) : null}
+                        {isManualSelection ? (
+                          <span className="session-review__evidence-chip session-review__evidence-chip--manual">
+                            Manual section
+                          </span>
+                        ) : null}
                       </div>
                     )}
                   </article>
@@ -710,7 +911,10 @@ export default function SessionReviewView({
                     {selectedFinding.detectedBy}
                   </span>
                   <span className="session-review__meta-pill">
-                    {selectedFinding.evidenceSpans.length} linked span(s)
+                    {selectedTranscriptSectionCount} selected section(s)
+                  </span>
+                  <span className="session-review__meta-pill">
+                    {suggestedTranscriptSectionCount} rule section(s)
                   </span>
                 </div>
               </div>
@@ -732,7 +936,11 @@ export default function SessionReviewView({
                       selectedOutcome === outcome ? "is-active" : ""
                     }`}
                     onClick={() =>
-                      void saveReviewDecision(selectedFinding.id, outcome)
+                      void saveReviewDecision(
+                        selectedFinding.id,
+                        outcome,
+                        selectedEvidenceSpans
+                      )
                     }
                     disabled={isSavingSelectedDecision}
                   >
@@ -751,19 +959,45 @@ export default function SessionReviewView({
                     ? "Requesting..."
                     : "Request Remote assist"}
                 </button>
-                {selectedFinding.evidenceSpans.length > 0 && (
+                {(selectedTranscriptSections.length > 0 ||
+                  selectedFinding.evidenceSpans.length > 0) && (
                   <button
                     type="button"
                     className="session-review__action-button session-review__action-button--ghost"
                     onClick={() =>
                       jumpToTranscriptSegment(
-                        selectedFinding.evidenceSpans[0].transcriptSegmentId
+                        selectedTranscriptSections[0]?.segment.id ??
+                          selectedFinding.evidenceSpans[0].transcriptSegmentId
                       )
                     }
                   >
-                    Jump to first evidence
+                    Jump to first selected section
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="session-review__action-button session-review__action-button--ghost"
+                  onClick={() => void saveApprovedEvidenceSelection()}
+                  disabled={!selectedOutcome || !hasUnsavedEvidenceSelectionChanges}
+                >
+                  Save selected sections
+                </button>
+                <button
+                  type="button"
+                  className="session-review__action-button session-review__action-button--ghost"
+                  onClick={revertApprovedEvidenceDraft}
+                  disabled={!hasUnsavedEvidenceSelectionChanges}
+                >
+                  Revert changes
+                </button>
+                <button
+                  type="button"
+                  className="session-review__action-button session-review__action-button--ghost"
+                  onClick={restoreRuleSuggestedSections}
+                  disabled={selectedFinding.evidenceSpans.length === 0}
+                >
+                  Use rule suggestions
+                </button>
               </div>
 
               <div className="session-review__detail-stats">
@@ -782,7 +1016,7 @@ export default function SessionReviewView({
                 <article className="session-review__detail-stat">
                   <p className="session-review__detail-stat-label">Evidence</p>
                   <p className="session-review__detail-stat-value">
-                    {selectedFinding.evidenceSpans.length} span(s)
+                    {selectedTranscriptSectionCount} section(s) selected
                   </p>
                 </article>
                 <article className="session-review__detail-stat">
@@ -799,47 +1033,67 @@ export default function SessionReviewView({
 
               <div className="session-review__detail-block">
                 <div className="session-review__detail-row">
-                  <p className="session-review__detail-label">Evidence spans</p>
+                  <p className="session-review__detail-label">
+                    Selected transcript sections
+                  </p>
                   <p className="session-review__detail-note">
-                    Use a span to center the matching segment in the transcript.
+                    Toggle sections in the transcript panel, then save the finding
+                    to persist changes.
                   </p>
                 </div>
                 <div className="session-review__evidence-list">
-                  {selectedFinding.evidenceSpans.length > 0 ? (
-                    selectedFinding.evidenceSpans.map((span) => {
-                      const sourceSegment = transcriptSegments.find(
-                        (segment) => segment.id === span.transcriptSegmentId
-                      );
-
-                      return (
-                        <article key={span.id} className="session-review__evidence-card">
-                          <div className="session-review__evidence-card-top">
+                  {selectedTranscriptSections.length > 0 ? (
+                    selectedTranscriptSections.map((section) => (
+                      <article
+                        key={section.segment.id}
+                        className="session-review__evidence-card"
+                      >
+                        <div className="session-review__evidence-card-top">
+                          <div>
                             <p className="session-review__evidence-label">
-                              {sourceSegment
-                                ? `${formatSpeakerLabel(sourceSegment.speakerLabel)} / ${formatOffset(
-                                    span.startOffsetMs
-                                  )}`
-                                : "Detached evidence"}
+                              {formatSpeakerLabel(section.segment.speakerLabel)} /{" "}
+                              {formatOffset(section.segment.startOffsetMs)} -{" "}
+                              {formatOffset(section.segment.endOffsetMs)}
                             </p>
-                            {sourceSegment ? (
-                              <button
-                                type="button"
-                                className="session-review__jump-button"
-                                onClick={() =>
-                                  jumpToTranscriptSegment(sourceSegment.id)
-                                }
-                              >
-                                View in transcript
-                              </button>
-                            ) : null}
+                            <div className="session-review__finding-meta">
+                              <span className="session-review__meta-pill">
+                                {section.ruleEvidenceSpans.length > 0
+                                  ? "Rule suggestion"
+                                  : "Manual selection"}
+                              </span>
+                              <span className="session-review__meta-pill">
+                                {section.evidenceSpans.length} excerpt(s)
+                              </span>
+                            </div>
                           </div>
-                          <p>{span.excerpt}</p>
-                        </article>
-                      );
-                    })
+                          <button
+                            type="button"
+                            className="session-review__jump-button"
+                            onClick={() => jumpToTranscriptSegment(section.segment.id)}
+                          >
+                            View in transcript
+                          </button>
+                        </div>
+                        <p>
+                          {formatSelectedSectionExcerpt(
+                            section.segment,
+                            section.evidenceSpans
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          className="session-review__action-button session-review__action-button--ghost"
+                          onClick={() =>
+                            toggleApprovedTranscriptSection(section.segment)
+                          }
+                        >
+                          Remove section
+                        </button>
+                      </article>
+                    ))
                   ) : (
                     <div className="session-review__empty-detail">
-                      No linked evidence spans were saved for this finding.
+                      No transcript sections are selected for this finding yet.
                     </div>
                   )}
                 </div>
@@ -938,6 +1192,53 @@ export default function SessionReviewView({
       </div>
     </section>
   );
+}
+
+function buildTranscriptPanelNote(input: {
+  hasUnsavedEvidenceSelectionChanges: boolean;
+  selectedTranscriptSectionCount: number;
+  suggestedTranscriptSectionCount: number;
+}): string {
+  const { hasUnsavedEvidenceSelectionChanges } = input;
+
+  if (input.selectedTranscriptSectionCount === 0) {
+    return hasUnsavedEvidenceSelectionChanges
+      ? "No transcript sections are currently selected. Unsaved selection changes are pending."
+      : "No transcript sections are currently selected for this finding.";
+  }
+
+  const baseNote =
+    `${input.selectedTranscriptSectionCount} transcript section(s) selected` +
+    (input.suggestedTranscriptSectionCount > 0
+      ? ` / ${input.suggestedTranscriptSectionCount} suggested by rules.`
+      : ".");
+
+  return hasUnsavedEvidenceSelectionChanges
+    ? `${baseNote} Unsaved selection changes are pending.`
+    : baseNote;
+}
+
+function formatSelectedSectionExcerpt(
+  segment: TranscriptSegment,
+  evidenceSpans: EvidenceSpan[]
+): string {
+  const excerpts = Array.from(
+    new Set(
+      evidenceSpans
+        .map((span) => span.excerpt.trim())
+        .filter((excerpt) => excerpt.length > 0)
+    )
+  );
+
+  if (excerpts.length === 0) {
+    return segment.text;
+  }
+
+  if (excerpts.length === 1) {
+    return excerpts[0] ?? segment.text;
+  }
+
+  return excerpts.join(" / ");
 }
 
 function parseTimestamp(value: string): number | null {
