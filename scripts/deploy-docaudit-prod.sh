@@ -5,8 +5,24 @@ HOST_ALIAS="${HOST_ALIAS:-ovh2}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/doctor-auditor-api}"
 BRANCH="${BRANCH:-main}"
 PUBLIC_URL="${PUBLIC_URL:-https://docaudit.discordwell.com}"
+REBOOT_SCRIPT="${HOME}/Projects/shared/reboot-vps.sh"
+
+# SSH kicker: test connectivity, reboot via OVH API if unreachable
+ensure_ssh() {
+  if ssh -o ConnectTimeout=10 -o BatchMode=yes "$HOST_ALIAS" "true" 2>/dev/null; then
+    return 0
+  fi
+  echo "SSH unreachable — kicking server via OVH API..."
+  if [[ -x "$REBOOT_SCRIPT" ]]; then
+    "$REBOOT_SCRIPT" ovh2 --wait
+  else
+    echo "ERROR: reboot script not found: $REBOOT_SCRIPT" >&2
+    exit 1
+  fi
+}
 
 echo "Deploying ${BRANCH} to ${HOST_ALIAS}:${REMOTE_ROOT}"
+ensure_ssh
 ssh -o BatchMode=yes "$HOST_ALIAS" "
   set -euo pipefail
   cd '$REMOTE_ROOT'
