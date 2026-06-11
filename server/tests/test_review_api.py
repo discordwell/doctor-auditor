@@ -1,20 +1,15 @@
-import atexit
 import asyncio
-import os
-import shutil
-import tempfile
-from pathlib import Path
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
+from jose import jwt as jose_jwt
 
-TEST_DATABASE_DIR = Path(tempfile.mkdtemp(prefix="doctor-auditor-review-api-"))
-TEST_DATABASE_PATH = TEST_DATABASE_DIR / f"{uuid4().hex}.sqlite3"
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DATABASE_PATH}"
-atexit.register(shutil.rmtree, TEST_DATABASE_DIR, True)
+# The test database override lives in tests/conftest.py so it is applied
+# before any application module is imported, in every collection order.
 
 from app.auth.jwt import create_access_token
 from app.api.cloud_models import AssistGatewayRequestModel, SeriousnessAssessmentModel
+from app.config import settings
 from app.main import app
 from app.models.database import Base, engine
 from app.services.assist_gateway_service import get_assist_gateway_service
@@ -50,9 +45,22 @@ def bearer_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def reviewer_token_claims() -> dict:
+    return {
+        "sub": "reviewer-1",
+        "email": "reviewer@demo-health.local",
+        "role": "reviewer",
+        "org": "demo-health",
+        "organization_id": "demo-health",
+    }
+
+
 class StubAssistGatewayService:
     async def assess(
-        self, payload: AssistGatewayRequestModel
+        self,
+        payload: AssistGatewayRequestModel,
+        *,
+        requester_key: str,
     ) -> SeriousnessAssessmentModel:
         disposition = "routine_review"
         confidence = 0.41
@@ -591,6 +599,7 @@ def test_assist_gateway_returns_structured_assessment() -> None:
             response = client.post(
                 "/api/assist-gateway/seriousness-assessments",
                 json=assist_gateway_payload(),
+                headers=auth_headers(client),
             )
 
             assert response.status_code == 200, response.text
@@ -616,6 +625,7 @@ def test_assist_gateway_rejects_raw_transcript_fields() -> None:
         response = client.post(
             "/api/assist-gateway/seriousness-assessments",
             json=payload,
+            headers=auth_headers(client),
         )
 
         assert response.status_code == 422, response.text
@@ -637,12 +647,36 @@ def test_assist_gateway_handles_insufficient_context() -> None:
             response = client.post(
                 "/api/assist-gateway/seriousness-assessments",
                 json=payload,
+                headers=auth_headers(client),
             )
 
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["disposition"] == "insufficient_context"
             assert body["provider"] == "openai"
+    finally:
+        app.dependency_overrides.pop(get_assist_gateway_service, None)
+
+
+def test_assist_gateway_requires_authentication() -> None:
+    app.dependency_overrides[get_assist_gateway_service] = StubAssistGatewayService
+
+    try:
+        with TestClient(app) as client:
+            missing_token = client.post(
+                "/api/assist-gateway/seriousness-assessments",
+                json=assist_gateway_payload(),
+            )
+            # FastAPI's HTTPBearer rejects a missing Authorization header with
+            # 403 up to 0.115 (the pinned version) and 401 on newer releases.
+            assert missing_token.status_code in (401, 403), missing_token.text
+
+            invalid_token = client.post(
+                "/api/assist-gateway/seriousness-assessments",
+                json=assist_gateway_payload(),
+                headers=bearer_headers("not-a-real-token"),
+            )
+            assert invalid_token.status_code == 401, invalid_token.text
     finally:
         app.dependency_overrides.pop(get_assist_gateway_service, None)
 
@@ -666,3 +700,38 @@ def test_protected_routes_reject_tokens_without_organization_claims() -> None:
 
         assert response.status_code == 401, response.text
         assert response.json()["detail"] == "Invalid token"
+
+
+def test_token_signed_with_previous_secret_verifies_via_fallbacks(monkeypatch) -> None:
+    reset_database()
+
+    previous_secret = settings.jwt_secret
+    token = create_access_token(reviewer_token_claims())
+
+    monkeypatch.setattr(settings, "jwt_secret", f"rotated-{previous_secret}")
+    monkeypatch.setattr(settings, "jwt_secret_fallbacks", previous_secret)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/approved-exports/",
+            headers=bearer_headers(token),
+        )
+        assert response.status_code == 200, response.text
+
+
+def test_token_signed_with_unknown_secret_is_rejected() -> None:
+    token = jose_jwt.encode(
+        {
+            **reviewer_token_claims(),
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        },
+        "attacker-controlled-secret",
+        algorithm=settings.jwt_algorithm,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/approved-exports/",
+            headers=bearer_headers(token),
+        )
+        assert response.status_code == 401, response.text

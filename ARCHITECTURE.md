@@ -128,6 +128,8 @@ The hosted boundary is same-origin for the dashboard:
 - browser dashboard traffic should stay on `/api`, not call a desktop-local host
 - desktop sync and Remote assist calls default to `https://docaudit.discordwell.com/api`
 - `DOCTOR_AUDITOR_API_URL` exists only as an explicit override when pointing the desktop app at a different boundary
+- every data surface, including the Remote assist gateway, requires an authenticated bearer token; assist rate limits are keyed to the verified identity
+- known limitation: registration is open self-serve to keep the demo bootstrap working, so the auth boundary is an audit and abuse-tracking layer, not a hard tenant wall
 
 It does not own:
 

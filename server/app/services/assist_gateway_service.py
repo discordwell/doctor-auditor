@@ -155,7 +155,10 @@ class AssistGatewayUpstreamError(AssistGatewayError):
 
 class AssistGatewayService(Protocol):
     async def assess(
-        self, payload: AssistGatewayRequestModel
+        self,
+        payload: AssistGatewayRequestModel,
+        *,
+        requester_key: str,
     ) -> SeriousnessAssessmentModel: ...
 
 
@@ -178,6 +181,7 @@ class SlidingWindowRateLimiter:
         cutoff = now - self.window_seconds
 
         async with self._lock:
+            self._prune_stale_buckets(cutoff)
             timestamps = self._buckets.setdefault(bucket, [])
             while timestamps and timestamps[0] <= cutoff:
                 timestamps.pop(0)
@@ -191,13 +195,27 @@ class SlidingWindowRateLimiter:
 
             timestamps.append(now)
 
+    def _prune_stale_buckets(self, cutoff: float) -> None:
+        # Buckets are otherwise only trimmed when their own key is touched
+        # again, so idle keys would accumulate forever.
+        stale_keys = [
+            key
+            for key, timestamps in self._buckets.items()
+            if not timestamps or timestamps[-1] <= cutoff
+        ]
+        for key in stale_keys:
+            del self._buckets[key]
+
 
 class UnavailableAssistGatewayService:
     def __init__(self, message: str):
         self._message = message
 
     async def assess(
-        self, payload: AssistGatewayRequestModel
+        self,
+        payload: AssistGatewayRequestModel,
+        *,
+        requester_key: str,
     ) -> SeriousnessAssessmentModel:
         raise AssistGatewayUnavailableError(self._message)
 
@@ -224,7 +242,10 @@ class OpenAIAssistGatewayService:
         )
 
     async def assess(
-        self, payload: AssistGatewayRequestModel
+        self,
+        payload: AssistGatewayRequestModel,
+        *,
+        requester_key: str,
     ) -> SeriousnessAssessmentModel:
         if not self._config.enabled:
             raise AssistGatewayUnavailableError(
@@ -235,10 +256,13 @@ class OpenAIAssistGatewayService:
                 "Remote assist is unavailable because OPENAI_API_KEY is not configured."
             )
 
+        # Check the requester's own budget first so an over-limit identity
+        # burns no shared global capacity with rejected attempts.
+        await self._requester_rate_limiter.acquire(requester_key)
         await self._global_rate_limiter.acquire("global")
-        await self._requester_rate_limiter.acquire(payload.requestedBy)
 
         audit_context = self._build_audit_context(payload)
+        audit_context["authenticatedRequester"] = requester_key
         request_body = self._build_openai_request_body(payload)
         started_at = time.perf_counter()
 

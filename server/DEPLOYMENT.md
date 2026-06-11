@@ -49,6 +49,18 @@ Keep the hosted FastAPI boundary narrow:
 
 Do not add raw transcript upload, raw audio upload, or a browser-facing route that tries to reach back into the local workstation.
 
+## Auth and secrets
+
+Every data surface, including the Remote assist gateway, requires a bearer token from `/api/auth/login` or `/api/auth/register`. Keep the assist gateway behind auth: it spends the server's `OPENAI_API_KEY`, and its per-requester rate limit is keyed to the authenticated identity.
+
+To rotate `JWT_SECRET` without invalidating tokens that are still in flight:
+
+1. Set `JWT_SECRET` to the new secret.
+2. Set `JWT_SECRET_FALLBACKS` to the previous secret (comma-separate if rotating again before old tokens expire).
+3. Remove the fallback once the old tokens have aged out (`JWT_EXPIRE_MINUTES`, default 60).
+
+New tokens are always signed with `JWT_SECRET`; fallbacks are only used to verify.
+
 ## DNS and hostnames
 
 No additional DNS is needed for the current architecture as long as `docaudit.discordwell.com` continues to serve both the dashboard and `/api`.

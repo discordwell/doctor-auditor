@@ -3,11 +3,12 @@ import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect
 
 from app.api import approved_exports, assist_gateway, auth, demo, ops_events
+from app.auth.jwt import verify_token
 from app.config import settings
 from app.models.database import Base, engine
 from app.observability import configure_logging, log_json, set_request_id
@@ -90,17 +91,32 @@ async def request_context_middleware(request: Request, call_next):
 
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
+
+# Every data router requires an authenticated token at the boundary, so a
+# newly added route cannot ship unauthenticated by omission. Routes that need
+# the token claims still declare their own Depends(verify_token); FastAPI
+# caches the dependency per request, so it is not evaluated twice.
+authenticated = [Depends(verify_token)]
+app.include_router(
+    demo.router, prefix="/api/demo", tags=["demo"], dependencies=authenticated
+)
 app.include_router(
     approved_exports.router,
     prefix="/api/approved-exports",
     tags=["approved-exports"],
+    dependencies=authenticated,
 )
-app.include_router(ops_events.router, prefix="/api/ops-events", tags=["ops-events"])
+app.include_router(
+    ops_events.router,
+    prefix="/api/ops-events",
+    tags=["ops-events"],
+    dependencies=authenticated,
+)
 app.include_router(
     assist_gateway.router,
     prefix="/api/assist-gateway",
     tags=["assist-gateway"],
+    dependencies=authenticated,
 )
 
 
