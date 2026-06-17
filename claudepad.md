@@ -2,6 +2,14 @@
 
 ## Session Summaries
 
+### 2026-06-17 ~04:12 UTC — Assist gateway: fix connect-timeout retry leak + cover the untested upstream path
+
+Maintenance pass (automated). Found and fixed a real bug in the one server component that spends `OPENAI_API_KEY`, then backfilled the missing tests around it.
+
+- **Bug**: `OpenAIAssistGatewayService._request_openai_with_retries` caught `(httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout)`. `httpx.ConnectTimeout` and `httpx.PoolTimeout` are siblings of `ConnectError` under `TimeoutException` — *not* subclasses — so a connection-establishment timeout to OpenAI escaped the retry loop entirely and surfaced to the desktop client as an unhandled **500** instead of the intended retried **504**. Reproduced: raw `ConnectTimeout` leaked after a single attempt (retry path skipped). Fix: catch the umbrella `(httpx.TimeoutException, httpx.NetworkError)` (also picks up the previously-missed `ReadError`/`WriteError`).
+- **Tests**: the entire `assess()` upstream interaction (retries, Retry-After, 4xx-vs-5xx, 408→504, network recovery, invalid/missing structured output, `output[]`-block extraction, disabled/no-key guards) had **zero** direct coverage. Added 13 tests via a `ScriptedTransport` (per-call steps that return or raise) + a `RecordingSleeper` (injected `sleep_func`, asserts backoff/Retry-After without real delay). Regression test for the bug verified red on the old except-tuple, green on the fix.
+- Server suite 30→43. `npm run check:all` green (shared typecheck, desktop 43, dashboard 9, server 43).
+
 ### 2026-06-10 ~19:20 UTC — Auth hardening for assist gateway + JWT rotation + sync client resilience
 
 Maintenance pass (automated). Closed the one unauthenticated API surface and fixed adjacent issues found during review:
@@ -17,6 +25,7 @@ Compat note: already-installed desktop builds (e.g. the packaged DMG) send unaut
 
 ## Key Findings
 
+- **httpx exception hierarchy gotcha**: under `httpx.TimeoutException` sit `ConnectTimeout`, `ReadTimeout`, `WriteTimeout`, `PoolTimeout`; under `httpx.NetworkError` sit `ConnectError`, `ReadError`, `WriteError`, `CloseError`. `ConnectTimeout` is a sibling of `ConnectError`, **not** a subclass — so an `except (ConnectError, ReadTimeout, WriteTimeout)` tuple silently drops `ConnectTimeout`/`PoolTimeout`. When catching transient transport failures, catch `(httpx.TimeoutException, httpx.NetworkError)` (or `httpx.TransportError` for all of them). This bit the assist gateway retry loop (see 2026-06-17 summary).
 - **FastAPI version skew**: `server/requirements.txt` pins `fastapi==0.115.0` (HTTPBearer → 403 on missing auth header) but the local venv (`~/.green2blue`) runs 0.135.2 (→ 401). Tests assert `in (401, 403)` for missing-header cases to pass under both. Beware of other pin-vs-venv drift.
 - **Open registration is intentional**: `/api/auth/register` is self-serve with arbitrary role/org to keep the demo bootstrap (desktop auto-register, dashboard demo session) working. Documented in ARCHITECTURE.md as a known limitation — auth is an audit/abuse-tracking layer, not a tenant wall. Gating registration would break demo flows; treat as a deliberate future decision.
 - **Test DB env trap**: any server test module that imports `app.*` triggers `Settings()` instantiation at collection time; `DATABASE_URL` must be set before that. `tests/conftest.py` handles it now — don't move env setup back into individual test files.

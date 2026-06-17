@@ -347,7 +347,13 @@ class OpenAIAssistGatewayService:
                 if attempt >= attempts or not exc.retryable:
                     raise
                 await self._sleep(self._retry_delay_seconds(attempt))
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                # Catch the umbrella transport classes, not a hand-picked tuple
+                # of leaf types: httpx.ConnectTimeout and httpx.PoolTimeout are
+                # siblings of ConnectError under TimeoutException, so listing
+                # (ConnectError, ReadTimeout, WriteTimeout) silently let a
+                # connection-establishment timeout escape the retry path and
+                # surface as an unhandled 500 instead of a retried 504.
                 self._audit(
                     "assist_gateway.retryable_network_error",
                     **audit_context,
