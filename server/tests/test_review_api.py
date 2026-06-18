@@ -45,6 +45,21 @@ def bearer_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def other_org_headers(client: TestClient) -> dict[str, str]:
+    """Register a reviewer in a second organization and return its headers."""
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "reviewer@other-health.local",
+            "password": "demo-reviewer",
+            "role": "reviewer",
+            "organization_id": "other-health",
+        },
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
 def reviewer_token_claims() -> dict:
     return {
         "sub": "reviewer-1",
@@ -717,6 +732,97 @@ def test_token_signed_with_previous_secret_verifies_via_fallbacks(monkeypatch) -
             headers=bearer_headers(token),
         )
         assert response.status_code == 200, response.text
+
+
+def test_approved_export_rejects_draft_with_sent_at() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        payload = approved_export_envelope_payload()
+        payload["export"]["status"] = "draft"
+        payload["export"]["sentAt"] = "2026-03-15T10:40:00Z"
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=payload,
+            headers=headers,
+        )
+
+        # A draft export that also claims a sentAt is internally contradictory
+        # and must be rejected at the validation boundary, never persisted.
+        assert response.status_code == 422, response.text
+        assert "sentAt is only allowed when status is 'sent'" in response.text
+
+
+def test_approved_export_rejects_cross_org_id_collision() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client)
+        created = client.post(
+            "/api/approved-exports/",
+            json=approved_export_envelope_payload(),
+            headers=owner_headers,
+        )
+        assert created.status_code == 201, created.text
+
+        # A second organization reuses the same global export id. The org-scoped
+        # existence check misses it, so without the collision guard the INSERT
+        # would surface as an opaque 500 instead of a deterministic conflict.
+        intruder_headers = other_org_headers(client)
+        collision_payload = approved_export_envelope_payload()
+        collision_payload["organizationId"] = None
+
+        response = client.post(
+            "/api/approved-exports/",
+            json=collision_payload,
+            headers=intruder_headers,
+        )
+
+        assert response.status_code == 409, response.text
+        assert "already exists" in response.json()["detail"]
+
+        # The original owner's record is untouched by the rejected collision.
+        owner_view = client.get(
+            "/api/approved-exports/export-integration-001",
+            headers=owner_headers,
+        )
+        assert owner_view.status_code == 200, owner_view.text
+        assert owner_view.json()["organizationId"] == "demo-health"
+
+        # The intruder still cannot see the foreign export.
+        intruder_view = client.get(
+            "/api/approved-exports/export-integration-001",
+            headers=intruder_headers,
+        )
+        assert intruder_view.status_code == 404, intruder_view.text
+
+
+def test_ops_event_rejects_cross_org_id_collision() -> None:
+    reset_database()
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client)
+        created = client.post(
+            "/api/ops-events/",
+            json=ops_event_payload(),
+            headers=owner_headers,
+        )
+        assert created.status_code == 200, created.text
+
+        intruder_headers = other_org_headers(client)
+        collision_payload = ops_event_payload()
+        collision_payload["organizationId"] = None
+
+        response = client.post(
+            "/api/ops-events/",
+            json=collision_payload,
+            headers=intruder_headers,
+        )
+
+        assert response.status_code == 409, response.text
+        assert "already exists" in response.json()["detail"]
 
 
 def test_token_signed_with_unknown_secret_is_rejected() -> None:

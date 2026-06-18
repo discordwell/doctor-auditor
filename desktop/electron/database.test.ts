@@ -767,6 +767,86 @@ describe("LocalDatabase review artifacts", () => {
 
     db.close();
   });
+
+  it("upgrades a legacy model_assist_receipts table that predates finding_id", () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), "doctor-auditor-legacy-db-test-")
+    );
+    cleanupPaths.push(directory);
+    const dbPath = path.join(directory, "doctor-auditor.sqlite");
+
+    // Simulate a database written by an older build whose model_assist_receipts
+    // schema predates finding_id and the per-receipt metric columns.
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE model_assist_receipts (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        policy_mode TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        request_payload TEXT NOT NULL DEFAULT '{}',
+        assessment_payload TEXT
+      );
+    `);
+    legacyDb
+      .prepare(
+        `INSERT INTO model_assist_receipts (
+          id, request_id, session_id, status, policy_mode, requested_at, request_payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "legacy-receipt-001",
+        "legacy-request-001",
+        "legacy-session-001",
+        "completed",
+        "minimized_no_raw_phi",
+        "2026-01-01T00:00:00Z",
+        "{}"
+      );
+    legacyDb.close();
+
+    // Opening with the current code must migrate the table in place. Before the
+    // fix, creating idx_assist_receipts_finding threw "no such column:
+    // finding_id" straight out of the constructor.
+    expect(
+      () => new LocalDatabase(dbPath, { seedDemoData: false })
+    ).not.toThrow();
+    const migrated = new LocalDatabase(dbPath, { seedDemoData: false });
+    migrated.close();
+
+    const rawDb = new Database(dbPath, { readonly: true });
+    const columnNames = (
+      rawDb.prepare("PRAGMA table_info(model_assist_receipts)").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name);
+    expect(columnNames).toEqual(
+      expect.arrayContaining([
+        "finding_id",
+        "completed_at",
+        "latency_ms",
+        "error_code",
+      ])
+    );
+
+    const indexNames = (
+      rawDb.prepare("PRAGMA index_list(model_assist_receipts)").all() as Array<{
+        name: string;
+      }>
+    ).map((index) => index.name);
+    expect(indexNames).toContain("idx_assist_receipts_finding");
+
+    // The pre-existing legacy row survives the in-place migration.
+    const preserved = rawDb
+      .prepare("SELECT id, finding_id FROM model_assist_receipts WHERE id = ?")
+      .get("legacy-receipt-001") as { id: string; finding_id: string | null };
+    expect(preserved.id).toBe("legacy-receipt-001");
+    expect(preserved.finding_id).toBeNull();
+
+    rawDb.close();
+  });
 });
 
 function createDatabase(seedDemoData = false): LocalDatabase {

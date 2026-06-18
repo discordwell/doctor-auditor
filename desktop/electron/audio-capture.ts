@@ -481,25 +481,39 @@ export class AudioCapture extends EventEmitter {
   }
 
   private calculateAudioLevel(chunk: Buffer): number {
-    let sum = 0;
-    const samples = chunk.length / 2;
-
-    if (samples === 0) {
-      return 0;
-    }
-
-    for (let index = 0; index < chunk.length; index += 2) {
-      const sample = chunk.readInt16LE(index);
-      sum += sample * sample;
-    }
-
-    const rms = Math.sqrt(sum / samples);
-    return Math.min(rms / 32768, 1);
+    return computeAudioLevel(chunk);
   }
 
   get recording(): boolean {
     return this.isRecording;
   }
+}
+
+/**
+ * Compute a normalized RMS level (0..1) for a little-endian 16-bit PCM chunk.
+ *
+ * The recorder streams raw PCM and Node delivers it in arbitrarily-sized
+ * chunks, so a chunk is not guaranteed to end on a 2-byte sample boundary.
+ * Only whole samples are read; a trailing odd byte is ignored. Reading past the
+ * buffer end (the previous `readInt16LE(chunk.length - 1)` on an odd length)
+ * throws a RangeError synchronously inside the stream "data" handler, which
+ * surfaces as an uncaught exception and crashes the Electron main process.
+ */
+export function computeAudioLevel(chunk: Buffer): number {
+  const sampleCount = Math.floor(chunk.length / 2);
+
+  if (sampleCount === 0) {
+    return 0;
+  }
+
+  let sum = 0;
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sample = chunk.readInt16LE(index * 2);
+    sum += sample * sample;
+  }
+
+  const rms = Math.sqrt(sum / sampleCount);
+  return Math.min(rms / 32768, 1);
 }
 
 function toError(error: unknown, fallbackMessage: string): Error {

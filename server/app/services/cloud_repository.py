@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.cloud_models import (
@@ -213,7 +214,19 @@ async def ingest_approved_export(
     record.attestation_local_bundle_hash = payload.attestation.localBundleHash
     record.attestation_assist_receipt_ids = payload.attestation.assistReceiptIds
 
-    await db.commit()
+    # The id is the global primary key, but the existence check above is
+    # org-scoped. If another organization already owns this id, the org-scoped
+    # lookup misses and a colliding INSERT would surface as an opaque 500. Turn
+    # that into a deterministic 409 instead of leaking the IntegrityError.
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ApprovedExportIngestError(
+            status_code=409,
+            detail=f"an approved export with id '{payload.id}' already exists",
+        ) from exc
+
     refreshed = await get_approved_export(db, organization_id, payload.id)
     if refreshed is None:
         raise RuntimeError("approved export could not be reloaded after persistence")
@@ -342,7 +355,17 @@ async def ingest_ops_event(
         payload.assessment.model_dump() if payload.assessment is not None else None
     )
 
-    await db.commit()
+    # Same global-id / org-scoped-lookup mismatch as approved exports: a
+    # cross-org id collision must become a 409, not an unhandled 500.
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise OpsEventIngestError(
+            status_code=409,
+            detail=f"an ops event with id '{payload.id}' already exists",
+        ) from exc
+
     await db.refresh(record)
     return _ops_event_model(record)
 

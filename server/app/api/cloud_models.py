@@ -83,7 +83,10 @@ class ApprovedExportModel(StrictCloudModel):
 
     @model_validator(mode="after")
     def validate_delivery_state(self) -> "ApprovedExportModel":
-        if self.status == "approved" and self.sentAt is not None:
+        # sentAt may only accompany a delivered export. Guarding every
+        # non-"sent" status (not just "approved") keeps "draft" exports from
+        # persisting a contradictory "not yet sent, but sent at T" record.
+        if self.sentAt is not None and self.status != "sent":
             raise ValueError("sentAt is only allowed when status is 'sent'")
         if self.status == "sent" and self.sentAt is None:
             raise ValueError("sentAt is required when status is 'sent'")

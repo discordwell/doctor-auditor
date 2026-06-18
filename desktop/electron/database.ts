@@ -1794,7 +1794,6 @@ export class LocalDatabase {
       CREATE INDEX IF NOT EXISTS idx_review_decisions_finding ON review_decisions(finding_id);
       CREATE INDEX IF NOT EXISTS idx_exports_session ON approved_exports(session_id);
       CREATE INDEX IF NOT EXISTS idx_assist_receipts_session ON model_assist_receipts(session_id);
-      CREATE INDEX IF NOT EXISTS idx_assist_receipts_finding ON model_assist_receipts(finding_id);
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
     `);
@@ -1861,12 +1860,27 @@ export class LocalDatabase {
       "assessment_payload",
       "TEXT"
     );
+    // finding_id (and the metric columns below) were added after the first
+    // model_assist_receipts schema. Backfill them on legacy databases before
+    // the finding_id index is created or any read/write touches them —
+    // otherwise the index creation throws "no such column: finding_id" out of
+    // the constructor on an upgraded install.
+    this.ensureColumn("model_assist_receipts", "finding_id", "TEXT");
+    this.ensureColumn("model_assist_receipts", "completed_at", "TEXT");
+    this.ensureColumn("model_assist_receipts", "latency_ms", "INTEGER");
+    this.ensureColumn("model_assist_receipts", "error_code", "TEXT");
     this.ensureColumn("model_assist_receipts", "provider", "TEXT");
     this.ensureColumn("model_assist_receipts", "model_name", "TEXT");
     this.ensureColumn("model_assist_receipts", "reviewer_action", "TEXT");
 
     this.ensureColumn("audit_log", "session_id", "TEXT");
     this.ensureColumn("audit_log", "actor_id", "TEXT");
+
+    // Created after the column backfill so a legacy model_assist_receipts table
+    // that predates finding_id can be upgraded before it is indexed.
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_assist_receipts_finding ON model_assist_receipts(finding_id);"
+    );
   }
 
   private addAuditLog(entry: {
