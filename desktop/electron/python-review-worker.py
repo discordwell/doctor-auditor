@@ -617,7 +617,12 @@ def resolve_download_root(request: Dict[str, Any]) -> str | None:
     if candidate.is_dir():
         return str(candidate)
 
-    if candidate.suffix:
+    # A model *file* with an explicit directory component resolves to its
+    # containing directory. A bare model name such as "base.en" also has a
+    # suffix (".en"), but no directory — treat it as a model name with no
+    # derivable cache root (fall through to None) instead of returning "."
+    # and pointing the download cache at the current working directory.
+    if candidate.suffix and str(candidate.parent) not in (".", ""):
         return str(candidate.parent)
 
     return None

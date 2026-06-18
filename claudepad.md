@@ -2,6 +2,21 @@
 
 ## Session Summaries
 
+### 2026-06-18 ~04:00 UTC — Land robustness WIP + cover the zero-test Python review worker
+
+Maintenance pass (automated). Two commits.
+
+**1. Landed the in-progress robustness fixes (each already had a test):**
+- `audio-capture`: extracted `computeAudioLevel`; reads only whole 16-bit PCM samples. Stream chunks aren't guaranteed to end on a 2-byte boundary, so the old `readInt16LE(length-1)` on an odd-length chunk threw a `RangeError` inside the stream `"data"` handler and **crashed the Electron main process**.
+- `database`: `idx_assist_receipts_finding` is now created *after* `ensureColumn` backfills `finding_id` (+`completed_at`/`latency_ms`/`error_code`). On a legacy `model_assist_receipts` table `CREATE TABLE IF NOT EXISTS` is a no-op, so the inline index creation threw `no such column: finding_id` straight out of the constructor on upgraded installs.
+- `cloud_models`: `sentAt` allowed only when `status == "sent"` (was only blocking `"approved"`), so a `"draft"` export can't persist a contradictory "not-yet-sent but sent at T" record.
+- `cloud_repository`: a cross-org primary-key collision on approved-export / ops-event ingest now becomes a deterministic **409** instead of an opaque 500 (org-scoped existence check misses a globally-unique id owned by another org → caught `IntegrityError` → rollback → 409).
+
+**2. Backfilled the Python review worker (`desktop/electron/python-review-worker.py`), which had ZERO coverage** despite owning the most safety-relevant logic in the app (the rules engine that surfaces findings on medical transcripts). Added `desktop/electron/test_python_review_worker.py` (40 tests): every `analyze_transcript` rule firing + suppression, finding/evidence shape & sequential-id ordering, the tricky 3-branch `select_segments` fallback, all the pure helpers, model/provider resolution, the stdin/stdout dispatch protocol, and command-adapter subprocess plumbing.
+- **Bug surfaced by the tests + fixed**: `resolve_download_root` returned `"."` (cwd) for a bare dotted model name like `base.en` because `Path("base.en").suffix == ".en"` is truthy — and `base.en`/`small.en`/`medium.en` are exactly the standard whisper names. It now requires an explicit directory component before treating `modelPath` as a file, otherwise falls through to `None` (whisper's default cache). The real client always passes an absolute `modelPath`, so the normal path was unaffected.
+- Wired into the build: new `test:worker` / `check:worker` scripts (mirror `test:server`/`check:server`: `compileall` + `pytest`), and `check:all` now ends with `check:worker`.
+- `npm run check:all` green: shared typecheck, desktop 50, dashboard 9, server 46, worker 40.
+
 ### 2026-06-17 ~04:12 UTC — Assist gateway: fix connect-timeout retry leak + cover the untested upstream path
 
 Maintenance pass (automated). Found and fixed a real bug in the one server component that spends `OPENAI_API_KEY`, then backfilled the missing tests around it.
@@ -31,3 +46,5 @@ Compat note: already-installed desktop builds (e.g. the packaged DMG) send unaut
 - **Test DB env trap**: any server test module that imports `app.*` triggers `Settings()` instantiation at collection time; `DATABASE_URL` must be set before that. `tests/conftest.py` handles it now — don't move env setup back into individual test files.
 - **Desktop JS is generated**: `desktop/electron/*.js` is gitignored build output of the `.ts` sources (`tsc -p electron/tsconfig.json` at dev/build time). Only edit `.ts`.
 - `server/doctor-auditor.db` is a gitignored local artifact created by `.env`-driven runs (and historically by test runs before the conftest fix).
+- **The Python review worker has its own pytest suite now**: `desktop/electron/test_python_review_worker.py`, run via `npm run check:worker` / `test:worker` and included in `check:all`. The worker file name has hyphens (not importable), so the test loads it by path with `importlib.util.spec_from_file_location`. Tests are hermetic via an autouse fixture that clears all `DOCTOR_AUDITOR_REVIEW_ML_*` env vars; the "no backend" cases monkeypatch `worker.module_available` so they don't depend on whether faster-whisper/openai-whisper happen to be installed in the venv. Keep `analyze_transcript` rule changes covered there.
+- **`Path.suffix` ≠ "is a file path"**: standard whisper model names (`base.en`, `small.en`, `medium.en`) contain a dot, so `Path("base.en").suffix` is truthy. Any code distinguishing a model *file* from a bare model *name* must also require a directory component (this bit `resolve_download_root`, which used to return `"."`).
