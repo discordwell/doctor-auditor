@@ -15,6 +15,7 @@ import type {
   StartRecordingResult,
   StopRecordingResult,
   UpdateModelAssistActionRequest,
+  UpdateModelAssistActionResult,
 } from "../src/types/electron";
 
 contextBridge.exposeInMainWorld("doctorAuditor", {
@@ -74,7 +75,10 @@ contextBridge.exposeInMainWorld("doctorAuditor", {
         request
       ) as Promise<RequestSeriousnessAssistResult>,
     updateModelAssistAction: (request: UpdateModelAssistActionRequest) =>
-      ipcRenderer.invoke("session:update-model-assist-action", request),
+      ipcRenderer.invoke(
+        "session:update-model-assist-action",
+        request
+      ) as Promise<UpdateModelAssistActionResult>,
     createApprovedExport: (request: CreateApprovedExportRequest) =>
       ipcRenderer.invoke(
         "session:create-approved-export",

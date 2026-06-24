@@ -58,6 +58,14 @@ export interface UpdateModelAssistActionRequest {
   reviewerAction: NonNullable<ModelAssistReceipt["reviewerAction"]>;
 }
 
+export interface UpdateModelAssistActionResult {
+  // Non-null: the handler throws when the session no longer exists rather than
+  // returning a null bundle, so callers always receive the updated bundle here.
+  bundle: DesktopSessionBundle;
+  synced: boolean;
+  syncError?: string;
+}
+
 export interface CreateApprovedExportRequest {
   sessionId: string;
   destination?: string;

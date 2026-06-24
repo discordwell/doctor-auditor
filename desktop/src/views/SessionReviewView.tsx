@@ -273,18 +273,18 @@ export default function SessionReviewView({
     setActionInfoMessage("");
 
     try {
-      const nextBundle = await window.doctorAuditor.session.updateModelAssistAction({
+      const result = await window.doctorAuditor.session.updateModelAssistAction({
         sessionId: bundle.session.id,
         receiptId,
         reviewerAction: "dismissed",
       });
 
-      if (!nextBundle) {
-        throw new Error("The Remote assist record could not be updated.");
-      }
-
-      setBundle(nextBundle);
-      setActionInfoMessage("Remote assist recommendation dismissed locally.");
+      setBundle(result.bundle);
+      setActionInfoMessage(
+        result.syncError
+          ? `Remote assist recommendation dismissed locally, but cloud ops sync failed: ${result.syncError}`
+          : "Remote assist recommendation dismissed locally."
+      );
     } catch (error) {
       setActionErrorMessage(
         error instanceof Error

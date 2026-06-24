@@ -17,6 +17,7 @@ import {
   DESKTOP_REVIEWER_ID,
   newAssistReceiptId,
 } from "./session-artifacts";
+import { runStopRecording, runUpdateModelAssistAction } from "./ipc-handlers";
 import { PythonReviewMlClient } from "./review-ml";
 import {
   ReviewRuntimeService,
@@ -478,42 +479,27 @@ function registerIpcHandlers(): void {
       throw new Error("No active recording session.");
     }
 
+    const capture = audioCapture;
+    const database = db;
     const sessionId = activeRecordingSessionId;
-    try {
-      const stoppedRecording = await audioCapture.stopRecording();
-      activeRecordingSessionId = null;
 
-      const finalizedSession = db.finalizeLiveCaptureSession(sessionId, {
-        endedAt: new Date().toISOString(),
-        audioPath: stoppedRecording.filePath,
-      });
-
-      if (finalizedSession) {
-        emitSessionChanged(finalizedSession);
-      }
-
-      const queuedSummary = queueTranscription(
-        sessionId,
-        stoppedRecording.filePath,
-        "live_capture"
-      );
-
-      return {
-        filePath: stoppedRecording.filePath,
-        duration: stoppedRecording.duration,
-        session: queuedSummary ?? finalizedSession,
-      };
-    } catch (error) {
-      if (activeRecordingSessionId === sessionId) {
-        failActiveRecordingSession(
-          error instanceof Error
-            ? error.message
-            : "Recording could not be finalized."
-        );
-      }
-
-      throw error;
-    }
+    return runStopRecording(sessionId, {
+      stopRecording: () => capture.stopRecording(),
+      finalizeLiveCaptureSession: (id, input) =>
+        database.finalizeLiveCaptureSession(id, input),
+      queueTranscription,
+      emitSessionChanged,
+      failActiveRecordingSession: (message) => {
+        failActiveRecordingSession(message);
+      },
+      markTranscriptFailure: (id, error) => {
+        markTranscriptFailure(id, error);
+      },
+      clearActiveRecording: () => {
+        activeRecordingSessionId = null;
+      },
+      now: () => new Date().toISOString(),
+    });
   });
 
   ipcMain.handle("audio:get-devices", async () => {
@@ -708,25 +694,14 @@ function registerIpcHandlers(): void {
     async (_event, request: UpdateModelAssistActionRequest) => {
       if (!db) throw new Error("Database not initialized");
 
-      const nextBundle = db.updateModelAssistReviewerAction(request);
-
-      if (request.reviewerAction === "dismissed") {
-        await postOpsEventBestEffort(
-          buildOpsEvent({
-            sessionId: request.sessionId,
-            assistReceiptId: request.receiptId,
-            type: "assist_overridden",
-            reviewerAction: request.reviewerAction,
-          })
-        );
-      }
-
-      const sessionSummary = db.getSessionSummary(request.sessionId);
-      if (sessionSummary) {
-        emitSessionChanged(sessionSummary);
-      }
-
-      return nextBundle;
+      const database = db;
+      return runUpdateModelAssistAction(request, {
+        updateReviewerAction: (req) =>
+          database.updateModelAssistReviewerAction(req),
+        postOpsEvent: postOpsEventBestEffort,
+        getSessionSummary: (id) => database.getSessionSummary(id),
+        emitSessionChanged,
+      });
     }
   );
 

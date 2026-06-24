@@ -55,6 +55,12 @@ export interface UpdateModelAssistActionRequest {
   reviewerAction: NonNullable<ModelAssistReceipt["reviewerAction"]>;
 }
 
+export interface UpdateModelAssistActionResult {
+  bundle: DesktopSessionBundle;
+  synced: boolean;
+  syncError?: string;
+}
+
 export interface CreateApprovedExportRequest {
   sessionId: string;
   destination?: string;
@@ -155,7 +161,7 @@ export interface DoctorAuditorAPI {
     ) => Promise<RequestSeriousnessAssistResult>;
     updateModelAssistAction: (
       request: UpdateModelAssistActionRequest
-    ) => Promise<DesktopSessionBundle | null>;
+    ) => Promise<UpdateModelAssistActionResult>;
     createApprovedExport: (
       request: CreateApprovedExportRequest
     ) => Promise<CreateApprovedExportResult>;
