@@ -1,12 +1,16 @@
+import type { EvidenceSpan } from "@doctor-auditor/shared/local-review";
 import type { DesktopSessionBundle } from "../types/electron";
 import { describe, expect, it } from "vitest";
 import {
   buildReviewWorkspace,
+  buildTranscriptHighlightSegments,
   countSelectedTranscriptSections,
+  formatSelectedSectionExcerpt,
   getApprovedExportActionState,
   getApprovedEvidenceSpans,
   hasApprovedEvidenceSelectionChanges,
   getPersistedOutcome,
+  resolveHighlightRange,
   toggleTranscriptSegmentSelection,
 } from "./sessionReviewModel";
 
@@ -272,6 +276,174 @@ describe("getApprovedExportActionState", () => {
     });
   });
 });
+
+describe("resolveHighlightRange", () => {
+  const text = "Call back if the swelling gets worse.";
+
+  it("uses explicit in-bounds text offsets", () => {
+    expect(
+      resolveHighlightRange(text, highlightSpan({ startTextOffset: 5, endTextOffset: 9 }))
+    ).toEqual({ start: 5, end: 9 });
+  });
+
+  it("ignores offsets that are out of bounds or inverted and falls back to the excerpt", () => {
+    // endTextOffset beyond the text length is rejected; the excerpt is matched.
+    expect(
+      resolveHighlightRange(
+        text,
+        highlightSpan({
+          excerpt: "swelling",
+          startTextOffset: 5,
+          endTextOffset: text.length + 10,
+        })
+      )
+    ).toEqual({ start: 17, end: 25 });
+
+    // endTextOffset <= startTextOffset is rejected; the excerpt is matched.
+    expect(
+      resolveHighlightRange(
+        text,
+        highlightSpan({ excerpt: "Call", startTextOffset: 9, endTextOffset: 9 })
+      )
+    ).toEqual({ start: 0, end: 4 });
+  });
+
+  it("matches the excerpt case-insensitively when no offsets are present", () => {
+    expect(
+      resolveHighlightRange(text, highlightSpan({ excerpt: "SWELLING" }))
+    ).toEqual({ start: 17, end: 25 });
+  });
+
+  it("returns null for an empty excerpt or a missing match", () => {
+    expect(resolveHighlightRange(text, highlightSpan({ excerpt: "   " }))).toBeNull();
+    expect(
+      resolveHighlightRange(text, highlightSpan({ excerpt: "not present" }))
+    ).toBeNull();
+  });
+});
+
+describe("buildTranscriptHighlightSegments", () => {
+  const text = "hello world";
+
+  it("returns the whole text as a single plain segment when nothing matches", () => {
+    expect(
+      buildTranscriptHighlightSegments(text, [highlightSpan({ excerpt: "absent" })])
+    ).toEqual([{ text, highlighted: false }]);
+  });
+
+  it("returns an empty list for empty text", () => {
+    expect(buildTranscriptHighlightSegments("", [])).toEqual([]);
+  });
+
+  it("splits plain text around a single highlight", () => {
+    expect(
+      buildTranscriptHighlightSegments(text, [highlightSpan({ excerpt: "world" })])
+    ).toEqual([
+      { text: "hello ", highlighted: false },
+      { text: "world", highlighted: true },
+    ]);
+  });
+
+  it("keeps a gap between two separate highlights", () => {
+    expect(
+      buildTranscriptHighlightSegments(text, [
+        highlightSpan({ startTextOffset: 0, endTextOffset: 5 }),
+        highlightSpan({ startTextOffset: 6, endTextOffset: 11 }),
+      ])
+    ).toEqual([
+      { text: "hello", highlighted: true },
+      { text: " ", highlighted: false },
+      { text: "world", highlighted: true },
+    ]);
+  });
+
+  it("merges overlapping highlights without dropping characters", () => {
+    expect(
+      buildTranscriptHighlightSegments(text, [
+        highlightSpan({ startTextOffset: 0, endTextOffset: 5 }),
+        highlightSpan({ startTextOffset: 3, endTextOffset: 11 }),
+      ])
+    ).toEqual([
+      { text: "hello", highlighted: true },
+      { text: " world", highlighted: true },
+    ]);
+  });
+
+  // Regression: duplicate and nested evidence spans used to emit an empty
+  // highlighted segment, which rendered as a stray empty <mark>.
+  it("does not emit an empty highlight for duplicate spans", () => {
+    const segments = buildTranscriptHighlightSegments(text, [
+      highlightSpan({ startTextOffset: 0, endTextOffset: 5 }),
+      highlightSpan({ startTextOffset: 0, endTextOffset: 5 }),
+    ]);
+
+    expect(segments).toEqual([
+      { text: "hello", highlighted: true },
+      { text: " world", highlighted: false },
+    ]);
+    expect(
+      segments.some((segment) => segment.highlighted && segment.text === "")
+    ).toBe(false);
+  });
+
+  it("does not emit an empty highlight for a span nested inside an earlier one", () => {
+    const segments = buildTranscriptHighlightSegments(text, [
+      highlightSpan({ startTextOffset: 0, endTextOffset: 11 }),
+      highlightSpan({ startTextOffset: 6, endTextOffset: 11 }),
+    ]);
+
+    expect(segments).toEqual([{ text: "hello world", highlighted: true }]);
+    expect(
+      segments.some((segment) => segment.highlighted && segment.text === "")
+    ).toBe(false);
+  });
+});
+
+describe("formatSelectedSectionExcerpt", () => {
+  const segment = {
+    id: "segment-a",
+    sessionId: "session-1",
+    speakerLabel: "patient" as const,
+    text: "When should I call back if the swelling gets worse?",
+    startOffsetMs: 0,
+    endOffsetMs: 4200,
+    source: "audio_import" as const,
+  };
+
+  it("falls back to the full segment text when there are no usable excerpts", () => {
+    expect(formatSelectedSectionExcerpt(segment, [])).toBe(segment.text);
+    expect(
+      formatSelectedSectionExcerpt(segment, [highlightSpan({ excerpt: "   " })])
+    ).toBe(segment.text);
+  });
+
+  it("dedupes repeated excerpts and joins distinct ones", () => {
+    expect(
+      formatSelectedSectionExcerpt(segment, [
+        highlightSpan({ excerpt: "call back" }),
+        highlightSpan({ excerpt: "call back" }),
+      ])
+    ).toBe("call back");
+
+    expect(
+      formatSelectedSectionExcerpt(segment, [
+        highlightSpan({ excerpt: "call back" }),
+        highlightSpan({ excerpt: "swelling gets worse" }),
+      ])
+    ).toBe("call back / swelling gets worse");
+  });
+});
+
+function highlightSpan(overrides: Partial<EvidenceSpan>): EvidenceSpan {
+  return {
+    id: "evidence-1",
+    transcriptSegmentId: "segment-a",
+    excerpt: "",
+    startOffsetMs: 0,
+    endOffsetMs: 4200,
+    ...overrides,
+  };
+}
 
 function createBundle(
   overrides: Partial<DesktopSessionBundle>

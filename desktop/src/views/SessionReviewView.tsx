@@ -13,7 +13,9 @@ import type {
 import type { DesktopSessionBundle } from "../types/electron";
 import {
   buildReviewWorkspace,
+  buildTranscriptHighlightSegments,
   countSelectedTranscriptSections,
+  formatSelectedSectionExcerpt,
   getApprovedEvidenceSpans,
   getApprovedExportActionState,
   hasApprovedEvidenceSelectionChanges,
@@ -1218,29 +1220,6 @@ function buildTranscriptPanelNote(input: {
     : baseNote;
 }
 
-function formatSelectedSectionExcerpt(
-  segment: TranscriptSegment,
-  evidenceSpans: EvidenceSpan[]
-): string {
-  const excerpts = Array.from(
-    new Set(
-      evidenceSpans
-        .map((span) => span.excerpt.trim())
-        .filter((excerpt) => excerpt.length > 0)
-    )
-  );
-
-  if (excerpts.length === 0) {
-    return segment.text;
-  }
-
-  if (excerpts.length === 1) {
-    return excerpts[0] ?? segment.text;
-  }
-
-  return excerpts.join(" / ");
-}
-
 function parseTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
@@ -1382,74 +1361,24 @@ function renderSegmentText(
   text: string,
   evidenceSpans: EvidenceSpan[]
 ): React.ReactNode {
-  const ranges = evidenceSpans
-    .map((span) => resolveHighlightRange(text, span))
-    .filter((range): range is { start: number; end: number } => range !== null)
-    .sort((left, right) => left.start - right.start);
+  const segments = buildTranscriptHighlightSegments(text, evidenceSpans);
 
-  if (ranges.length === 0) {
+  if (!segments.some((segment) => segment.highlighted)) {
     return text;
   }
 
-  const nodes: React.ReactNode[] = [];
-  let cursor = 0;
-
-  ranges.forEach((range, index) => {
-    const start = Math.max(range.start, cursor);
-    const end = Math.max(range.end, start);
-
-    if (start > cursor) {
-      nodes.push(
-        <span key={`plain-${index}-${cursor}`}>{text.slice(cursor, start)}</span>
-      );
-    }
-
-    nodes.push(
-      <mark key={`mark-${index}-${start}`} className="session-review__inline-evidence">
-        {text.slice(start, end)}
+  return segments.map((segment, index) =>
+    segment.highlighted ? (
+      <mark
+        key={`mark-${index}`}
+        className="session-review__inline-evidence"
+      >
+        {segment.text}
       </mark>
-    );
-    cursor = end;
-  });
-
-  if (cursor < text.length) {
-    nodes.push(<span key={`tail-${cursor}`}>{text.slice(cursor)}</span>);
-  }
-
-  return nodes;
-}
-
-function resolveHighlightRange(
-  text: string,
-  evidenceSpan: EvidenceSpan
-): { start: number; end: number } | null {
-  if (
-    typeof evidenceSpan.startTextOffset === "number" &&
-    typeof evidenceSpan.endTextOffset === "number" &&
-    evidenceSpan.startTextOffset >= 0 &&
-    evidenceSpan.endTextOffset > evidenceSpan.startTextOffset &&
-    evidenceSpan.endTextOffset <= text.length
-  ) {
-    return {
-      start: evidenceSpan.startTextOffset,
-      end: evidenceSpan.endTextOffset,
-    };
-  }
-
-  const excerpt = evidenceSpan.excerpt.trim();
-  if (!excerpt) {
-    return null;
-  }
-
-  const start = text.toLowerCase().indexOf(excerpt.toLowerCase());
-  if (start === -1) {
-    return null;
-  }
-
-  return {
-    start,
-    end: start + excerpt.length,
-  };
+    ) : (
+      <span key={`plain-${index}`}>{segment.text}</span>
+    )
+  );
 }
 
 function formatDecisionLabel(

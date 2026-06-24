@@ -20,6 +20,16 @@ export interface ApprovedExportActionState {
   label: string;
 }
 
+export interface TranscriptTextSegment {
+  text: string;
+  highlighted: boolean;
+}
+
+export interface HighlightRange {
+  start: number;
+  end: number;
+}
+
 export function buildReviewWorkspace(
   bundle: DesktopSessionBundle
 ): ReviewWorkspace {
@@ -150,6 +160,120 @@ export function getApprovedExportActionState(
 
 function canCreateApprovedExport(exportStatus: ExportStatus): boolean {
   return exportStatus === "not_requested" || exportStatus === "draft";
+}
+
+/**
+ * Resolve where, if anywhere, an evidence span should be highlighted inside a
+ * transcript segment's text. Prefer explicit text offsets when they are present
+ * and in-bounds; otherwise fall back to a case-insensitive excerpt match.
+ * Returns null when the span cannot be located in the text.
+ */
+export function resolveHighlightRange(
+  text: string,
+  evidenceSpan: EvidenceSpan
+): HighlightRange | null {
+  if (
+    typeof evidenceSpan.startTextOffset === "number" &&
+    typeof evidenceSpan.endTextOffset === "number" &&
+    evidenceSpan.startTextOffset >= 0 &&
+    evidenceSpan.endTextOffset > evidenceSpan.startTextOffset &&
+    evidenceSpan.endTextOffset <= text.length
+  ) {
+    return {
+      start: evidenceSpan.startTextOffset,
+      end: evidenceSpan.endTextOffset,
+    };
+  }
+
+  const excerpt = evidenceSpan.excerpt.trim();
+  if (!excerpt) {
+    return null;
+  }
+
+  const start = text.toLowerCase().indexOf(excerpt.toLowerCase());
+  if (start === -1) {
+    return null;
+  }
+
+  return {
+    start,
+    end: start + excerpt.length,
+  };
+}
+
+/**
+ * Split a transcript segment's text into ordered plain and highlighted spans
+ * based on its evidence spans. Overlapping, nested, and duplicate evidence
+ * spans are merged: a span that ends at or before the running cursor is fully
+ * covered by an earlier highlight and is skipped, so the result never contains
+ * an empty highlighted span (which would render as a stray empty <mark>).
+ */
+export function buildTranscriptHighlightSegments(
+  text: string,
+  evidenceSpans: EvidenceSpan[]
+): TranscriptTextSegment[] {
+  const ranges = evidenceSpans
+    .map((span) => resolveHighlightRange(text, span))
+    .filter((range): range is HighlightRange => range !== null)
+    .sort((left, right) => left.start - right.start);
+
+  if (ranges.length === 0) {
+    return text ? [{ text, highlighted: false }] : [];
+  }
+
+  const segments: TranscriptTextSegment[] = [];
+  let cursor = 0;
+
+  ranges.forEach((range) => {
+    // A range ending at or before the cursor adds no new highlighted
+    // characters; emitting it would produce an empty highlighted span.
+    if (range.end <= cursor) {
+      return;
+    }
+
+    const start = Math.max(range.start, cursor);
+
+    if (start > cursor) {
+      segments.push({ text: text.slice(cursor, start), highlighted: false });
+    }
+
+    segments.push({ text: text.slice(start, range.end), highlighted: true });
+    cursor = range.end;
+  });
+
+  if (cursor < text.length) {
+    segments.push({ text: text.slice(cursor), highlighted: false });
+  }
+
+  return segments;
+}
+
+/**
+ * Produce a human-readable excerpt for a selected transcript section. Falls
+ * back to the full segment text when no usable evidence excerpts exist, dedupes
+ * repeated excerpts, and joins multiple distinct excerpts.
+ */
+export function formatSelectedSectionExcerpt(
+  segment: TranscriptSegment,
+  evidenceSpans: EvidenceSpan[]
+): string {
+  const excerpts = Array.from(
+    new Set(
+      evidenceSpans
+        .map((span) => span.excerpt.trim())
+        .filter((excerpt) => excerpt.length > 0)
+    )
+  );
+
+  if (excerpts.length === 0) {
+    return segment.text;
+  }
+
+  if (excerpts.length === 1) {
+    return excerpts[0] ?? segment.text;
+  }
+
+  return excerpts.join(" / ");
 }
 
 function findReviewDecision(
