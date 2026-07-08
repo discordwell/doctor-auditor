@@ -8,6 +8,7 @@ import {
   formatAssistDisposition,
   formatDateTime,
   formatLatency,
+  formatReviewerActionLabel,
   formatStatusLabel,
   getExportTone,
   loadOperationsSnapshot,
@@ -34,12 +35,6 @@ function formatConfidence(confidence: number | null): string {
   }
 
   return `${Math.round(confidence * 100)}% confidence`;
-}
-
-function formatReviewerAction(value: string): string {
-  return value
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 function formatEncounterWindow(group: SessionActivityGroup): string | null {
@@ -346,7 +341,7 @@ export default function OperationsView() {
                   <span>{card.model ?? "Model unavailable"}</span>
                   <span>{card.policyMode ?? "Policy unavailable"}</span>
                   {card.reviewerAction ? (
-                    <span>Reviewer: {formatReviewerAction(card.reviewerAction)}</span>
+                    <span>Reviewer: {formatReviewerActionLabel(card.reviewerAction)}</span>
                   ) : null}
                 </div>
               </article>
@@ -521,7 +516,7 @@ export default function OperationsView() {
                         {group.latestAssistReviewerAction ? (
                           <span>
                             Reviewer:{" "}
-                            {formatReviewerAction(group.latestAssistReviewerAction)}
+                            {formatReviewerActionLabel(group.latestAssistReviewerAction)}
                           </span>
                         ) : null}
                         {group.latestAssistErrorCode ? (

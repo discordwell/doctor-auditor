@@ -314,7 +314,7 @@ function getAssistAssessmentTone(event: OpsEvent): StatusTone {
   return "active";
 }
 
-function formatReviewerActionLabel(value: string): string {
+export function formatReviewerActionLabel(value: string): string {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (match) => match.toUpperCase());
@@ -452,8 +452,13 @@ export async function loadOperationsSnapshot(): Promise<OperationsSnapshot> {
   };
 }
 
-function startOfUtcWeek(value: string | Date): Date {
-  const date = typeof value === "string" ? new Date(value) : new Date(value);
+function startOfUtcWeek(value: string | Date): Date | null {
+  const date = typeof value === "string" ? new Date(value) : value;
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
   const copy = new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
   );
@@ -467,11 +472,20 @@ function formatWeekLabel(value: Date): string {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   }).format(value);
 }
 
-function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[] {
-  const currentWeek = startOfUtcWeek(new Date());
+function buildWeeklyActivity(
+  snapshot: OperationsSnapshot,
+  now: Date
+): WeeklyActivityPoint[] {
+  const currentWeek = startOfUtcWeek(now);
+
+  if (!currentWeek) {
+    return [];
+  }
+
   const weeks = Array.from({ length: 6 }, (_, index) => {
     const week = new Date(currentWeek);
     week.setUTCDate(currentWeek.getUTCDate() + (index - 5) * 7);
@@ -489,9 +503,8 @@ function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[
   );
 
   snapshot.approvedExports.forEach((item) => {
-    const point = pointByWeek.get(
-      startOfUtcWeek(item.export.approvedAt).toISOString()
-    );
+    const week = startOfUtcWeek(item.export.approvedAt);
+    const point = week ? pointByWeek.get(week.toISOString()) : undefined;
 
     if (point) {
       point.exports += 1;
@@ -499,7 +512,8 @@ function buildWeeklyActivity(snapshot: OperationsSnapshot): WeeklyActivityPoint[
   });
 
   snapshot.opsEvents.forEach((item) => {
-    const point = pointByWeek.get(startOfUtcWeek(item.recordedAt).toISOString());
+    const week = startOfUtcWeek(item.recordedAt);
+    const point = week ? pointByWeek.get(week.toISOString()) : undefined;
 
     if (!point) {
       return;
@@ -544,7 +558,7 @@ function averageSendLatencyMs(
   return latencies.reduce((sum, value) => sum + value, 0) / latencies.length;
 }
 
-function getExportUpdatedAt(item: ApprovedExportEnvelope): string {
+export function getExportUpdatedAt(item: ApprovedExportEnvelope): string {
   if (item.export.status === "sent" && item.export.sentAt) {
     return item.export.sentAt;
   }
@@ -606,7 +620,7 @@ function buildReleaseQueue(
         return priorityDelta;
       }
 
-      return Date.parse(left.updatedAt) - Date.parse(right.updatedAt);
+      return getTimestampValue(left.updatedAt) - getTimestampValue(right.updatedAt);
     })
     .slice(0, 6);
 }
@@ -618,13 +632,14 @@ function buildClinicianWorkload(
 
   snapshot.approvedExports.forEach((item) => {
     const clinicianId = item.session.clinicianId;
+    const updatedAt = getExportUpdatedAt(item);
     const existing = byClinician.get(clinicianId) ?? {
       clinicianId,
       pendingCount: 0,
       draftCount: 0,
       approvedCount: 0,
       sentCount: 0,
-      lastTouchedAt: getExportUpdatedAt(item),
+      lastTouchedAt: updatedAt,
     };
 
     if (item.export.status === "draft") {
@@ -642,9 +657,9 @@ function buildClinicianWorkload(
     }
 
     if (
-      Date.parse(getExportUpdatedAt(item)) > Date.parse(existing.lastTouchedAt)
+      getTimestampValue(updatedAt) > getTimestampValue(existing.lastTouchedAt)
     ) {
-      existing.lastTouchedAt = getExportUpdatedAt(item);
+      existing.lastTouchedAt = updatedAt;
     }
 
     byClinician.set(clinicianId, existing);
@@ -656,7 +671,10 @@ function buildClinicianWorkload(
         return right.pendingCount - left.pendingCount;
       }
 
-      return Date.parse(right.lastTouchedAt) - Date.parse(left.lastTouchedAt);
+      return (
+        getTimestampValue(right.lastTouchedAt) -
+        getTimestampValue(left.lastTouchedAt)
+      );
     })
     .slice(0, 5);
 }
@@ -713,7 +731,10 @@ function buildOpsIssues(
   });
 
   return issues
-    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    .sort(
+      (left, right) =>
+        getTimestampValue(right.timestamp) - getTimestampValue(left.timestamp)
+    )
     .slice(0, 5);
 }
 
@@ -1153,7 +1174,7 @@ export function buildOverviewModel(
             : "stable",
       },
     ],
-    weeklyActivity: buildWeeklyActivity(snapshot),
+    weeklyActivity: buildWeeklyActivity(snapshot, now),
     exportRows: sortApprovedExports(snapshot.approvedExports).slice(0, 5),
     recentOpsEvents: sortOpsEvents(snapshot.opsEvents).slice(0, 6),
     releaseQueue: buildReleaseQueue(snapshot, now),

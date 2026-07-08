@@ -10,6 +10,7 @@ import {
   formatRelativeAge,
   formatStatusLabel,
   getExportTone,
+  getExportUpdatedAt,
   loadApprovedExports,
   sortApprovedExports,
 } from "../services/opsDashboard";
@@ -17,18 +18,6 @@ import {
 type ExportFilter = "all" | ApprovedExportEnvelope["export"]["status"];
 
 const FILTERS: ExportFilter[] = ["all", "draft", "approved", "sent"];
-
-function getUpdatedAt(item: ApprovedExportEnvelope): string {
-  if (item.export.status === "sent" && item.export.sentAt) {
-    return item.export.sentAt;
-  }
-
-  if (item.export.status === "draft") {
-    return item.attestation.reviewCompletedAt;
-  }
-
-  return item.export.approvedAt;
-}
 
 function matchesQuery(item: ApprovedExportEnvelope, query: string): boolean {
   if (!query) {
@@ -242,7 +231,7 @@ export default function ApprovedExportsView() {
               </thead>
               <tbody>
                 {filteredExports.map((item) => {
-                  const updatedAt = getUpdatedAt(item);
+                  const updatedAt = getExportUpdatedAt(item);
 
                   return (
                     <tr key={item.id}>
