@@ -1,45 +1,32 @@
 import React, { useCallback, useEffect, useState } from "react";
-import type { CaptureMode } from "@doctor-auditor/shared";
-import type {
-  ExportStatus,
-  ReviewStatus,
-  TranscriptStatus,
-} from "@doctor-auditor/shared/local-review";
 import "./HistoryView.css";
 import type { DesktopSessionSummary } from "../types/electron";
+import {
+  countSessions,
+  FILTER_LABELS,
+  formatDateTime,
+  formatDay,
+  formatDuration,
+  getCaptureBadgeTone,
+  getExportBadgeTone,
+  getReviewBadgeTone,
+  getSessionState,
+  getTranscriptBadgeTone,
+  matchesFilter,
+  matchesSearch,
+  type HistoryFilter,
+} from "./historyModel";
+import {
+  canRetryTranscription,
+  formatCaptureMode,
+  formatClinicianLabel,
+  formatExportStatus,
+  formatReviewStatus,
+  formatTranscriptStatus,
+} from "./sessionSummaryModel";
 
-type HistoryFilter = "all" | "review" | "transcript" | "attention";
 type LoadState = "loading" | "ready" | "error";
-type SessionTone = "active" | "ready" | "warning";
-type BadgeTone = "active" | "ready" | "warning" | "neutral";
 type ArchiveActionTone = "success" | "warning";
-
-interface SessionState {
-  label: string;
-  tone: SessionTone;
-  detail: string;
-}
-
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-const DAY_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-});
-
-const FILTER_LABELS: Record<HistoryFilter, string> = {
-  all: "All sessions",
-  review: "Review queue",
-  transcript: "Transcript ready",
-  attention: "Needs follow-up",
-};
 
 interface HistoryViewProps {
   onOpenSession: (sessionId: string) => void;
@@ -588,270 +575,5 @@ export default function HistoryView({ onOpenSession }: HistoryViewProps) {
         </>
       )}
     </section>
-  );
-}
-
-function parseTimestamp(value: string): number | null {
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function formatDateTime(value: string): string {
-  const timestamp = parseTimestamp(value);
-  if (timestamp === null) {
-    return "Time unavailable";
-  }
-
-  return DATE_TIME_FORMATTER.format(timestamp);
-}
-
-function formatDay(value: string): string {
-  const timestamp = parseTimestamp(value);
-  if (timestamp === null) {
-    return "Unscheduled";
-  }
-
-  return DAY_FORMATTER.format(timestamp);
-}
-
-function formatDuration(startTime: string, endTime?: string): string {
-  if (!endTime) {
-    return "Open";
-  }
-
-  const start = parseTimestamp(startTime);
-  const end = parseTimestamp(endTime);
-
-  if (start === null || end === null || end <= start) {
-    return "Unknown";
-  }
-
-  const totalMinutes = Math.round((end - start) / 60000);
-
-  if (totalMinutes <= 0) {
-    return "<1 min";
-  }
-
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  if (hours === 0) {
-    return `${totalMinutes} min`;
-  }
-
-  if (minutes === 0) {
-    return `${hours} hr`;
-  }
-
-  return `${hours} hr ${minutes} min`;
-}
-
-function formatClinicianLabel(clinicianId: string): string {
-  const trimmedValue = clinicianId.trim();
-  return trimmedValue || "Unassigned clinician";
-}
-
-function formatCaptureMode(value: CaptureMode): string {
-  switch (value) {
-    case "audio_import":
-      return "Loaded audio";
-    case "live_capture":
-      return "Live recording";
-    case "manual_entry":
-      return "Manual entry";
-  }
-
-  return "Unknown";
-}
-
-function formatTranscriptStatus(value: TranscriptStatus): string {
-  switch (value) {
-    case "not_started":
-      return "Transcript pending";
-    case "in_progress":
-      return "Transcript running";
-    case "completed":
-      return "Transcript ready";
-    case "failed":
-      return "Transcript failed";
-  }
-}
-
-function formatReviewStatus(value: ReviewStatus): string {
-  switch (value) {
-    case "not_started":
-      return "Review not started";
-    case "ready":
-      return "Ready for review";
-    case "in_review":
-      return "Review in progress";
-    case "completed":
-      return "Review complete";
-  }
-}
-
-function formatExportStatus(value: ExportStatus): string {
-  switch (value) {
-    case "not_requested":
-      return "Export not requested";
-    case "draft":
-      return "Export draft";
-    case "approved":
-      return "Export approved";
-    case "sent":
-      return "Export sent";
-  }
-}
-
-function getSessionState(sessionSummary: DesktopSessionSummary): SessionState {
-  const { session, audioPath } = sessionSummary;
-
-  if (session.reviewStatus === "completed") {
-    return {
-      label: "Review complete",
-      tone: "ready",
-      detail:
-        "Local review is complete for this encounter, so it is ready for final archive or export handling.",
-    };
-  }
-
-  if (session.reviewStatus === "in_review") {
-    return {
-      label: "In review",
-      tone: "active",
-      detail:
-        "This encounter is actively being reviewed. Transcript and findings should stay attached to the current bundle.",
-    };
-  }
-
-  if (session.transcriptStatus === "failed") {
-    return {
-      label: "Needs follow-up",
-      tone: "warning",
-      detail:
-        audioPath
-          ? "Recording or transcription failed for this encounter. Retry transcript processing after confirming the saved local audio is intact."
-          : "Recording or transcription failed for this encounter. Check the local audio file before continuing review.",
-    };
-  }
-
-  if (session.transcriptStatus === "completed") {
-    return {
-      label: "Ready for review",
-      tone: "ready",
-      detail:
-        "Transcript work is complete and the session can move into reviewer attention without more intake work.",
-    };
-  }
-
-  if (!audioPath) {
-    return {
-      label: "Needs follow-up",
-      tone: "warning",
-      detail:
-        "The session shell exists, but the local audio asset is missing. Validate the import before relying on it downstream.",
-    };
-  }
-
-  return {
-    label: "Transcript pending",
-    tone: "warning",
-    detail:
-      "Audio is stored locally and the review session is created, but transcript processing has not started yet.",
-  };
-}
-
-function matchesFilter(
-  sessionSummary: DesktopSessionSummary,
-  filter: HistoryFilter
-): boolean {
-  const { session } = sessionSummary;
-
-  switch (filter) {
-    case "review":
-      return session.reviewStatus === "ready" || session.reviewStatus === "in_review";
-    case "transcript":
-      return session.transcriptStatus === "completed";
-    case "attention":
-      return getSessionState(sessionSummary).tone === "warning";
-    default:
-      return true;
-  }
-}
-
-function matchesSearch(
-  sessionSummary: DesktopSessionSummary,
-  searchQuery: string
-): boolean {
-  const trimmedQuery = searchQuery.trim().toLowerCase();
-  if (!trimmedQuery) {
-    return true;
-  }
-
-  return (
-    sessionSummary.session.clinicianId.toLowerCase().includes(trimmedQuery) ||
-    sessionSummary.session.id.toLowerCase().includes(trimmedQuery)
-  );
-}
-
-function countSessions(
-  sessions: DesktopSessionSummary[],
-  filter: HistoryFilter
-): number {
-  return sessions.reduce((count, session) => {
-    return count + (matchesFilter(session, filter) ? 1 : 0);
-  }, 0);
-}
-
-function getCaptureBadgeTone(value: CaptureMode): BadgeTone {
-  return value === "audio_import" ? "ready" : "active";
-}
-
-function getTranscriptBadgeTone(value: TranscriptStatus): BadgeTone {
-  switch (value) {
-    case "completed":
-      return "ready";
-    case "in_progress":
-      return "active";
-    case "failed":
-      return "warning";
-    case "not_started":
-      return "neutral";
-  }
-}
-
-function getReviewBadgeTone(value: ReviewStatus): BadgeTone {
-  switch (value) {
-    case "completed":
-      return "ready";
-    case "in_review":
-      return "active";
-    case "ready":
-      return "ready";
-    case "not_started":
-      return "neutral";
-  }
-}
-
-function getExportBadgeTone(value: ExportStatus): BadgeTone {
-  switch (value) {
-    case "sent":
-      return "ready";
-    case "approved":
-      return "ready";
-    case "draft":
-      return "active";
-    case "not_requested":
-      return "neutral";
-  }
-}
-
-function canRetryTranscription(
-  sessionSummary: DesktopSessionSummary
-): boolean {
-  return (
-    Boolean(sessionSummary.audioPath) &&
-    sessionSummary.transcriptSegmentCount === 0 &&
-    sessionSummary.session.transcriptStatus === "failed"
   );
 }

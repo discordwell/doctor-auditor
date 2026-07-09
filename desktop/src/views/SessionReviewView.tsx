@@ -22,6 +22,12 @@ import {
   getPersistedOutcome,
   toggleTranscriptSegmentSelection,
 } from "./sessionReviewModel";
+import {
+  formatClinicianLabel,
+  formatExportStatus,
+  formatReviewStatus,
+  formatTranscriptStatus,
+} from "./sessionSummaryModel";
 import "./SessionReviewView.css";
 
 type LoadState = "loading" | "ready" | "error";
@@ -1238,50 +1244,6 @@ function formatDateTime(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(timestamp);
-}
-
-function formatClinicianLabel(clinicianId: string): string {
-  const trimmedValue = clinicianId.trim();
-  return trimmedValue || "Unassigned clinician";
-}
-
-function formatTranscriptStatus(value: TranscriptStatus): string {
-  switch (value) {
-    case "not_started":
-      return "Transcript pending";
-    case "in_progress":
-      return "Transcript running";
-    case "completed":
-      return "Transcript ready";
-    case "failed":
-      return "Transcript failed";
-  }
-}
-
-function formatReviewStatus(value: ReviewStatus): string {
-  switch (value) {
-    case "not_started":
-      return "Review not started";
-    case "ready":
-      return "Ready for review";
-    case "in_review":
-      return "Review in progress";
-    case "completed":
-      return "Review complete";
-  }
-}
-
-function formatExportStatus(value: ExportStatus): string {
-  switch (value) {
-    case "not_requested":
-      return "Export not requested";
-    case "draft":
-      return "Export draft";
-    case "approved":
-      return "Export approved";
-    case "sent":
-      return "Export sent";
-  }
 }
 
 function getTranscriptTone(value: TranscriptStatus): DecisionTone {

@@ -4,6 +4,7 @@ import type {
   CloudSyncDisplayConfig,
   LiveCaptureStatus,
 } from "../types/electron";
+import { formatMicrophoneAccess } from "./liveCaptureModel";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -243,23 +244,6 @@ export default function SettingsView() {
       </div>
     </div>
   );
-}
-
-function formatMicrophoneAccess(value: LiveCaptureStatus["microphoneAccess"]): string {
-  switch (value) {
-    case "granted":
-      return "Microphone granted";
-    case "denied":
-      return "Microphone denied";
-    case "restricted":
-      return "Microphone restricted";
-    case "not-determined":
-      return "Microphone prompt pending";
-    case "unsupported":
-      return "Permission status unavailable";
-    case "unknown":
-      return "Permission status unknown";
-  }
 }
 
 function formatCloudSyncSource(

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import type { CaptureMode } from "@doctor-auditor/shared";
 import type {
   ReviewStatus,
   TranscriptStatus,
@@ -10,6 +9,12 @@ import type {
   SessionImportProgress,
   SessionIntakeRequest,
 } from "../types/electron";
+import {
+  canRetryTranscription,
+  formatCaptureMode,
+  formatClinicianLabel,
+} from "./sessionSummaryModel";
+import { formatMicrophoneAccess } from "./liveCaptureModel";
 
 type ImportStage = "idle" | "cancelled" | SessionImportProgress["stage"];
 type LiveCaptureNoticeTone = "info" | "active" | "success" | "error";
@@ -850,24 +855,6 @@ function formatDuration(seconds: number): string {
     .padStart(2, "0")}`;
 }
 
-function formatClinicianLabel(value: string): string {
-  const trimmedValue = value.trim();
-  return trimmedValue || "Unassigned clinician";
-}
-
-function formatCaptureMode(value: CaptureMode): string {
-  switch (value) {
-    case "audio_import":
-      return "Loaded audio";
-    case "live_capture":
-      return "Live recording";
-    case "manual_entry":
-      return "Manual entry";
-  }
-
-  return "Unknown";
-}
-
 function formatTranscriptStatus(value: TranscriptStatus): string {
   switch (value) {
     case "not_started":
@@ -894,23 +881,6 @@ function formatReviewStatus(value: ReviewStatus): string {
   }
 }
 
-function formatMicrophoneAccess(value: LiveCaptureStatus["microphoneAccess"]): string {
-  switch (value) {
-    case "granted":
-      return "Microphone granted";
-    case "denied":
-      return "Microphone denied";
-    case "restricted":
-      return "Microphone restricted";
-    case "not-determined":
-      return "Microphone prompt pending";
-    case "unsupported":
-      return "Permission status unavailable";
-    case "unknown":
-      return "Permission status unknown";
-  }
-}
-
 function getFileName(filePath?: string): string {
   if (!filePath) {
     return "Local audio";
@@ -918,14 +888,4 @@ function getFileName(filePath?: string): string {
 
   const parts = filePath.split(/[/\\]/);
   return parts[parts.length - 1] || "Local audio";
-}
-
-function canRetryTranscription(
-  sessionSummary: DesktopSessionSummary
-): boolean {
-  return (
-    Boolean(sessionSummary.audioPath) &&
-    sessionSummary.transcriptSegmentCount === 0 &&
-    sessionSummary.session.transcriptStatus === "failed"
-  );
 }

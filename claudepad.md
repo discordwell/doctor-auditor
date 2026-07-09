@@ -2,6 +2,20 @@
 
 ## Session Summaries
 
+### 2026-07-09 ~13:41 UTC — Desktop: land the view-model extraction WIP + finish the cross-view helper dedup; 101→143 tests
+
+Maintenance pass (automated). One commit, desktop lane only. Landed the operator's in-progress refactor (extract→test pure view logic, the established pattern — cf. `sessionReviewModel.ts`, `session-artifacts.ts`, `ipc-handlers.ts`) and finished the one dedup loose end it left open.
+
+**1. Landed the WIP (was uncommitted, complete, deliberately scoped).** Two new pure modules pulled out of the large views so the branchy logic is unit-testable without an Electron/React harness:
+- `historyModel.ts` — HistoryView's view-model: `parseTimestamp`/`formatDateTime`/`formatDay`/`formatDuration`, the 6-branch `getSessionState`, `matchesFilter`/`matchesSearch`/`countSessions`, and the capture/transcript/review/export badge-tone maps + `FILTER_LABELS`. HistoryView shed ~370 lines.
+- `sessionSummaryModel.ts` — the helpers that were **verbatim-duplicated** across views, now single-sourced so they can't drift: `canRetryTranscription` + `formatClinicianLabel`/`formatCaptureMode` (were in HistoryView **and** RecordingView) and the title-case `formatTranscriptStatus`/`formatReviewStatus`/`formatExportStatus` (were in HistoryView **and** SessionReviewView). RecordingView deliberately keeps its own terser lowercase status variants ("in progress") — left local, documented in the module header.
+
+**2. Finished the dedup: `formatMicrophoneAccess`.** It was a verbatim copy in RecordingView **and** SettingsView — the last remaining cross-view duplicate. Extracted to a new `liveCaptureModel.ts` (permission-label single source) and wired both views to it. This is the only change beyond the operator's WIP.
+
+**3. Tests 101→143 (+42).** `historyModel.test.ts` (30): timestamp/day/duration formatting incl. Open/Unknown/<1 min and nearest-minute rounding, every `getSessionState` branch + the audio-present ternary detail, filter/search/count predicates, and exhaustive badge-tone maps. `sessionSummaryModel.test.ts` (11): `canRetryTranscription` across all four falsifying conditions, clinician/capture labels incl. the `"Unknown"` runtime-fallback, exhaustive `Record<Status,string>` label maps. `liveCaptureModel.test.ts` (1): exhaustive `MicrophoneAccessStatus` → label map.
+
+Behavior-preserving (only single-sourcing changes behavior-neutral duplicates) — confirmed by an independent review sub-agent: every moved body byte-identical in logic, all call sites rewired, no leftover dup defs or unused imports, tests non-tautological. `npm run typecheck:desktop` + `npm run test:desktop` green (desktop 143). Other lanes untouched.
+
 ### 2026-07-02 ~20:20 UTC — Dashboard: fix weekly-activity clock injection + UTC labels; dedupe export-updated-at; 9→27 tests
 
 Maintenance pass (automated). One commit. Targeted the dashboard workspace — the least-covered surface (9 tests vs desktop 101 / server 46 / worker 40) — in `opsDashboard.ts` (1164 lines, the overview/ops view-model builder).
